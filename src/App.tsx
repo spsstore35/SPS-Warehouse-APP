@@ -768,12 +768,12 @@ export default function App() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Garment Styles
+                  Total Items
                 </div>
                 <div className="text-2xl font-black font-mono tabular-nums text-slate-900 mt-1">
                   {products.length}
                 </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Active catalogue models</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">Active catalogue items</div>
               </div>
 
               <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
