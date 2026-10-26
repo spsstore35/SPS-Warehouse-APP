@@ -1,0 +1,10 @@
+{
+  "name": "SPS Warehouse APP 26/10/2026",
+  "description": "Apparel warehouse inventory with size and color matrix tracking, mobile photo upload, worker count requests, and admin approval workflows.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
