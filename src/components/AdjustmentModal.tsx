@@ -163,44 +163,51 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
           </div>
 
           {/* Variant Selector */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
-              Select Size & Color Variant:
-            </label>
-            <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1 bg-slate-50 rounded-xl border border-slate-200">
-              {product.variants.map((v) => {
-                const isSelected = v.id === selectedVariantId;
-                return (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedVariantId(v.id);
-                      setNewCount(v.quantity);
-                    }}
-                    className={`flex items-center justify-between p-2 rounded-lg text-left text-xs border transition-all ${
-                      isSelected
-                        ? 'bg-white border-amber-500 text-slate-900 font-bold shadow-sm'
-                        : 'bg-white/60 border-slate-200 text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <span
-                        className="w-3 h-3 rounded-full border border-slate-300 shrink-0"
-                        style={{ backgroundColor: v.colorHex }}
-                      />
-                      <span className="truncate">
-                        {v.size} - {v.colorName}
+          {product.variants.length > 1 ? (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                Select Size & Color Variant:
+              </label>
+              <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1 bg-slate-50 rounded-xl border border-slate-200">
+                {product.variants.map((v) => {
+                  const isSelected = v.id === selectedVariantId;
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedVariantId(v.id);
+                        setNewCount(v.quantity);
+                      }}
+                      className={`flex items-center justify-between p-2 rounded-lg text-left text-xs border transition-all ${
+                        isSelected
+                          ? 'bg-white border-amber-500 text-slate-900 font-bold shadow-sm'
+                          : 'bg-white/60 border-slate-200 text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span
+                          className="w-3 h-3 rounded-full border border-slate-300 shrink-0"
+                          style={{ backgroundColor: v.colorHex }}
+                        />
+                        <span className="truncate">
+                          {v.size !== 'One Size' ? `Size ${v.size}` : ''} {v.colorName !== 'Standard' ? v.colorName : (v.size === 'One Size' ? 'Standard' : '')}
+                        </span>
+                      </div>
+                      <span className="font-mono tabular-nums text-slate-700 ml-1 font-bold">
+                        {v.quantity}
                       </span>
-                    </div>
-                    <span className="font-mono tabular-nums text-slate-700 ml-1 font-bold">
-                      {v.quantity}
-                    </span>
-                  </button>
-                );
-              })}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-700">Standard Item Inventory</span>
+              <span className="font-mono font-bold text-slate-900">{product.variants[0]?.quantity ?? 0} in stock</span>
+            </div>
+          )}
 
           {/* Counts & Delta Calculator */}
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5">

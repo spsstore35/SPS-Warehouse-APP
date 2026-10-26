@@ -262,12 +262,20 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                         <div className="min-w-0">
                           <h4 className="text-sm font-bold text-slate-900 truncate">{req.productName}</h4>
                           <div className="flex items-center gap-2 mt-1">
-                            <span
-                              className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0"
-                              style={{ backgroundColor: req.colorHex }}
-                            />
+                            {!(
+                              (req.size === 'Standard' || req.size === 'One Size') &&
+                              (req.colorName === 'Standard' || req.colorName === 'Default' || req.colorName === 'N/A')
+                            ) && (
+                              <span
+                                className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0"
+                                style={{ backgroundColor: req.colorHex }}
+                              />
+                            )}
                             <span className="text-xs text-slate-700 font-bold">
-                              Size {req.size} · {req.colorName}
+                              {(req.size === 'Standard' || req.size === 'One Size') &&
+                              (req.colorName === 'Standard' || req.colorName === 'Default' || req.colorName === 'N/A')
+                                ? 'Standard Item'
+                                : `Size ${req.size} · ${req.colorName}`}
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-500 mt-0.5">

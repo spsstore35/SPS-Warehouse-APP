@@ -1,5 +1,17 @@
-import { Product, AdjustmentRequest, AuditLogEntry, User } from '../types/inventory';
+import { Product, AdjustmentRequest, AuditLogEntry, User, Category } from '../types/inventory';
 import { getApparelCategoryFallback } from '../utils/imageCompressor';
+
+// Initial Categories for the dedicated categories table & catalog
+export const INITIAL_CATEGORIES: Category[] = [
+  { id: 'cat_tshirts', name: 'T-Shirts & Tops', description: 'T-shirts, polos, tank tops, and casual tops', displayOrder: 1 },
+  { id: 'cat_hoodies', name: 'Hoodies & Sweatshirts', description: 'Pullover hoodies, zip-ups, crewnecks, and fleeces', displayOrder: 2 },
+  { id: 'cat_pants', name: 'Pants & Jeans', description: 'Denim, trousers, sweatpants, and cargos', displayOrder: 3 },
+  { id: 'cat_jackets', name: 'Jackets & Outerwear', description: 'Coats, windbreakers, varsity jackets, and parkas', displayOrder: 4 },
+  { id: 'cat_shorts', name: 'Shorts & Swim', description: 'Casual shorts, athletic shorts, and swim trunks', displayOrder: 5 },
+  { id: 'cat_knitwear', name: 'Knitwear & Sweaters', description: 'Cardigans, cable knits, and fine wool sweaters', displayOrder: 6 },
+  { id: 'cat_activewear', name: 'Activewear', description: 'Gym apparel, running gear, and technical garments', displayOrder: 7 },
+  { id: 'cat_accessories', name: 'Accessories', description: 'Caps, beanies, socks, and apparel accessories', displayOrder: 8 },
+];
 
 // Initial Users - Only active admin account for fallback if offline
 export const INITIAL_USERS: User[] = [

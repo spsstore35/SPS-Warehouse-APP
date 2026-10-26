@@ -16,15 +16,15 @@ export interface User {
   approvedBy?: string;
 }
 
-export type GarmentCategory = 
-  | 'T-Shirts & Tops'
-  | 'Hoodies & Sweatshirts'
-  | 'Pants & Jeans'
-  | 'Jackets & Outerwear'
-  | 'Shorts & Swim'
-  | 'Knitwear & Sweaters'
-  | 'Activewear'
-  | 'Accessories';
+export interface Category {
+  id: string;
+  name: string;
+  description?: string;
+  displayOrder?: number;
+  createdAt?: string;
+}
+
+export type GarmentCategory = string;
 
 export type GarmentSize = 
   | 'XS' 
@@ -58,6 +58,7 @@ export interface Product {
   id: string;
   sku: string;
   name: string;
+  categoryId?: string;
   category: GarmentCategory;
   targetAudience: TargetAudience;
   description: string;

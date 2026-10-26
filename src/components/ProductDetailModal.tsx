@@ -18,6 +18,14 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const [selectedColorFilter, setSelectedColorFilter] = useState<string>('all');
   const isAdmin = userRole === 'admin';
 
+  const isStandardItem =
+    product.variants.length === 1 &&
+    (product.variants[0].size === 'Standard' ||
+      product.variants[0].size === 'One Size' ||
+      product.variants[0].colorName === 'Standard' ||
+      product.variants[0].colorName === 'Default' ||
+      product.variants[0].colorName === 'N/A');
+
   const uniqueColors = Array.from(
     new Map(product.variants.map((v) => [v.colorName, v])).values()
   );
@@ -74,10 +82,10 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             <div className="sm:col-span-2 p-4 rounded-xl bg-slate-50 border border-slate-200/80">
               <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5 text-amber-600" />
-                <span>Product Description & Fabric Details</span>
+                <span>Product Description & Details</span>
               </div>
               <p className="text-xs text-slate-700 mt-1.5 leading-relaxed font-medium">
-                {product.description || 'Apparel item with size and color matrix.'}
+                {product.description || (isStandardItem ? 'Standard warehouse item.' : 'Apparel item with size and color matrix.')}
               </p>
               {product.fabricDetails && (
                 <div className="text-[11px] text-slate-500 mt-1 font-mono">
@@ -87,51 +95,53 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Color Filter Tabs */}
-          <div>
-            <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
-              Filter By Color:
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                onClick={() => setSelectedColorFilter('all')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                  selectedColorFilter === 'all'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All Colors ({product.variants.length})
-              </button>
-              {uniqueColors.map((col) => (
+          {/* Color Filter Tabs - Only shown when multiple variants exist */}
+          {!isStandardItem && uniqueColors.length > 1 && (
+            <div>
+              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                Filter By Color:
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <button
-                  key={col.colorName}
-                  onClick={() => setSelectedColorFilter(col.colorName)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                    selectedColorFilter === col.colorName
-                      ? 'bg-amber-50 border-amber-400 text-amber-900 font-bold'
-                      : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
+                  onClick={() => setSelectedColorFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                    selectedColorFilter === 'all'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <span
-                    className="w-3 h-3 rounded-full border border-slate-300 shadow-sm"
-                    style={{ backgroundColor: col.colorHex }}
-                  />
-                  <span>{col.colorName}</span>
+                  All Colors ({product.variants.length})
                 </button>
-              ))}
+                {uniqueColors.map((col) => (
+                  <button
+                    key={col.colorName}
+                    onClick={() => setSelectedColorFilter(col.colorName)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                      selectedColorFilter === col.colorName
+                        ? 'bg-amber-50 border-amber-400 text-amber-900 font-bold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full border border-slate-300 shadow-sm"
+                      style={{ backgroundColor: col.colorHex }}
+                    />
+                    <span>{col.colorName}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Variants Table / Touch-friendly List */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <Package className="w-4 h-4 text-amber-600" />
-                <span>Size & Color Stock Matrix</span>
+                <span>{isStandardItem ? 'Item Stock & Balance' : 'Size & Color Stock Matrix'}</span>
               </h3>
               <span className="text-xs text-slate-500">
-                {filteredVariants.length} combinations
+                {isStandardItem ? 'Single Item Stock' : `${filteredVariants.length} combinations`}
               </span>
             </div>
 
@@ -146,17 +156,25 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     key={variant.id}
                     className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 hover:border-slate-300 transition-colors gap-3"
                   >
-                    {/* Left: Size & Color Info */}
+                    {/* Left: Size & Color Info or Standard Item Label */}
                     <div className="flex items-center gap-3">
-                      <div
-                        className="w-4 h-4 rounded-full border border-slate-300 shadow-sm shrink-0"
-                        style={{ backgroundColor: variant.colorHex }}
-                        title={variant.colorName}
-                      />
+                      {!isStandardItem && (
+                        <div
+                          className="w-4 h-4 rounded-full border border-slate-300 shadow-sm shrink-0"
+                          style={{ backgroundColor: variant.colorHex }}
+                          title={variant.colorName}
+                        />
+                      )}
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-slate-900">Size {variant.size}</span>
-                          <span className="text-xs text-slate-500 font-medium">· {variant.colorName}</span>
+                          {isStandardItem ? (
+                            <span className="text-sm font-bold text-slate-900">Direct Inventory Stock</span>
+                          ) : (
+                            <>
+                              <span className="text-sm font-bold text-slate-900">Size {variant.size}</span>
+                              <span className="text-xs text-slate-500 font-medium">· {variant.colorName}</span>
+                            </>
+                          )}
                         </div>
                         <div className="text-[11px] font-mono text-slate-400 mt-0.5">
                           {variant.sku}

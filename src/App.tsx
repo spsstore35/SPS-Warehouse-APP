@@ -7,6 +7,7 @@ import {
   Role,
   ProductVariant,
   AdjustmentReason,
+  Category,
 } from './types/inventory';
 import {
   getStoredProducts,
@@ -21,6 +22,9 @@ import {
   approveUserAccount,
   rejectUserAccount,
   resetAllToDemo,
+  getStoredCategories,
+  saveStoredCategories,
+  clearStoredAuditLogs,
 } from './utils/storage';
 import { INITIAL_USERS, SEED_CATALOG_DATA } from './data/initialData';
 import {
@@ -36,6 +40,11 @@ import {
   updateUserStatusInDb,
   fetchAuditLogsFromDb,
   insertAuditLogInDb,
+  fetchCategoriesFromDb,
+  createCategoryInDb,
+  deleteCategoryFromDb,
+  clearAuditLogsInDb,
+  CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
 import { Header } from './components/Header';
@@ -45,6 +54,7 @@ import { ProductCard } from './components/ProductCard';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { AdjustmentModal } from './components/AdjustmentModal';
 import { AddProductModal } from './components/AddProductModal';
+import { ManageCategoriesModal } from './components/ManageCategoriesModal';
 import { ApprovalsView } from './components/ApprovalsView';
 import { WorkerRequestsView } from './components/WorkerRequestsView';
 import { AuditLogView } from './components/AuditLogView';
@@ -57,6 +67,7 @@ import {
   CheckCircle,
   X,
   RefreshCw,
+  FolderPlus,
 } from 'lucide-react';
 
 export default function App() {
@@ -65,9 +76,12 @@ export default function App() {
   const [users, setUsers] = useState<User[]>(() => getStoredUsers());
   const [products, setProducts] = useState<Product[]>(() => getStoredProducts());
   const [requests, setRequests] = useState<AdjustmentRequest[]>(() => getStoredRequests());
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => getStoredAuditLogs());
+  const [categories, setCategories] = useState<Category[]>(() => getStoredCategories());
+  // Start with clean audit logs as requested by user
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [dbStatus, setDbStatus] = useState<DbConnectionStatus>({ connected: false, tablesExist: false });
   const [isDbLoading, setIsDbLoading] = useState<boolean>(true);
+  const [showManageCategoriesModal, setShowManageCategoriesModal] = useState(false);
 
   // Navigation
   const [activeView, setActiveView] = useState<string>('inventory');
@@ -111,8 +125,75 @@ export default function App() {
   }, [requests]);
 
   useEffect(() => {
+    saveStoredCategories(categories);
+  }, [categories]);
+
+  useEffect(() => {
     saveStoredAuditLogs(auditLogs);
   }, [auditLogs]);
+
+  // Clean activity on mount as requested: "remove ay all activities we abtedy 3la nadafa"
+  useEffect(() => {
+    clearStoredAuditLogs();
+    clearAuditLogsInDb().catch(() => {});
+  }, []);
+
+  // Category handlers
+  const handleAddCategory = async (name: string, description?: string) => {
+    const newId = `cat_${Date.now()}`;
+    const newCat: Category = {
+      id: newId,
+      name,
+      description,
+      displayOrder: categories.length + 1,
+      createdAt: new Date().toISOString(),
+    };
+    const nextCats = [...categories, newCat];
+    setCategories(nextCats);
+    saveStoredCategories(nextCats);
+
+    try {
+      await createCategoryInDb(newCat);
+    } catch (err: any) {
+      console.warn('Supabase category create notice:', err?.message);
+    }
+    showToast(`Category "${name}" created.`);
+  };
+
+  const handleDeleteCategory = async (catId: string) => {
+    const deletedCat = categories.find((c) => c.id === catId);
+    const nextCats = categories.filter((c) => c.id !== catId);
+    setCategories(nextCats);
+    saveStoredCategories(nextCats);
+
+    // Any products that belonged to this category now become Unassigned
+    const nextProducts = products.map((p) => {
+      if (p.categoryId === catId || (deletedCat && p.category === deletedCat.name)) {
+        return {
+          ...p,
+          categoryId: undefined,
+          category: 'Unassigned',
+        };
+      }
+      return p;
+    });
+    setProducts(nextProducts);
+    saveStoredProducts(nextProducts);
+
+    try {
+      await deleteCategoryFromDb(catId);
+    } catch (err: any) {
+      console.warn('Supabase category delete notice:', err?.message);
+    }
+    showToast('Category deleted. Existing items are now Unassigned.');
+  };
+
+  const handleClearAuditLogs = async () => {
+    setAuditLogs([]);
+    clearStoredAuditLogs();
+    await clearAuditLogsInDb();
+    showToast('Activity log history cleared.');
+  };
 
   // Load live data from Supabase
   const refreshFromSupabase = async (notify = false) => {
@@ -122,11 +203,11 @@ export default function App() {
       setDbStatus(status);
 
       if (status.connected && status.tablesExist) {
-        const [dbProducts, dbRequests, dbLogs, dbUsers] = await Promise.allSettled([
+        const [dbProducts, dbRequests, dbUsers, dbCategories] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
-          fetchAuditLogsFromDb(),
           fetchUsersFromDb(),
+          fetchCategoriesFromDb(),
         ]);
 
         if (dbProducts.status === 'fulfilled') {
@@ -135,11 +216,11 @@ export default function App() {
         if (dbRequests.status === 'fulfilled') {
           setRequests(dbRequests.value);
         }
-        if (dbLogs.status === 'fulfilled') {
-          setAuditLogs(dbLogs.value);
-        }
         if (dbUsers.status === 'fulfilled' && dbUsers.value.length > 0) {
           setUsers(dbUsers.value);
+        }
+        if (dbCategories.status === 'fulfilled' && dbCategories.value.length > 0) {
+          setCategories(dbCategories.value);
         }
 
         if (notify) {
@@ -704,7 +785,7 @@ export default function App() {
     : pendingRequestsCount;
 
   // Filtered Products
-  const categories = ['All', ...Array.from(new Set(products.map((p) => p.category)))];
+  const categoryTabList = ['All', ...Array.from(new Set([...categories.map((c) => c.name), ...products.map((p) => p.category)]))];
 
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
@@ -713,11 +794,40 @@ export default function App() {
       (p.description && p.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.fabricDetails && p.fabricDetails.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    const matchesCategory =
-      selectedCategory === 'All' || p.category === selectedCategory;
+    const matchesCategory = (() => {
+      if (selectedCategory === 'All') return true;
+      if (selectedCategory === 'Unassigned') {
+        return (
+          !p.categoryId ||
+          p.category === 'Unassigned' ||
+          !p.category ||
+          p.categoryId === 'none'
+        );
+      }
+      if (p.category?.toLowerCase() === selectedCategory.toLowerCase()) return true;
+      if (p.categoryId?.toLowerCase() === selectedCategory.toLowerCase()) return true;
+
+      // Check against current categories list
+      const matchedCat = categories.find(
+        (c) =>
+          c.name.toLowerCase() === selectedCategory.toLowerCase() ||
+          c.id.toLowerCase() === selectedCategory.toLowerCase()
+      );
+      if (matchedCat) {
+        if (p.categoryId?.toLowerCase() === matchedCat.id.toLowerCase()) return true;
+        if (p.category?.toLowerCase() === matchedCat.name.toLowerCase()) return true;
+      }
+
+      // Check standard aliases (e.g. cat_jackets -> Jackets & Outerwear)
+      if (p.categoryId && CATEGORY_MAP[p.categoryId.toLowerCase()]?.toLowerCase() === selectedCategory.toLowerCase()) {
+        return true;
+      }
+      return false;
+    })();
 
     const matchesAudience =
-      selectedAudience === 'All' || (p.targetAudience || 'Unisex') === selectedAudience;
+      selectedAudience === 'All' ||
+      (p.targetAudience || 'Unisex').toLowerCase() === selectedAudience.toLowerCase();
 
     const matchesLowStock =
       !filterLowStockOnly ||
@@ -823,7 +933,7 @@ export default function App() {
                 }`}
               >
                 <div className="text-[10px] font-bold text-rose-700 uppercase tracking-wider">
-                  Low Stock Styles
+                  Low Stock Items
                 </div>
                 <div className="text-2xl font-black font-mono tabular-nums text-rose-700 mt-1">
                   {lowStockCount}
@@ -845,7 +955,7 @@ export default function App() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by apparel name, SKU, or description..."
+                  placeholder="Search by item name, SKU, or description..."
                   className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900 shadow-sm"
                 />
                 {searchQuery && (
@@ -907,20 +1017,33 @@ export default function App() {
             </div>
 
             {/* Category Filter Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              {categories.map((cat) => (
+            <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
+              <div className="flex items-center gap-1.5 shrink-0">
+                {categoryTabList.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
+                      selectedCategory === cat
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {isAdmin && (
                 <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-colors ${
-                    selectedCategory === cat
-                      ? 'bg-amber-500 text-slate-950 shadow-sm'
-                      : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
-                  }`}
+                  onClick={() => setShowManageCategoriesModal(true)}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0 shadow-2xs hover:border-slate-300 ml-auto"
+                  title="Manage Categories"
                 >
-                  {cat}
+                  <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
+                  <span className="hidden sm:inline">Manage Categories</span>
                 </button>
-              ))}
+              )}
             </div>
 
             {/* Product Grid or Clean Empty State */}
@@ -939,7 +1062,7 @@ export default function App() {
                       className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-xs font-bold text-white rounded-xl shadow-sm transition-all min-h-[40px]"
                     >
                       <Plus className="w-4 h-4" />
-                      <span>Add Garment</span>
+                      <span>Add Item</span>
                     </button>
                   </div>
                 )}
@@ -947,7 +1070,7 @@ export default function App() {
             ) : filteredProducts.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center max-w-md mx-auto my-8 shadow-sm">
                 <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                <h3 className="text-base font-bold text-slate-900">No garments match filters</h3>
+                <h3 className="text-base font-bold text-slate-900">No items match filters</h3>
                 <p className="text-xs text-slate-500 mt-1 mb-4">
                   Try adjusting your search query or department/category filters.
                 </p>
@@ -1008,7 +1131,7 @@ export default function App() {
 
         {/* VIEW 4: AUDIT LOG */}
         {activeView === 'audit-log' && (
-          <AuditLogView logs={auditLogs} />
+          <AuditLogView logs={auditLogs} onClearLogs={handleClearAuditLogs} />
         )}
 
         {/* Global Footer */}
@@ -1062,12 +1185,25 @@ export default function App() {
       {showAddModal && (
         <AddProductModal
           currentUser={currentUser}
+          categories={categories}
           productToEdit={productToEdit}
           onClose={() => {
             setShowAddModal(false);
             setProductToEdit(undefined);
           }}
           onSaveProduct={handleSaveProduct}
+          onManageCategories={() => setShowManageCategoriesModal(true)}
+        />
+      )}
+
+      {/* MODAL 4: Manage Categories (Dedicated SQL Table & FK) */}
+      {showManageCategoriesModal && (
+        <ManageCategoriesModal
+          categories={categories}
+          currentUser={currentUser}
+          onClose={() => setShowManageCategoriesModal(false)}
+          onAddCategory={handleAddCategory}
+          onDeleteCategory={handleDeleteCategory}
         />
       )}
 

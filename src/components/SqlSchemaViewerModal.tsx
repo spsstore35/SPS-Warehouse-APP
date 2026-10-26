@@ -21,6 +21,15 @@ CREATE TYPE user_status AS ENUM ('active', 'pending', 'rejected');
 CREATE TYPE target_audience AS ENUM ('Men', 'Women', 'Kids', 'Unisex');
 CREATE TYPE adjustment_status AS ENUM ('pending', 'approved', 'rejected');
 
+-- 1. CATEGORIES TABLE
+CREATE TABLE public.categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    display_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- PROFILES & AUTH WITH PENDING APPROVAL
 CREATE TABLE public.profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -37,11 +46,12 @@ CREATE TABLE public.profiles (
     approved_by UUID REFERENCES public.profiles(id)
 );
 
--- PRODUCTS CATALOG
+-- PRODUCTS CATALOG (Connected to categories via category_id FK)
 CREATE TABLE public.products (
     id TEXT PRIMARY KEY,
     sku TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
+    category_id TEXT REFERENCES public.categories(id) ON DELETE SET NULL,
     category TEXT NOT NULL,
     target_audience target_audience NOT NULL DEFAULT 'Unisex',
     description TEXT,
@@ -105,11 +115,19 @@ CREATE TABLE public.stock_audit_logs (
 );
 
 -- ENABLE ROW LEVEL SECURITY
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_variants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.adjustment_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_audit_logs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow public all access on categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on products" ON public.products FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on product_variants" ON public.product_variants FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on adjustment_requests" ON public.adjustment_requests FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on stock_audit_logs" ON public.stock_audit_logs FOR ALL USING (true) WITH CHECK (true);
 
 -- SEED DATA (ADMIN, WORKERS, CLOTHING ITEMS & VARIANTS)
 INSERT INTO public.profiles (email, password_hash, full_name, role, status, requested_role, employee_id)

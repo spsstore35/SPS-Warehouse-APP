@@ -47,7 +47,7 @@ export const WorkerRequestsView: React.FC<WorkerRequestsViewProps> = ({
           </div>
           <h3 className="text-base font-bold text-slate-900">No Count Requests Yet</h3>
           <p className="text-xs text-slate-500 mt-1 mb-4">
-            Browse the garment inventory catalog and submit an adjustment when you encounter discrepancies or damaged stock.
+            Browse the inventory catalog and submit an adjustment when you encounter discrepancies or damaged stock.
           </p>
           <button
             onClick={onNavigateToCatalog}
@@ -62,6 +62,9 @@ export const WorkerRequestsView: React.FC<WorkerRequestsViewProps> = ({
             const isPending = req.status === 'pending';
             const isApproved = req.status === 'approved';
             const isRejected = req.status === 'rejected';
+            const isStandardItem =
+              (req.size === 'Standard' || req.size === 'One Size') &&
+              (req.colorName === 'Standard' || req.colorName === 'Default' || req.colorName === 'N/A');
 
             return (
               <div
@@ -84,12 +87,14 @@ export const WorkerRequestsView: React.FC<WorkerRequestsViewProps> = ({
                   <div className="min-w-0">
                     <h4 className="text-sm font-bold text-slate-900 truncate">{req.productName}</h4>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span
-                        className="w-3 h-3 rounded-full border border-slate-300 shrink-0"
-                        style={{ backgroundColor: req.colorHex }}
-                      />
+                      {!isStandardItem && (
+                        <span
+                          className="w-3 h-3 rounded-full border border-slate-300 shrink-0"
+                          style={{ backgroundColor: req.colorHex }}
+                        />
+                      )}
                       <span className="text-xs text-slate-700 font-semibold">
-                        Size {req.size} · {req.colorName}
+                        {isStandardItem ? 'Standard Item' : `Size ${req.size} · ${req.colorName}`}
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">

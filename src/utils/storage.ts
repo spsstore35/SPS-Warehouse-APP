@@ -1,5 +1,5 @@
-import { Product, AdjustmentRequest, AuditLogEntry, User, Role } from '../types/inventory';
-import { INITIAL_PRODUCTS, INITIAL_REQUESTS, INITIAL_AUDIT_LOGS, INITIAL_USERS } from '../data/initialData';
+import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category } from '../types/inventory';
+import { INITIAL_PRODUCTS, INITIAL_REQUESTS, INITIAL_AUDIT_LOGS, INITIAL_USERS, INITIAL_CATEGORIES } from '../data/initialData';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'wearhouse_products_v4_live',
@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   LOGS: 'wearhouse_audit_logs_v4_live',
   USER: 'wearhouse_current_user_v4_live',
   USERS_LIST: 'wearhouse_all_accounts_v4_live',
+  CATEGORIES: 'wearhouse_categories_v4_live',
 };
 
 export function getStoredUsers(): User[] {
@@ -176,17 +177,39 @@ export function saveStoredRequests(requests: AdjustmentRequest[]): void {
   }
 }
 
+export function getStoredCategories(): Category[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
+    if (!raw) {
+      saveStoredCategories(INITIAL_CATEGORIES);
+      return INITIAL_CATEGORIES;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_CATEGORIES;
+  } catch (err) {
+    console.error('Failed to load categories from storage:', err);
+    return INITIAL_CATEGORIES;
+  }
+}
+
+export function saveStoredCategories(categories: Category[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+  } catch (err) {
+    console.error('Failed to save categories to storage:', err);
+  }
+}
+
 export function getStoredAuditLogs(): AuditLogEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.LOGS);
     if (!raw) {
-      saveStoredAuditLogs(INITIAL_AUDIT_LOGS);
-      return INITIAL_AUDIT_LOGS;
+      return [];
     }
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load logs from storage:', err);
-    return INITIAL_AUDIT_LOGS;
+    return [];
   }
 }
 
@@ -195,6 +218,14 @@ export function saveStoredAuditLogs(logs: AuditLogEntry[]): void {
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
   } catch (err) {
     console.error('Failed to save logs to storage:', err);
+  }
+}
+
+export function clearStoredAuditLogs(): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
+  } catch (err) {
+    console.error('Failed to clear logs:', err);
   }
 }
 

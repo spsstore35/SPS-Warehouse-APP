@@ -10,6 +10,7 @@ import {
   TargetAudience,
   GarmentCategory,
   AdjustmentReason,
+  Category,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -37,6 +38,80 @@ export async function checkSupabaseConnection(): Promise<DbConnectionStatus> {
   } catch (err: any) {
     return { connected: false, tablesExist: false, error: err?.message || 'Network error connecting to Supabase' };
   }
+}
+
+/**
+ * CATEGORIES (Dedicated SQL Table & Foreign Key connected to Products)
+ */
+export async function fetchCategoriesFromDb(): Promise<Category[]> {
+  try {
+    const { data, error } = await supabase
+      .from('categories')
+      .select('*')
+      .order('display_order', { ascending: true });
+
+    if (error || !data || data.length === 0) {
+      return [];
+    }
+
+    return data.map((d: any) => ({
+      id: d.id,
+      name: d.name,
+      description: d.description || '',
+      displayOrder: d.display_order ?? 0,
+      createdAt: d.created_at,
+    }));
+  } catch (err) {
+    console.warn('Error fetching categories from DB:', err);
+    return [];
+  }
+}
+
+export async function createCategoryInDb(category: {
+  id: string;
+  name: string;
+  description?: string;
+  displayOrder?: number;
+}): Promise<Category> {
+  const payload = {
+    id: category.id,
+    name: category.name.trim(),
+    description: category.description?.trim() || null,
+    display_order: category.displayOrder ?? 0,
+    created_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase.from('categories').upsert(payload);
+  if (error) throw error;
+
+  return {
+    id: payload.id,
+    name: payload.name,
+    description: payload.description || undefined,
+    displayOrder: payload.display_order,
+    createdAt: payload.created_at,
+  };
+}
+
+export async function deleteCategoryFromDb(categoryId: string): Promise<void> {
+  // 1. Proactively set category_id to NULL on any products referencing this category
+  // This ensures foreign key constraints succeed even before the user applies ON DELETE SET NULL
+  try {
+    const { error: unassignError } = await supabase
+      .from('products')
+      .update({ category_id: null })
+      .eq('category_id', categoryId);
+
+    if (unassignError) {
+      console.warn('Notice when unassigning category from products:', unassignError.message);
+    }
+  } catch (err) {
+    console.warn('Could not unassign products before deleting category:', err);
+  }
+
+  // 2. Delete the category record
+  const { error } = await supabase.from('categories').delete().eq('id', categoryId);
+  if (error) throw error;
 }
 
 /**
@@ -73,6 +148,30 @@ export async function fetchTargetAudiencesFromDb(): Promise<{ id: string; name: 
 }
 
 /**
+ * Common category ID to Display Name resolution map
+ */
+export const CATEGORY_MAP: Record<string, string> = {
+  cat_jackets: 'Jackets & Outerwear',
+  cat_hoodies: 'Hoodies & Sweatshirts',
+  cat_pants: 'Pants & Jeans',
+  cat_tshirts: 'T-Shirts & Tops',
+  cat_shorts: 'Shorts & Swim',
+  cat_knitwear: 'Knitwear & Sweaters',
+  cat_activewear: 'Activewear',
+  cat_accessories: 'Accessories',
+  jackets: 'Jackets & Outerwear',
+  outerwear: 'Jackets & Outerwear',
+  hoodies: 'Hoodies & Sweatshirts',
+  pants: 'Pants & Jeans',
+  jeans: 'Pants & Jeans',
+  tshirts: 'T-Shirts & Tops',
+  shorts: 'Shorts & Swim',
+  knitwear: 'Knitwear & Sweaters',
+  activewear: 'Activewear',
+  accessories: 'Accessories',
+};
+
+/**
  * PRODUCTS & VARIANTS
  */
 
@@ -84,6 +183,18 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
 
   if (prodError) throw prodError;
   if (!productsData || productsData.length === 0) return [];
+
+  // Query categories table to map any custom category IDs dynamically
+  const dynamicCatMap: Record<string, string> = { ...CATEGORY_MAP };
+  try {
+    const { data: dbCats } = await supabase.from('categories').select('id, name');
+    if (dbCats && dbCats.length > 0) {
+      dbCats.forEach((c: any) => {
+        dynamicCatMap[c.id.toLowerCase()] = c.name;
+        dynamicCatMap[c.name.toLowerCase()] = c.name;
+      });
+    }
+  } catch (_e) {}
 
   const { data: variantsData, error: varError } = await supabase
     .from('product_variants')
@@ -99,12 +210,15 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
     }
     variantsByProdId[v.product_id].push({
       id: v.id,
-      size: v.size as GarmentSize,
-      colorName: v.color_name,
-      colorHex: v.color_hex,
+      size: (v.size || 'One Size') as GarmentSize,
+      colorName: v.color_name || 'Standard',
+      colorHex: v.color_hex || '#94a3b8',
       quantity: Number(v.quantity) || 0,
       sku: v.sku,
-      minThreshold: v.min_threshold,
+      minThreshold:
+        v.min_threshold !== null && v.min_threshold !== undefined
+          ? Number(v.min_threshold)
+          : undefined,
     });
   });
 
@@ -112,12 +226,36 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
     const variants = variantsByProdId[p.id] || [];
     const totalQuantity = variants.reduce((sum, v) => sum + v.quantity, 0);
 
+    // Resolve category name accurately:
+    // If p.category is missing or defaults, look up p.category_id in dynamicCatMap
+    let resolvedCategory = p.category;
+    const catId = p.category_id ? String(p.category_id).trim() : '';
+    const catIdLower = catId.toLowerCase();
+
+    if (!resolvedCategory || resolvedCategory === 'T-Shirts & Tops') {
+      if (catIdLower && dynamicCatMap[catIdLower]) {
+        resolvedCategory = dynamicCatMap[catIdLower];
+      }
+    }
+    if (!resolvedCategory && catIdLower) {
+      resolvedCategory = dynamicCatMap[catIdLower] || catId;
+    }
+    if (resolvedCategory && dynamicCatMap[resolvedCategory.toLowerCase()]) {
+      resolvedCategory = dynamicCatMap[resolvedCategory.toLowerCase()];
+    }
+    if (!resolvedCategory) {
+      resolvedCategory = 'Unassigned';
+    }
+
+    const resolvedAudience = p.target_audience_id || p.target_audience || 'Unisex';
+
     return {
       id: p.id,
       sku: p.sku,
       name: p.name,
-      category: p.category as GarmentCategory,
-      targetAudience: (p.target_audience || 'Unisex') as TargetAudience,
+      categoryId: p.category_id || undefined,
+      category: resolvedCategory as GarmentCategory,
+      targetAudience: resolvedAudience as TargetAudience,
       description: p.description || '',
       fabricDetails: p.fabric_details || '',
       price: p.price ? Number(p.price) : undefined,
@@ -132,29 +270,67 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
 
 export async function upsertProductToDb(product: Product): Promise<void> {
   // 1. Upsert product
+  // Note: Modern relational schema uses 'category_id' referencing categories(id).
+  // We do NOT send 'category' by default to avoid PostgREST "Could not find 'category' column" error.
   const productPayload: Record<string, any> = {
     id: product.id,
     sku: product.sku,
     name: product.name,
-    category: product.category,
+    category_id: product.categoryId || null,
     target_audience: product.targetAudience || 'Unisex',
-    description: product.description,
+    description: product.description || '',
     fabric_details: product.fabricDetails || null,
     price: product.price || null,
-    image_url: product.image,
+    image_url: product.image || '',
     updated_at: new Date().toISOString(),
   };
 
   let { error: prodError } = await supabase.from('products').upsert(productPayload);
 
-  // If remote schema does not have target_audience column yet, retry without it
+  // If remote schema does not have category_id column (legacy flat schema), fallback to 'category' text column
+  if (
+    prodError &&
+    (prodError.message?.includes('category_id') ||
+      prodError.details?.includes('category_id') ||
+      (prodError as any).code === 'PGRST204')
+  ) {
+    delete productPayload.category_id;
+    productPayload.category = product.category || 'Accessories';
+    const retry = await supabase.from('products').upsert(productPayload);
+    prodError = retry.error;
+  }
+
+  // If remote schema fails because 'category' column is missing from schema cache, remove it
+  if (
+    prodError &&
+    (prodError.message?.includes("'category'") ||
+      prodError.details?.includes("'category'") ||
+      prodError.message?.includes('category column'))
+  ) {
+    delete productPayload.category;
+    const retry = await supabase.from('products').upsert(productPayload);
+    prodError = retry.error;
+  }
+
+  // If remote schema has target_audience_id instead of target_audience
   if (
     prodError &&
     (prodError.message?.includes('target_audience') ||
-      prodError.details?.includes('target_audience') ||
-      (prodError as any).code === 'PGRST204')
+      prodError.details?.includes('target_audience'))
   ) {
     delete productPayload.target_audience;
+    productPayload.target_audience_id = product.targetAudience || 'Unisex';
+    const retry = await supabase.from('products').upsert(productPayload);
+    prodError = retry.error;
+  }
+
+  // If remote schema does not have target_audience_id either, remove it
+  if (
+    prodError &&
+    (prodError.message?.includes('target_audience_id') ||
+      prodError.details?.includes('target_audience_id'))
+  ) {
+    delete productPayload.target_audience_id;
     const retry = await supabase.from('products').upsert(productPayload);
     prodError = retry.error;
   }
@@ -171,7 +347,11 @@ export async function upsertProductToDb(product: Product): Promise<void> {
       color_hex: v.colorHex,
       quantity: v.quantity,
       sku: v.sku,
-      min_threshold: v.minThreshold ?? 10,
+      // Save exact custom threshold, or NULL if left blank
+      min_threshold:
+        v.minThreshold !== undefined && v.minThreshold !== null && !isNaN(Number(v.minThreshold))
+          ? Number(v.minThreshold)
+          : null,
       updated_at: new Date().toISOString(),
     }));
 
@@ -453,3 +633,19 @@ export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
     // Non-blocking telemetry
   }
 }
+
+export async function clearAuditLogsInDb(): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('stock_audit_logs')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000');
+
+    if (error) {
+      console.warn('Notice clearing audit logs in Supabase:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('Notice clearing audit logs:', err?.message);
+  }
+}
+
