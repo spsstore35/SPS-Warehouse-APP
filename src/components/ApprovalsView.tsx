@@ -75,7 +75,30 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   });
 
   const pendingUsers = users.filter((u) => u.status === 'pending');
-  const allStaffUsers = users.filter((u) => u.id !== currentUser.id);
+
+  // Include all accounts with currentUser always present and sorted right at the top
+  const allStaffUsers = React.useMemo(() => {
+    const list = [...users];
+    if (
+      currentUser &&
+      !list.some(
+        (u) => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase()
+      )
+    ) {
+      list.unshift(currentUser);
+    }
+    return list.sort((a, b) => {
+      const aIsCurrent =
+        currentUser &&
+        (a.id === currentUser.id || a.email.toLowerCase() === currentUser.email.toLowerCase());
+      const bIsCurrent =
+        currentUser &&
+        (b.id === currentUser.id || b.email.toLowerCase() === currentUser.email.toLowerCase());
+      if (aIsCurrent) return -1;
+      if (bIsCurrent) return 1;
+      return 0;
+    });
+  }, [users, currentUser]);
 
   const handleConfirmReject = (requestId: string) => {
     onReject(requestId, rejectNote.trim() || undefined);
@@ -447,6 +470,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               </div>
             ) : (
               allStaffUsers.map((user) => {
+                const isCurrentUser =
+                  currentUser &&
+                  (user.id === currentUser.id ||
+                    user.email.toLowerCase() === currentUser.email.toLowerCase());
                 const isPending = user.status === 'pending';
                 const isActive = user.status === 'active';
                 const isRejected = user.status === 'rejected';
@@ -455,20 +482,29 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   <div
                     key={user.id}
                     className={`p-4 sm:p-5 rounded-2xl bg-white border transition-all shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-                      isPending ? 'border-amber-400 ring-1 ring-amber-400/20' : 'border-slate-200'
+                      isCurrentUser
+                        ? 'border-amber-300 bg-amber-50/30 ring-1 ring-amber-400/30'
+                        : isPending
+                        ? 'border-amber-400 ring-1 ring-amber-400/20'
+                        : 'border-slate-200'
                     }`}
                   >
                     {/* User details */}
                     <div className="flex items-center gap-3">
                       <div
                         className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white shrink-0 shadow-sm"
-                        style={{ backgroundColor: user.avatarColor || '#0284c7' }}
+                        style={{ backgroundColor: user.avatarColor || (isCurrentUser ? '#d97706' : '#0284c7') }}
                       >
-                        {user.name.charAt(0)}
+                        {user.name.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="text-sm font-bold text-slate-900">{user.name}</h4>
+                          {isCurrentUser && (
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-slate-700 shadow-xs">
+                              You (Current Account)
+                            </span>
+                          )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                               user.requestedRole === 'admin' || user.role === 'admin'
@@ -490,7 +526,14 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
 
                     {/* Actions / Status */}
                     <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                      {isPending ? (
+                      {isCurrentUser ? (
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-300 text-xs font-bold">
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Logged In (Current User)</span>
+                          </span>
+                        </div>
+                      ) : isPending ? (
                         <div className="flex items-center gap-2 w-full sm:w-auto">
                           <button
                             onClick={() => onApproveUser(user.id)}
