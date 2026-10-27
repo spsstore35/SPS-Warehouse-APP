@@ -16,6 +16,10 @@ import {
   ShieldCheck,
   Package,
   Trash2,
+  RefreshCw,
+  Database,
+  Copy,
+  CheckCheck,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -23,6 +27,8 @@ interface ApprovalsViewProps {
   requests: AdjustmentRequest[];
   users: User[];
   currentUser: User;
+  initialTab?: 'stock' | 'staff';
+  onRefreshFromDb?: () => void;
   onApprove: (requestId: string, adminNote?: string) => void;
   onReject: (requestId: string, adminNote?: string) => void;
   onApproveUser: (userId: string) => void;
@@ -40,6 +46,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   requests,
   users,
   currentUser,
+  initialTab = 'stock',
+  onRefreshFromDb,
   onApprove,
   onReject,
   onApproveUser,
@@ -47,10 +55,20 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onDeleteUser,
   onCreateUserDirectly,
 }) => {
-  const [activeTab, setActiveTab] = useState<'stock' | 'staff'>('stock');
+  const [activeTab, setActiveTab] = useState<'stock' | 'staff'>(initialTab);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [staffStatusFilter, setStaffStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [sqlCopied, setSqlCopied] = useState(false);
+
+  // Sync tab whenever initialTab changes from outside navigation
+  React.useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Direct Create Account Without Approval Modal State
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
@@ -100,6 +118,15 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     });
   }, [users, currentUser]);
 
+  const filteredStaffUsers = React.useMemo(() => {
+    return allStaffUsers.filter((u) => {
+      if (staffStatusFilter === 'all') return true;
+      if (staffStatusFilter === 'pending') return u.status === 'pending';
+      if (staffStatusFilter === 'active') return u.status === 'active';
+      return true;
+    });
+  }, [allStaffUsers, staffStatusFilter]);
+
   const handleConfirmReject = (requestId: string) => {
     onReject(requestId, rejectNote.trim() || undefined);
     setRejectingId(null);
@@ -127,18 +154,18 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         </div>
       </div>
 
-      {/* Main Switcher: Stock Adjustments vs Pending Staff Accounts */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+      {/* Main Switcher: Stock Adjustments vs Staff Registrations & Account Approvals */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto scrollbar-none">
         <button
           onClick={() => setActiveTab('stock')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
             activeTab === 'stock'
               ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
           }`}
         >
-          <CheckSquare className="w-4 h-4" />
-          <span>Stock Adjustments</span>
+          <CheckSquare className="w-4 h-4 text-amber-500" />
+          <span>Stock Adjustments Queue</span>
           {pendingRequests.length > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
               {pendingRequests.length}
@@ -148,17 +175,17 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
 
         <button
           onClick={() => setActiveTab('staff')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
             activeTab === 'staff'
               ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
+              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
           }`}
         >
-          <Users className="w-4 h-4" />
-          <span>Staff Registrations</span>
+          <Users className="w-4 h-4 text-amber-500" />
+          <span>Staff Registrations & Account Approvals</span>
           {pendingUsers.length > 0 && (
             <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black animate-pulse">
-              {pendingUsers.length}
+              {pendingUsers.length} Pending
             </span>
           )}
         </button>
@@ -413,51 +440,152 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       {activeTab === 'staff' && (
         <div className="space-y-4">
           {/* Header Action Bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Staff Accounts & Authorizations</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">Staff Accounts & Authorizations</h3>
+                {pendingUsers.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 animate-pulse">
+                    {pendingUsers.length} Action Required
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500 mt-0.5 font-medium">
-                Review pending registrations or create new staff accounts with immediate active access.
+                Authorize pending registrations or create new staff accounts with immediate active access.
               </p>
             </div>
 
+            <div className="flex items-center gap-2 flex-wrap">
+              {onRefreshFromDb && (
+                <button
+                  type="button"
+                  onClick={onRefreshFromDb}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[40px]"
+                  title="Reload accounts directly from Supabase profiles table"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Sync Database</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[40px]"
+                title="View Supabase schema & RLS policies"
+              >
+                <Database className="w-3.5 h-3.5 text-amber-600" />
+                <span>Supabase SQL & RLS</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNewUserName('');
+                  setNewUserEmail('');
+                  setNewUserPassword('');
+                  setNewUserRole('worker');
+                  setCreateError('');
+                  setShowCreateUserModal(true);
+                }}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-sm transition-all min-h-[40px] shrink-0"
+              >
+                <UserPlus className="w-4 h-4 stroke-[2.5]" />
+                <span>+ Add Account (No Approval Needed)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Pending Registrations Notice Banner if any are waiting */}
+          {pendingUsers.length > 0 && (
+            <div className="p-4 bg-amber-500/10 border-2 border-amber-400 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-xs">
+                  <Users className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-black text-slate-900">
+                    {pendingUsers.length} Staff Registration{pendingUsers.length > 1 ? 's' : ''} Awaiting Approval
+                  </h4>
+                  <p className="text-xs text-slate-600 mt-0.5 font-medium">
+                    Review and click <strong>Approve Account</strong> below to grant immediate access to log into the warehouse.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStaffStatusFilter('pending')}
+                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black rounded-xl shadow-xs transition-colors shrink-0 whitespace-nowrap"
+              >
+                View Pending ({pendingUsers.length})
+              </button>
+            </div>
+          )}
+
+          {/* Staff Sub-filter tabs */}
+          <div className="flex items-center gap-1.5 p-1 bg-white border border-slate-200 rounded-xl self-start sm:self-auto overflow-x-auto max-w-full shadow-sm">
             <button
-              type="button"
-              onClick={() => {
-                setNewUserName('');
-                setNewUserEmail('');
-                setNewUserPassword('');
-                setNewUserRole('worker');
-                setCreateError('');
-                setShowCreateUserModal(true);
-              }}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black shadow-sm transition-all min-h-[42px] shrink-0"
+              onClick={() => setStaffStatusFilter('all')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
+                staffStatusFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
             >
-              <UserPlus className="w-4 h-4 stroke-[2.5]" />
-              <span>+ Add Account (No Approval Needed)</span>
+              All Staff ({allStaffUsers.length})
+            </button>
+
+            <button
+              onClick={() => setStaffStatusFilter('pending')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                staffStatusFilter === 'pending'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Pending Approvals</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                staffStatusFilter === 'pending' ? 'bg-slate-950 text-amber-300' : 'bg-amber-100 text-amber-900'
+              }`}>
+                {pendingUsers.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setStaffStatusFilter('active')}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
+                staffStatusFilter === 'active'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Active & Approved ({allStaffUsers.filter((u) => u.status === 'active').length})
             </button>
           </div>
 
           {/* Policy Info Card */}
-          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-start gap-3">
-            <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <h4 className="font-bold text-amber-950">Staff Registration & Access</h4>
-              <p className="mt-0.5 leading-relaxed font-medium">
-                Public self-registrations wait in <strong>Pending Status</strong> until approved here.
-                Accounts created using <strong>+ Add Account (No Approval Needed)</strong> are immediately active and can sign in without waiting.
-              </p>
+          <div className="p-3.5 bg-amber-50/70 border border-amber-200/90 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
+            <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-[11px] leading-relaxed font-medium">
+              Self-registered accounts wait in <strong>Pending Status</strong> until approved by an Admin.
+              Accounts created via <strong>+ Add Account</strong> bypass approvals and activate immediately.
             </div>
           </div>
 
           {/* Staff Accounts List */}
           <div className="space-y-3">
-            {allStaffUsers.length === 0 ? (
+            {filteredStaffUsers.length === 0 ? (
               <div className="p-8 text-center bg-white border border-slate-200 rounded-2xl space-y-3">
                 <Users className="w-8 h-8 text-slate-300 mx-auto" />
-                <h4 className="text-sm font-bold text-slate-700">No other staff accounts yet</h4>
+                <h4 className="text-sm font-bold text-slate-700">
+                  {staffStatusFilter === 'pending'
+                    ? 'No pending account approvals'
+                    : 'No staff accounts match this filter'}
+                </h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Add staff members directly without requiring approval, or have them register from the login screen.
+                  {staffStatusFilter === 'pending'
+                    ? 'All user registration requests have been reviewed and approved.'
+                    : 'Add staff members directly or have workers register from the login screen.'}
                 </p>
                 <button
                   type="button"
@@ -469,7 +597,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 </button>
               </div>
             ) : (
-              allStaffUsers.map((user) => {
+              filteredStaffUsers.map((user) => {
                 const isCurrentUser =
                   currentUser &&
                   (user.id === currentUser.id ||
@@ -795,6 +923,154 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         onConfirm={handleConfirmDeleteUser}
         onCancel={() => setUserToDelete(null)}
       />
+
+      {/* Supabase Schema & RLS Setup Helper Modal */}
+      {showSqlModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Supabase Accounts Schema & RLS
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Run this SQL in Supabase SQL Editor to ensure staff registrations and approvals sync seamlessly.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3 flex-1 overflow-y-auto">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-950 font-medium">
+                If new accounts aren't showing up or you cannot approve/delete in Supabase, make sure Row Level Security (RLS) has policies granting access, or disable RLS on the profiles table.
+              </div>
+
+              <div className="relative">
+                <pre className="p-4 bg-slate-950 text-emerald-400 font-mono text-xs rounded-xl overflow-x-auto leading-relaxed border border-slate-800">
+{`-- 1. Create Profiles Table if not already existing
+CREATE TABLE IF NOT EXISTS profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  role TEXT NOT NULL DEFAULT 'worker',
+  status TEXT NOT NULL DEFAULT 'pending',
+  requested_role TEXT DEFAULT 'worker',
+  employee_id TEXT,
+  avatar_color TEXT,
+  password_hash TEXT,
+  approved_at TIMESTAMPTZ,
+  approved_by_name TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 2. Configure Row Level Security (RLS)
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- 3. Policy: Allow reading profiles for app account management
+DROP POLICY IF EXISTS "Allow public read profiles" ON profiles;
+CREATE POLICY "Allow public read profiles" ON profiles
+  FOR SELECT USING (true);
+
+-- 4. Policy: Allow new staff self-registration
+DROP POLICY IF EXISTS "Allow registration insert profiles" ON profiles;
+CREATE POLICY "Allow registration insert profiles" ON profiles
+  FOR INSERT WITH CHECK (true);
+
+-- 5. Policy: Allow admins to approve / update profiles
+DROP POLICY IF EXISTS "Allow admin update profiles" ON profiles;
+CREATE POLICY "Allow admin update profiles" ON profiles
+  FOR UPDATE USING (true);
+
+-- 6. Policy: Allow admins to delete profiles
+DROP POLICY IF EXISTS "Allow admin delete profiles" ON profiles;
+CREATE POLICY "Allow admin delete profiles" ON profiles
+  FOR DELETE USING (true);`}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const code = `-- 1. Create Profiles Table if not already existing
+CREATE TABLE IF NOT EXISTS profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  role TEXT NOT NULL DEFAULT 'worker',
+  status TEXT NOT NULL DEFAULT 'pending',
+  requested_role TEXT DEFAULT 'worker',
+  employee_id TEXT,
+  avatar_color TEXT,
+  password_hash TEXT,
+  approved_at TIMESTAMPTZ,
+  approved_by_name TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 2. Configure Row Level Security (RLS)
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- 3. Policy: Allow reading profiles for app account management
+DROP POLICY IF EXISTS "Allow public read profiles" ON profiles;
+CREATE POLICY "Allow public read profiles" ON profiles
+  FOR SELECT USING (true);
+
+-- 4. Policy: Allow new staff self-registration
+DROP POLICY IF EXISTS "Allow registration insert profiles" ON profiles;
+CREATE POLICY "Allow registration insert profiles" ON profiles
+  FOR INSERT WITH CHECK (true);
+
+-- 5. Policy: Allow admins to approve / update profiles
+DROP POLICY IF EXISTS "Allow admin update profiles" ON profiles;
+CREATE POLICY "Allow admin update profiles" ON profiles
+  FOR UPDATE USING (true);
+
+-- 6. Policy: Allow admins to delete profiles
+DROP POLICY IF EXISTS "Allow admin delete profiles" ON profiles;
+CREATE POLICY "Allow admin delete profiles" ON profiles
+  FOR DELETE USING (true);`;
+                    navigator.clipboard.writeText(code);
+                    setSqlCopied(true);
+                    setTimeout(() => setSqlCopied(false), 2500);
+                  }}
+                  className="absolute top-3 right-3 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center gap-1.5 transition-colors border border-slate-700"
+                >
+                  {sqlCopied ? (
+                    <>
+                      <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-slate-300" />
+                      <span>Copy SQL</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

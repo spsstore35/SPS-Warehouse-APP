@@ -103,13 +103,18 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
             .then(() => {});
         }
 
+        const rawRole = String(profile.role || profile.requested_role || '').trim().toLowerCase();
+        const normalizedRole: Role = rawRole.includes('admin') ? 'admin' : 'worker';
+        const rawReqRole = String(profile.requested_role || profile.role || '').trim().toLowerCase();
+        const normalizedReqRole: Role = rawReqRole.includes('admin') ? 'admin' : 'worker';
+
         const userObj: User = {
           id: profile.id,
-          name: profile.full_name,
+          name: profile.full_name || 'Staff User',
           email: profile.email,
-          role: profile.role,
+          role: normalizedRole,
           status: profile.status,
-          requestedRole: profile.requested_role,
+          requestedRole: normalizedReqRole,
           employeeId: profile.employee_id,
           avatarColor: profile.avatar_color,
         };

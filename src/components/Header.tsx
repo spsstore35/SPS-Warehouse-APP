@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History } from 'lucide-react';
+import { isUserAdmin } from '../utils/security';
 
 interface HeaderProps {
   currentUser: User;
@@ -8,6 +9,9 @@ interface HeaderProps {
   onNavigate: (view: string) => void;
   onLogout: () => void;
   pendingCount: number;
+  pendingStockCount?: number;
+  pendingAccountsCount?: number;
+  approvalsTab?: 'stock' | 'staff';
   onSwitchRole?: () => void;
 }
 
@@ -17,8 +21,11 @@ export const Header: React.FC<HeaderProps> = ({
   onNavigate,
   onLogout,
   pendingCount,
+  pendingStockCount = 0,
+  pendingAccountsCount = 0,
+  approvalsTab = 'stock',
 }) => {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isUserAdmin(currentUser);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
@@ -41,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/90 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-4 md:gap-8 h-14 md:h-16">
+        <div className="flex items-center justify-between gap-3 md:gap-6 h-14 md:h-16">
           {/* Zone 1: Brand title, one line wordmark */}
           <div className="flex items-center gap-3 shrink-0">
             <button
@@ -66,8 +73,8 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
 
-          {/* Zone 2: 4 clean nav links (desktop) */}
-          <nav className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-600">
+          {/* Zone 2: Navigation Links (desktop) */}
+          <nav className="hidden md:flex items-center gap-5 text-sm font-semibold text-slate-600">
             <button
               onClick={() => onNavigate('inventory')}
               className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
@@ -78,19 +85,55 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {isAdmin ? (
-              <button
-                onClick={() => onNavigate('approvals')}
-                className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                  activeView === 'approvals' ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5' : ''
-                }`}
-              >
-                <span>Stock Approvals</span>
-                {pendingCount > 0 && (
-                  <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
-                    {pendingCount}
-                  </span>
-                )}
-              </button>
+              <>
+                {/* 1. Dedicated Stock Approvals */}
+                <button
+                  onClick={() => onNavigate('stock-approvals')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'approvals' && approvalsTab === 'stock'
+                      ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Review pending inventory stock changes"
+                >
+                  <CheckSquare className="w-4 h-4 text-amber-600" />
+                  <span>Stock Approvals</span>
+                  {pendingStockCount > 0 && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
+                      {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* 2. Dedicated Accounts Approval Front & Center */}
+                <button
+                  onClick={() => onNavigate('account-approvals')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'approvals' && approvalsTab === 'staff'
+                      ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Approve staff registration accounts"
+                >
+                  <Users className="w-4 h-4 text-amber-600" />
+                  <span>Account Approvals</span>
+                  {pendingAccountsCount > 0 ? (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px] animate-pulse">
+                      {pendingAccountsCount}
+                    </span>
+                  ) : null}
+                </button>
+
+                {/* 3. Add New Item */}
+                <button
+                  onClick={() => onNavigate('add-product')}
+                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+                    activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                  }`}
+                >
+                  Add New Item
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => onNavigate('worker-requests')}
@@ -99,22 +142,11 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 <span>My Adjustment Requests</span>
-                {pendingCount > 0 && (
+                {pendingStockCount > 0 && (
                   <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
-                    {pendingCount}
+                    {pendingStockCount}
                   </span>
                 )}
-              </button>
-            )}
-
-            {isAdmin && (
-              <button
-                onClick={() => onNavigate('add-product')}
-                className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                  activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                }`}
-              >
-                Add New Item
               </button>
             )}
 
@@ -130,14 +162,27 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Zone 3: Mobile alert & Interactive User Profile Avatar */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {/* Quick Pending Alert Icon for Mobile */}
-            {isAdmin && pendingCount > 0 && (
+            {/* Quick Pending Alert Icons for Mobile */}
+            {isAdmin && pendingAccountsCount > 0 && (
               <button
-                onClick={() => onNavigate('approvals')}
-                className="md:hidden relative p-2 text-amber-700 hover:bg-slate-100 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
-                title={`${pendingCount} requests waiting`}
+                onClick={() => onNavigate('account-approvals')}
+                className="md:hidden relative p-2 text-amber-700 bg-amber-50 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center border border-amber-300"
+                title={`${pendingAccountsCount} staff accounts awaiting approval`}
               >
-                <Bell className="w-5 h-5" />
+                <Users className="w-5 h-5" />
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-black text-[10px] rounded-full animate-pulse">
+                  {pendingAccountsCount}
+                </span>
+              </button>
+            )}
+
+            {isAdmin && pendingStockCount > 0 && (
+              <button
+                onClick={() => onNavigate('stock-approvals')}
+                className="md:hidden relative p-2 text-slate-700 hover:bg-slate-100 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
+                title={`${pendingStockCount} stock changes waiting`}
+              >
+                <Bell className="w-5 h-5 text-amber-600" />
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-500 rounded-full" />
               </button>
             )}
@@ -149,7 +194,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => setIsProfileOpen((prev) => !prev)}
                 className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center text-sm font-black text-white shrink-0 shadow-sm transition-transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 hover:opacity-95 cursor-pointer select-none"
                 style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : '#0284c7') }}
-                title={`${currentUser.name} - Click for profile`}
+                title={`${currentUser.name} - Click for profile & navigation`}
                 aria-label="User account menu"
                 aria-expanded={isProfileOpen}
               >
@@ -178,7 +223,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
 
                   {/* Role Badge */}
-                  <div className="py-2.5 px-0.5 flex items-center justify-between">
+                  <div className="py-2.5 px-0.5 flex items-center justify-between border-b border-slate-100">
                     <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                       Role
                     </span>
@@ -191,6 +236,79 @@ export const Header: React.FC<HeaderProps> = ({
                     >
                       {isAdmin ? 'Warehouse Administrator' : 'Warehouse Staff'}
                     </span>
+                  </div>
+
+                  {/* Fast Navigation Links */}
+                  <div className="py-2 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        onNavigate('inventory');
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Package className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Inventory Catalog</span>
+                      </span>
+                    </button>
+
+                    {isAdmin && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('account-approvals');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <Users className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Account Approvals</span>
+                          </span>
+                          {pendingAccountsCount > 0 && (
+                            <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full animate-pulse">
+                              {pendingAccountsCount}
+                            </span>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('stock-approvals');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <CheckSquare className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Stock Approvals</span>
+                          </span>
+                          {pendingStockCount > 0 && (
+                            <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
+                              {pendingStockCount}
+                            </span>
+                          )}
+                        </button>
+                      </>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        onNavigate('audit-log');
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <History className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Stock Audit Log</span>
+                      </span>
+                    </button>
                   </div>
 
                   {/* Red Logout Button */}

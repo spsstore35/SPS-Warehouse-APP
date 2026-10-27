@@ -26,6 +26,7 @@ import {
   saveStoredCategories,
   clearStoredAuditLogs,
 } from './utils/storage';
+import { isUserAdmin } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA } from './data/initialData';
 import {
   checkSupabaseConnection,
@@ -91,6 +92,7 @@ export default function App() {
 
   // Navigation
   const [activeView, setActiveView] = useState<string>('inventory');
+  const [approvalsTab, setApprovalsTab] = useState<'stock' | 'staff'>('stock');
 
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -166,7 +168,7 @@ export default function App() {
   };
 
   const handleDeleteCategory = async (catId: string) => {
-    if (currentUser?.role !== 'admin') {
+    if (!isUserAdmin(currentUser)) {
       showToast('Only Admin can delete categories.');
       return;
     }
@@ -212,7 +214,7 @@ export default function App() {
 
   // Admin deletes entire product
   const handleDeleteProduct = async (productId: string) => {
-    if (currentUser?.role !== 'admin') {
+    if (!isUserAdmin(currentUser)) {
       showToast('Only Admin can delete products.');
       return;
     }
@@ -246,7 +248,7 @@ export default function App() {
 
   // Admin deletes single variant size from a product
   const handleDeleteVariant = async (productId: string, variantId: string) => {
-    if (currentUser?.role !== 'admin') {
+    if (!isUserAdmin(currentUser)) {
       showToast('Only Admin can delete variants.');
       return;
     }
@@ -307,7 +309,7 @@ export default function App() {
 
   // Admin deletes staff account
   const handleDeleteUser = async (userId: string) => {
-    if (currentUser?.role !== 'admin') {
+    if (!isUserAdmin(currentUser)) {
       showToast('Only Admin can delete user accounts.');
       return;
     }
@@ -954,9 +956,25 @@ export default function App() {
   // Pending count for alerts (includes pending staff registrations for admin)
   const pendingRequestsCount = requests.filter((r) => r.status === 'pending').length;
   const pendingUsersCount = users.filter((u) => u.status === 'pending').length;
-  const pendingCount = currentUser?.role === 'admin' 
+  const pendingCount = isUserAdmin(currentUser) 
     ? (pendingRequestsCount + pendingUsersCount) 
     : pendingRequestsCount;
+
+  // Navigation handler supporting direct routing to Account Approvals & Stock Approvals
+  const handleNavigate = (view: string) => {
+    if (view === 'add-product') {
+      setProductToEdit(undefined);
+      setShowAddModal(true);
+    } else if (view === 'account-approvals') {
+      setApprovalsTab('staff');
+      setActiveView('approvals');
+    } else if (view === 'stock-approvals') {
+      setApprovalsTab('stock');
+      setActiveView('approvals');
+    } else {
+      setActiveView(view);
+    }
+  };
 
   // Filtered Products
   const categoryTabList = ['All', ...Array.from(new Set([...categories.map((c) => c.name), ...products.map((p) => p.category)]))];
@@ -1021,7 +1039,7 @@ export default function App() {
     return <AuthScreens onLogin={handleLogin} />;
   }
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isUserAdmin(currentUser);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col pb-20 md:pb-8 selection:bg-amber-500/20 selection:text-amber-900">
@@ -1029,17 +1047,13 @@ export default function App() {
       <Header
         currentUser={currentUser}
         activeView={activeView}
-        onNavigate={(view) => {
-          if (view === 'add-product') {
-            setProductToEdit(undefined);
-            setShowAddModal(true);
-          } else {
-            setActiveView(view);
-          }
-        }}
+        onNavigate={handleNavigate}
         onSwitchRole={handleSwitchRole}
         onLogout={handleLogout}
         pendingCount={pendingCount}
+        pendingStockCount={pendingRequestsCount}
+        pendingAccountsCount={pendingUsersCount}
+        approvalsTab={approvalsTab}
       />
 
       {/* Main View Area */}
@@ -1266,7 +1280,7 @@ export default function App() {
                   <ProductCard
                     key={product.id}
                     product={product}
-                    userRole={currentUser.role}
+                    userRole={isUserAdmin(currentUser) ? 'admin' : 'worker'}
                     onOpenDetails={(p) => setDetailProduct(p)}
                     onRequestAdjustment={(p, variant) => setAdjustmentTarget({ product: p, variant })}
                     onEditProduct={(p) => {
@@ -1287,6 +1301,8 @@ export default function App() {
             requests={requests}
             users={users}
             currentUser={currentUser}
+            initialTab={approvalsTab}
+            onRefreshFromDb={() => refreshFromSupabase(true)}
             onApprove={handleApproveRequest}
             onReject={handleRejectRequest}
             onApproveUser={handleApproveUser}
@@ -1327,23 +1343,19 @@ export default function App() {
       <BottomNav
         currentUser={currentUser}
         activeView={activeView}
-        onNavigate={(view) => {
-          if (view === 'add-product') {
-            setProductToEdit(undefined);
-            setShowAddModal(true);
-          } else {
-            setActiveView(view);
-          }
-        }}
+        onNavigate={handleNavigate}
         onLogout={handleLogout}
         pendingCount={pendingCount}
+        pendingStockCount={pendingRequestsCount}
+        pendingAccountsCount={pendingUsersCount}
+        approvalsTab={approvalsTab}
       />
 
       {/* MODAL 1: Size & Color Detail Matrix */}
       {detailProduct && (
         <ProductDetailModal
           product={detailProduct}
-          userRole={currentUser.role}
+          userRole={isUserAdmin(currentUser) ? 'admin' : 'worker'}
           onClose={() => setDetailProduct(null)}
           onRequestAdjustment={(p, variant) => {
             setDetailProduct(null);

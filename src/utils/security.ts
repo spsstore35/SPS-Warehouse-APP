@@ -38,3 +38,13 @@ export async function verifyPassword(
 
   return false;
 }
+
+/**
+ * Universal case-insensitive and alias-aware check for admin authority
+ */
+export function isUserAdmin(user?: { role?: string; requestedRole?: string } | null): boolean {
+  if (!user) return false;
+  const role = String(user.role || '').trim().toLowerCase();
+  const req = String(user.requestedRole || '').trim().toLowerCase();
+  return role === 'admin' || role.includes('admin') || req === 'admin' || req.includes('admin');
+}

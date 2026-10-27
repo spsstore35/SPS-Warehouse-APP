@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users } from 'lucide-react';
+import { isUserAdmin } from '../utils/security';
 
 interface BottomNavProps {
   currentUser: User;
@@ -8,6 +9,9 @@ interface BottomNavProps {
   onNavigate: (view: string) => void;
   onLogout: () => void;
   pendingCount: number;
+  pendingStockCount?: number;
+  pendingAccountsCount?: number;
+  approvalsTab?: 'stock' | 'staff';
   onSwitchRole?: () => void;
 }
 
@@ -17,8 +21,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onNavigate,
   onLogout,
   pendingCount,
+  pendingStockCount = 0,
+  pendingAccountsCount = 0,
+  approvalsTab = 'stock',
 }) => {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isUserAdmin(currentUser);
   const [showAccountSheet, setShowAccountSheet] = useState(false);
 
   return (
@@ -35,23 +42,25 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           <span className="text-[10px] tracking-tight">Stock</span>
         </button>
 
-        {/* Tab 2: Approvals (Admin) or Requests (Worker) */}
+        {/* Tab 2: Stock Approvals (Admin) or Requests (Worker) */}
         {isAdmin ? (
           <button
-            onClick={() => onNavigate('approvals')}
+            onClick={() => onNavigate('stock-approvals')}
             className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
-              activeView === 'approvals' ? 'text-amber-700 font-bold' : 'text-slate-500 hover:text-slate-800'
+              activeView === 'approvals' && approvalsTab === 'stock'
+                ? 'text-amber-700 font-bold'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             <div className="relative">
               <CheckSquare className="w-5 h-5 mb-1" />
-              {pendingCount > 0 && (
+              {pendingStockCount > 0 && (
                 <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-amber-500 text-slate-950 font-black text-[9px] rounded-full">
-                  {pendingCount}
+                  {pendingStockCount}
                 </span>
               )}
             </div>
-            <span className="text-[10px] tracking-tight">Approvals</span>
+            <span className="text-[10px] tracking-tight">Stock Appr</span>
           </button>
         ) : (
           <button
@@ -62,9 +71,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           >
             <div className="relative">
               <Clock className="w-5 h-5 mb-1" />
-              {pendingCount > 0 && (
+              {pendingStockCount > 0 && (
                 <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-sky-500 text-white font-black text-[9px] rounded-full">
-                  {pendingCount}
+                  {pendingStockCount}
                 </span>
               )}
             </div>
@@ -93,18 +102,39 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </button>
         )}
 
-        {/* Tab 4: Audit Log */}
-        <button
-          onClick={() => onNavigate('audit-log')}
-          className={`flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
-            activeView === 'audit-log' ? 'text-amber-700 font-bold' : 'text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <History className="w-5 h-5 mb-1" />
-          <span className="text-[10px] tracking-tight">Audit Log</span>
-        </button>
+        {/* Tab 4: Account Approvals (Admin) or Audit Log (Worker) */}
+        {isAdmin ? (
+          <button
+            onClick={() => onNavigate('account-approvals')}
+            className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
+              activeView === 'approvals' && approvalsTab === 'staff'
+                ? 'text-amber-700 font-bold'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <div className="relative">
+              <Users className="w-5 h-5 mb-1" />
+              {pendingAccountsCount > 0 && (
+                <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-amber-500 text-slate-950 font-black text-[9px] rounded-full animate-pulse">
+                  {pendingAccountsCount}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] tracking-tight">Accounts</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => onNavigate('audit-log')}
+            className={`flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
+              activeView === 'audit-log' ? 'text-sky-700 font-bold' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <History className="w-5 h-5 mb-1" />
+            <span className="text-[10px] tracking-tight">Audit Log</span>
+          </button>
+        )}
 
-        {/* Tab 5: Account Profile */}
+        {/* Tab 5: Account Profile & Menu */}
         <button
           onClick={() => setShowAccountSheet(true)}
           className="flex flex-col items-center justify-center min-h-[44px] py-1 text-slate-500 hover:text-slate-800 transition-colors"
@@ -115,7 +145,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           >
             {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
           </div>
-          <span className="text-[10px] tracking-tight font-medium">Account</span>
+          <span className="text-[10px] tracking-tight font-medium">Menu</span>
         </button>
       </div>
 
@@ -155,7 +185,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             </div>
 
             {/* Role Info */}
-            <div className="py-3 flex items-center justify-between">
+            <div className="py-2.5 flex items-center justify-between border-b border-slate-100">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                 Account Role
               </span>
@@ -170,8 +200,67 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               </span>
             </div>
 
+            {/* Quick Navigation Shortcuts */}
+            <div className="py-2 space-y-1.5">
+              {isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountSheet(false);
+                      onNavigate('account-approvals');
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-50/60 border border-amber-200 text-slate-900 font-bold text-xs hover:bg-amber-100/60 transition-colors"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Users className="w-4 h-4 text-amber-700" />
+                      <span>Account Approvals & Staff List</span>
+                    </span>
+                    {pendingAccountsCount > 0 && (
+                      <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full animate-pulse">
+                        {pendingAccountsCount} pending
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountSheet(false);
+                      onNavigate('stock-approvals');
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-bold text-xs hover:bg-slate-100 transition-colors"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <CheckSquare className="w-4 h-4 text-amber-600" />
+                      <span>Stock Adjustment Approvals</span>
+                    </span>
+                    {pendingStockCount > 0 && (
+                      <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full">
+                        {pendingStockCount}
+                      </span>
+                    )}
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountSheet(false);
+                  onNavigate('audit-log');
+                }}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <History className="w-4 h-4 text-slate-500" />
+                  <span>Stock Audit Log</span>
+                </span>
+              </button>
+            </div>
+
             {/* Red Logout Button */}
-            <div className="pt-3 border-t border-slate-100">
+            <div className="pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => {

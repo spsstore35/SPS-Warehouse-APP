@@ -6,6 +6,7 @@ import {
   AuditLogEntry,
   User,
   Role,
+  UserStatus,
   GarmentSize,
   TargetAudience,
   GarmentCategory,
@@ -559,20 +560,27 @@ export async function fetchUsersFromDb(): Promise<User[]> {
   if (error) throw error;
   if (!data) return [];
 
-  return data.map((u: any) => ({
-    id: u.id,
-    name: u.full_name,
-    email: u.email,
-    password: u.password_plain || u.password_hash || undefined,
-    role: u.role as Role,
-    status: u.status,
-    requestedRole: (u.requested_role || u.role) as Role,
-    employeeId: u.employee_id || undefined,
-    avatarColor: u.avatar_color || undefined,
-    createdAt: u.created_at,
-    approvedAt: u.approved_at || undefined,
-    approvedBy: u.approved_by_name || undefined,
-  }));
+  return data.map((u: any) => {
+    const rawRole = String(u.role || u.requested_role || '').trim().toLowerCase();
+    const normalizedRole: Role = rawRole.includes('admin') ? 'admin' : 'worker';
+    const rawReqRole = String(u.requested_role || u.role || '').trim().toLowerCase();
+    const normalizedReqRole: Role = rawReqRole.includes('admin') ? 'admin' : 'worker';
+
+    return {
+      id: u.id,
+      name: u.full_name || u.name || 'User',
+      email: u.email,
+      password: u.password_plain || u.password_hash || undefined,
+      role: normalizedRole,
+      status: (u.status || 'active') as UserStatus,
+      requestedRole: normalizedReqRole,
+      employeeId: u.employee_id || undefined,
+      avatarColor: u.avatar_color || undefined,
+      createdAt: u.created_at,
+      approvedAt: u.approved_at || undefined,
+      approvedBy: u.approved_by_name || undefined,
+    };
+  });
 }
 
 export async function registerUserInDb(data: {
