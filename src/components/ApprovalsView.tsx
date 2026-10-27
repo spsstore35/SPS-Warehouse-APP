@@ -15,7 +15,9 @@ import {
   User as UserIcon,
   ShieldCheck,
   Package,
+  Trash2,
 } from 'lucide-react';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface ApprovalsViewProps {
   requests: AdjustmentRequest[];
@@ -25,6 +27,7 @@ interface ApprovalsViewProps {
   onReject: (requestId: string, adminNote?: string) => void;
   onApproveUser: (userId: string) => void;
   onRejectUser: (userId: string) => void;
+  onDeleteUser?: (userId: string) => void;
   onCreateUserDirectly?: (data: {
     name: string;
     email: string;
@@ -41,6 +44,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onReject,
   onApproveUser,
   onRejectUser,
+  onDeleteUser,
   onCreateUserDirectly,
 }) => {
   const [activeTab, setActiveTab] = useState<'stock' | 'staff'>('stock');
@@ -56,6 +60,13 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [newUserRole, setNewUserRole] = useState<Role>('worker');
   const [createError, setCreateError] = useState('');
   const [isSubmittingNewUser, setIsSubmittingNewUser] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+
+  const handleConfirmDeleteUser = () => {
+    if (!userToDelete || !onDeleteUser) return;
+    onDeleteUser(userToDelete.id);
+    setUserToDelete(null);
+  };
 
   const pendingRequests = requests.filter((r) => r.status === 'pending');
   const filteredRequests = requests.filter((r) => {
@@ -497,15 +508,37 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           </button>
                         </div>
                       ) : isActive ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-bold">
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Active & Approved</span>
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-bold">
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Active & Approved</span>
+                          </span>
+                          {onDeleteUser && (
+                            <button
+                              onClick={() => setUserToDelete(user)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-transparent hover:border-rose-200 transition-colors"
+                              title="Delete Account (Admin Only)"
+                            >
+                              <Trash2 className="w-4 h-4 text-rose-500" />
+                            </button>
+                          )}
+                        </div>
                       ) : (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-800 border border-rose-300 text-xs font-bold">
-                          <X className="w-3.5 h-3.5 text-rose-600" />
-                          <span>Declined</span>
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 text-rose-800 border border-rose-300 text-xs font-bold">
+                            <X className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Declined</span>
+                          </span>
+                          {onDeleteUser && (
+                            <button
+                              onClick={() => setUserToDelete(user)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-transparent hover:border-rose-200 transition-colors"
+                              title="Delete Record"
+                            >
+                              <Trash2 className="w-4 h-4 text-rose-500" />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -706,6 +739,19 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmation Modal for Staff User Account Deletion */}
+      <ConfirmDeleteModal
+        isOpen={!!userToDelete}
+        title="Delete Staff Account"
+        itemTitle={userToDelete?.name}
+        message={`Are you sure you want to delete the account for "${userToDelete?.name}" (${userToDelete?.email})?`}
+        details="This staff member will be permanently removed and will no longer be able to log in or submit stock adjustments."
+        confirmLabel="Yes, Delete"
+        cancelLabel="No, Cancel"
+        onConfirm={handleConfirmDeleteUser}
+        onCancel={() => setUserToDelete(null)}
+      />
     </div>
   );
 };

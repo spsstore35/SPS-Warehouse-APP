@@ -32,6 +32,8 @@ import {
   fetchProductsFromDb,
   upsertProductToDb,
   deleteProductFromDb,
+  deleteProductVariantFromDb,
+  deleteUserFromDb,
   updateVariantQuantityInDb,
   fetchAdjustmentRequestsFromDb,
   createAdjustmentRequestInDb,
@@ -58,6 +60,7 @@ import { ManageCategoriesModal } from './components/ManageCategoriesModal';
 import { ApprovalsView } from './components/ApprovalsView';
 import { WorkerRequestsView } from './components/WorkerRequestsView';
 import { AuditLogView } from './components/AuditLogView';
+import { ConfirmDeleteModal } from './components/ConfirmDeleteModal';
 import {
   Search,
   Plus,
@@ -77,8 +80,8 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>(() => getStoredProducts());
   const [requests, setRequests] = useState<AdjustmentRequest[]>(() => getStoredRequests());
   const [categories, setCategories] = useState<Category[]>(() => getStoredCategories());
-  // Start with clean audit logs as requested by user
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  // Audit logs preserved in state, storage, and Supabase
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => getStoredAuditLogs());
   const [dbStatus, setDbStatus] = useState<DbConnectionStatus>({ connected: false, tablesExist: false });
   const [isDbLoading, setIsDbLoading] = useState<boolean>(true);
   const [showManageCategoriesModal, setShowManageCategoriesModal] = useState(false);
@@ -100,6 +103,7 @@ export default function App() {
   } | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | undefined>(undefined);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
 
   // Toast notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -132,12 +136,6 @@ export default function App() {
     saveStoredAuditLogs(auditLogs);
   }, [auditLogs]);
 
-  // Clean activity on mount as requested: "remove ay all activities we abtedy 3la nadafa"
-  useEffect(() => {
-    clearStoredAuditLogs();
-    clearAuditLogsInDb().catch(() => {});
-  }, []);
-
   // Category handlers
   const handleAddCategory = async (name: string, description?: string) => {
     const newId = `cat_${Date.now()}`;
@@ -161,6 +159,10 @@ export default function App() {
   };
 
   const handleDeleteCategory = async (catId: string) => {
+    if (currentUser?.role !== 'admin') {
+      showToast('Only Admin can delete categories.');
+      return;
+    }
     const deletedCat = categories.find((c) => c.id === catId);
     const nextCats = categories.filter((c) => c.id !== catId);
     setCategories(nextCats);
@@ -185,14 +187,148 @@ export default function App() {
     } catch (err: any) {
       console.warn('Supabase category delete notice:', err?.message);
     }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'product_updated',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Deleted category "${deletedCat?.name || catId}"`,
+      details: 'Items in this category have been set to Unassigned.',
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
     showToast('Category deleted. Existing items are now Unassigned.');
   };
 
-  const handleClearAuditLogs = async () => {
-    setAuditLogs([]);
-    clearStoredAuditLogs();
-    await clearAuditLogsInDb();
-    showToast('Activity log history cleared.');
+  // Admin deletes entire product
+  const handleDeleteProduct = async (productId: string) => {
+    if (currentUser?.role !== 'admin') {
+      showToast('Only Admin can delete products.');
+      return;
+    }
+    const targetProd = products.find((p) => p.id === productId);
+    const nextProds = products.filter((p) => p.id !== productId);
+    setProducts(nextProds);
+    saveStoredProducts(nextProds);
+
+    try {
+      await deleteProductFromDb(productId);
+    } catch (err: any) {
+      console.warn('Supabase product delete notice:', err?.message);
+    }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'product_deleted',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Deleted product "${targetProd?.name || productId}"`,
+      details: `Product (SKU: ${targetProd?.sku}) and all variants removed by Admin.`,
+      productId,
+      productName: targetProd?.name,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Product "${targetProd?.name || 'Item'}" deleted.`);
+  };
+
+  // Admin deletes single variant size from a product
+  const handleDeleteVariant = async (productId: string, variantId: string) => {
+    if (currentUser?.role !== 'admin') {
+      showToast('Only Admin can delete variants.');
+      return;
+    }
+
+    let deletedVariantSize = '';
+    let deletedVariantColor = '';
+    let prodName = '';
+
+    const nextProducts = products.map((prod) => {
+      if (prod.id !== productId) return prod;
+      prodName = prod.name;
+      const targetVar = prod.variants.find((v) => v.id === variantId);
+      if (targetVar) {
+        deletedVariantSize = targetVar.size;
+        deletedVariantColor = targetVar.colorName;
+      }
+      const updatedVariants = prod.variants.filter((v) => v.id !== variantId);
+      const updatedTotal = updatedVariants.reduce((sum, v) => sum + v.quantity, 0);
+
+      const updatedProd = {
+        ...prod,
+        variants: updatedVariants,
+        totalQuantity: updatedTotal,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (detailProduct && detailProduct.id === productId) {
+        setDetailProduct(updatedProd);
+      }
+      return updatedProd;
+    });
+
+    setProducts(nextProducts);
+    saveStoredProducts(nextProducts);
+
+    try {
+      await deleteProductVariantFromDb(variantId);
+    } catch (err: any) {
+      console.warn('Supabase variant delete notice:', err?.message);
+    }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'variant_deleted',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Deleted size variant "${deletedVariantSize}" from "${prodName}"`,
+      details: `Variant (${deletedVariantSize} / ${deletedVariantColor}) deleted by Admin.`,
+      productId,
+      productName: prodName,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Size variant "${deletedVariantSize}" removed.`);
+  };
+
+  // Admin deletes staff account
+  const handleDeleteUser = async (userId: string) => {
+    if (currentUser?.role !== 'admin') {
+      showToast('Only Admin can delete user accounts.');
+      return;
+    }
+    const targetUser = users.find((u) => u.id === userId);
+    const nextUsers = users.filter((u) => u.id !== userId);
+    setUsers(nextUsers);
+
+    try {
+      const { saveStoredUsers } = await import('./utils/storage');
+      saveStoredUsers(nextUsers);
+      await deleteUserFromDb(userId);
+    } catch (err: any) {
+      console.warn('Supabase user delete notice:', err?.message);
+    }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'account_deleted',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Deleted user account "${targetUser?.name || 'User'}"`,
+      details: `Account for ${targetUser?.email} (${targetUser?.role}) permanently removed.`,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`User account for "${targetUser?.name || 'staff'}" deleted.`);
   };
 
   // Load live data from Supabase
@@ -203,11 +339,12 @@ export default function App() {
       setDbStatus(status);
 
       if (status.connected && status.tablesExist) {
-        const [dbProducts, dbRequests, dbUsers, dbCategories] = await Promise.allSettled([
+        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
           fetchUsersFromDb(),
           fetchCategoriesFromDb(),
+          fetchAuditLogsFromDb(),
         ]);
 
         if (dbProducts.status === 'fulfilled') {
@@ -221,6 +358,9 @@ export default function App() {
         }
         if (dbCategories.status === 'fulfilled' && dbCategories.value.length > 0) {
           setCategories(dbCategories.value);
+        }
+        if (dbLogs.status === 'fulfilled' && dbLogs.value.length > 0) {
+          setAuditLogs(dbLogs.value);
         }
 
         if (notify) {
@@ -1099,6 +1239,7 @@ export default function App() {
                       setProductToEdit(p);
                       setShowAddModal(true);
                     }}
+                    onDeleteProduct={(p) => setProductToDelete(p)}
                   />
                 ))}
               </div>
@@ -1116,6 +1257,7 @@ export default function App() {
             onReject={handleRejectRequest}
             onApproveUser={handleApproveUser}
             onRejectUser={handleRejectUser}
+            onDeleteUser={handleDeleteUser}
             onCreateUserDirectly={handleCreateUserDirectly}
           />
         )}
@@ -1131,7 +1273,7 @@ export default function App() {
 
         {/* VIEW 4: AUDIT LOG */}
         {activeView === 'audit-log' && (
-          <AuditLogView logs={auditLogs} onClearLogs={handleClearAuditLogs} />
+          <AuditLogView logs={auditLogs} />
         )}
 
         {/* Global Footer */}
@@ -1165,6 +1307,13 @@ export default function App() {
           onRequestAdjustment={(p, variant) => {
             setDetailProduct(null);
             setAdjustmentTarget({ product: p, variant });
+          }}
+          onDeleteProduct={handleDeleteProduct}
+          onDeleteVariant={handleDeleteVariant}
+          onEditProduct={(p) => {
+            setDetailProduct(null);
+            setProductToEdit(p);
+            setShowAddModal(true);
           }}
         />
       )}
@@ -1206,6 +1355,24 @@ export default function App() {
           onDeleteCategory={handleDeleteCategory}
         />
       )}
+
+      {/* Confirmation Modal for Direct Product Deletion from Catalog */}
+      <ConfirmDeleteModal
+        isOpen={!!productToDelete}
+        title="Delete Item"
+        itemTitle={productToDelete?.name}
+        message={`Are you sure you want to delete "${productToDelete?.name}" (${productToDelete?.sku})?`}
+        details="This will permanently delete the item and all its variant stock combinations from the catalog."
+        confirmLabel="Yes, Delete"
+        cancelLabel="No, Cancel"
+        onConfirm={() => {
+          if (productToDelete) {
+            handleDeleteProduct(productToDelete.id);
+            setProductToDelete(null);
+          }
+        }}
+        onCancel={() => setProductToDelete(null)}
+      />
 
       {/* Toast Notification Alert in Clean Light Mode */}
       {toastMessage && (

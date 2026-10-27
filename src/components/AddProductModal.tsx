@@ -10,6 +10,7 @@ import {
   Category,
 } from '../types/inventory';
 import { compressImage } from '../utils/imageCompressor';
+import { ImageCropModal } from './ImageCropModal';
 import {
   X,
   Camera,
@@ -24,6 +25,10 @@ import {
   FolderPlus,
   Tag,
   Boxes,
+  Trash2,
+  Crop,
+  Star,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface AddProductModalProps {
@@ -60,7 +65,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   onManageCategories,
 }) => {
   const isEditing = Boolean(productToEdit);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Basic Information
   const [name, setName] = useState(productToEdit?.name || '');
@@ -79,8 +85,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [fabricDetails, setFabricDetails] = useState(productToEdit?.fabricDetails || '');
   const [price, setPrice] = useState<number | ''>(productToEdit?.price || '');
 
-  // Photo
-  const [imagePreview, setImagePreview] = useState<string>(productToEdit?.image || '');
+  // Multi-image Support
+  const initialImages: string[] = productToEdit?.images && productToEdit.images.length > 0
+    ? productToEdit.images
+    : productToEdit?.image
+    ? [productToEdit.image]
+    : [];
+  const [images, setImages] = useState<string[]>(initialImages);
+  const [activeImageIdx, setActiveImageIdx] = useState<number>(0);
+  const [cropTargetImage, setCropTargetImage] = useState<string | null>(null);
+  const [cropTargetIdx, setCropTargetIdx] = useState<number | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
 
   // Check if item is standard (no sizes or colors, e.g. bracelet, non-apparel accessory)
@@ -175,21 +189,71 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   const [formError, setFormError] = useState('');
 
-  // Handle image upload from Mobile camera or gallery
-  const handleImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsProcessingImage(true);
-      const compressedDataUrl = await compressImage(file, 800, 800, 0.82);
-      setImagePreview(compressedDataUrl);
-    } catch (err) {
-      console.error('Failed to compress image:', err);
-      setFormError('Failed to process image. Please try another file.');
-    } finally {
+  // Handle image files from mobile camera or gallery
+  const handleFilePicked = (file: File, replaceIdx: number | null = null) => {
+    setIsProcessingImage(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        setCropTargetImage(dataUrl);
+        setCropTargetIdx(replaceIdx);
+      }
       setIsProcessingImage(false);
+    };
+    reader.onerror = () => {
+      setIsProcessingImage(false);
+      setFormError('Failed to read image file.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCameraChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFilePicked(file, null);
     }
+    e.target.value = '';
+  };
+
+  const handleGalleryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFilePicked(file, null);
+    }
+    e.target.value = '';
+  };
+
+  const handleCropComplete = (croppedDataUrl: string) => {
+    if (cropTargetIdx !== null && cropTargetIdx >= 0 && cropTargetIdx < images.length) {
+      setImages((prev) => {
+        const next = [...prev];
+        next[cropTargetIdx] = croppedDataUrl;
+        return next;
+      });
+    } else {
+      setImages((prev) => [...prev, croppedDataUrl]);
+      setActiveImageIdx(images.length);
+    }
+    setCropTargetImage(null);
+    setCropTargetIdx(null);
+  };
+
+  const handleRemoveImage = (idxToRemove: number) => {
+    setImages((prev) => prev.filter((_, idx) => idx !== idxToRemove));
+    if (activeImageIdx >= images.length - 1) {
+      setActiveImageIdx(Math.max(0, images.length - 2));
+    }
+  };
+
+  const handleSetPrimaryImage = (idxToPrimary: number) => {
+    if (idxToPrimary === 0) return;
+    setImages((prev) => {
+      const item = prev[idxToPrimary];
+      const remaining = prev.filter((_, idx) => idx !== idxToPrimary);
+      return [item, ...remaining];
+    });
+    setActiveImageIdx(0);
   };
 
   const handleGenerateSku = () => {
@@ -370,7 +434,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       description: description.trim() || `${name.trim()} item in warehouse inventory.`,
       fabricDetails: fabricDetails.trim(),
       price: price === '' ? undefined : Number(price),
-      image: imagePreview,
+      image: images[0] || '',
+      images: images,
       variants,
       totalQuantity: variants.reduce((sum, v) => sum + v.quantity, 0),
       createdAt: productToEdit ? productToEdit.createdAt : new Date().toISOString(),
@@ -382,109 +447,192 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
-        {/* Mobile handle */}
-        <div className="sm:hidden w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-3" />
+    <>
+      {/* Interactive Image Cropper Modal */}
+      {cropTargetImage && (
+        <ImageCropModal
+          imageSrc={cropTargetImage}
+          onCropComplete={handleCropComplete}
+          onClose={() => {
+            setCropTargetImage(null);
+            setCropTargetIdx(null);
+          }}
+        />
+      )}
 
-        {/* Modal Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold">
-              <Package className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                {isEditing ? 'Edit Item' : 'New Item'}
-              </h2>
-              <p className="text-xs text-slate-500">
-                Configure item details, description, and inventory stock
-              </p>
-            </div>
-          </div>
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+          {/* Mobile handle */}
+          <div className="sm:hidden w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-3" />
 
-          <button
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Form Content */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto flex-1 space-y-6">
-          {/* Section 1: Mobile Photo Upload & Basic Details */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
-            {/* Photo Upload Area */}
-            <div className="md:col-span-4 space-y-2">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Item Photo (Optional)
-              </label>
-
-              {imagePreview ? (
-                <div className="relative aspect-[4/3] rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden shadow-inner group">
-                  <img
-                    src={imagePreview}
-                    alt="Product Preview"
-                    className="w-full h-full object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setImagePreview('')}
-                    className="absolute top-2 right-2 px-2.5 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-white text-[11px] font-bold backdrop-blur-sm transition-all shadow-sm"
-                  >
-                    Clear Photo
-                  </button>
-
-                  {isProcessingImage && (
-                    <div className="absolute inset-0 bg-white/80 flex items-center justify-center text-xs font-bold text-slate-900">
-                      <RefreshCw className="w-5 h-5 animate-spin mr-2 text-amber-600" />
-                      Compressing photo...
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="relative aspect-[4/3] rounded-2xl bg-slate-50 border-2 border-dashed border-slate-300 overflow-hidden flex flex-col items-center justify-center p-4 text-center shadow-inner group hover:bg-slate-100/70 transition-colors">
-                  <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 text-slate-400 flex items-center justify-center mb-2 shadow-sm">
-                    <Camera className="w-6 h-6 stroke-[1.5]" />
-                  </div>
-                  <span className="text-xs font-bold text-slate-800">No Image (Blank)</span>
-                  <span className="text-[11px] text-slate-400 mt-0.5">Upload below or leave empty</span>
-                </div>
-              )}
-
-              {/* Upload Actions */}
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  ref={fileInputRef}
-                  onChange={handleImageFile}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[44px] border border-slate-200"
-                >
-                  <Camera className="w-4 h-4 text-amber-600" />
-                  <span>Camera</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[44px] border border-slate-200"
-                >
-                  <Upload className="w-4 h-4 text-sky-600" />
-                  <span>Upload</span>
-                </button>
+          {/* Modal Header */}
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold">
+                <Package className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                  {isEditing ? 'Edit Item' : 'New Item'}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Configure item details, description, and inventory stock
+                </p>
               </div>
             </div>
 
-            {/* Product Meta Details */}
-            <div className="md:col-span-8 space-y-3.5">
+            <button
+              onClick={onClose}
+              className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Form Content */}
+          <form onSubmit={handleSubmit} className="p-5 overflow-y-auto flex-1 space-y-6">
+            {/* Section 1: Mobile Photo Upload & Basic Details */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+              {/* Photo Upload Area (Supports Multiple Photos + Cropping) */}
+              <div className="md:col-span-5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Item Photos ({images.length})
+                  </label>
+                  {images.length > 0 && (
+                    <span className="text-[10px] text-amber-700 font-bold">
+                      First photo is primary cover
+                    </span>
+                  )}
+                </div>
+
+                {images.length > 0 && images[activeImageIdx] ? (
+                  <div className="space-y-2">
+                    <div className="relative aspect-[4/3] rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden shadow-inner group">
+                      <img
+                        src={images[activeImageIdx]}
+                        alt="Product Preview"
+                        className="w-full h-full object-cover"
+                      />
+                      
+                      {/* Cover Badge */}
+                      {activeImageIdx === 0 && (
+                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-black text-[10px] shadow-sm flex items-center gap-1">
+                          <Star className="w-3 h-3 fill-current" /> Cover Photo
+                        </div>
+                      )}
+
+                      {/* Action buttons on active photo */}
+                      <div className="absolute top-2 right-2 flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCropTargetImage(images[activeImageIdx]);
+                            setCropTargetIdx(activeImageIdx);
+                          }}
+                          className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-white backdrop-blur-sm shadow-sm"
+                          title="Re-crop Photo"
+                        >
+                          <Crop className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveImage(activeImageIdx)}
+                          className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-700 text-white shadow-sm"
+                          title="Delete Photo"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {activeImageIdx !== 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetPrimaryImage(activeImageIdx)}
+                          className="absolute bottom-2 left-2 px-2.5 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-white text-[10px] font-bold backdrop-blur-sm"
+                        >
+                          Make Cover
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Thumbnail gallery */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                      {images.map((img, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setActiveImageIdx(idx)}
+                          className={`relative w-12 h-12 rounded-lg overflow-hidden border-2 shrink-0 transition-all ${
+                            activeImageIdx === idx
+                              ? 'border-amber-500 ring-2 ring-amber-500/20'
+                              : 'border-slate-200 opacity-70 hover:opacity-100'
+                          }`}
+                        >
+                          <img src={img} alt="" className="w-full h-full object-cover" />
+                          {idx === 0 && (
+                            <span className="absolute bottom-0 inset-x-0 bg-amber-500 text-[8px] font-black text-center text-slate-950 py-0.2">
+                              COVER
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative aspect-[4/3] rounded-2xl bg-slate-50 border-2 border-dashed border-slate-300 overflow-hidden flex flex-col items-center justify-center p-4 text-center shadow-inner group hover:bg-slate-100/70 transition-colors">
+                    <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 text-slate-400 flex items-center justify-center mb-2 shadow-sm">
+                      <Camera className="w-6 h-6 stroke-[1.5]" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-800">No Photos Yet</span>
+                    <span className="text-[11px] text-slate-400 mt-0.5">
+                      Take photo or upload multiple images
+                    </span>
+                  </div>
+                )}
+
+                {/* Mobile Camera & Gallery Action Buttons */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {/* Camera file input (for mobile device camera) */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    ref={cameraInputRef}
+                    onChange={handleCameraChange}
+                    className="hidden"
+                  />
+                  {/* Photo library / gallery input (standard gallery, supports mobile & desktop) */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={galleryInputRef}
+                    onChange={handleGalleryChange}
+                    className="hidden"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="py-2 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[42px] border border-slate-200"
+                  >
+                    <Camera className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Camera</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="py-2 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors min-h-[42px] border border-slate-200"
+                  >
+                    <Upload className="w-4 h-4 text-sky-600 shrink-0" />
+                    <span>Gallery</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Product Meta Details */}
+              <div className="md:col-span-7 space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
                   Item Name *
@@ -1121,5 +1269,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
         </form>
       </div>
     </div>
+  </>
   );
 };

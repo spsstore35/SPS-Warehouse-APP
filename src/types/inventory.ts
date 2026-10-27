@@ -64,7 +64,8 @@ export interface Product {
   description: string;
   fabricDetails?: string;
   price?: number; // wholesale / retail tag
-  image: string; // Base64 or fallback SVG/data URL
+  image: string; // Primary image / Base64 or fallback SVG
+  images?: string[]; // Multiple photos for the product
   variants: ProductVariant[];
   totalQuantity: number;
   location?: string; // e.g. "Rack B-04 / Shelf 2"
@@ -115,6 +116,8 @@ export interface AuditLogEntry {
     | 'product_created'
     | 'product_updated'
     | 'product_deleted'
+    | 'variant_deleted'
+    | 'account_deleted'
     | 'request_approved'
     | 'request_rejected'
     | 'staff_approved'

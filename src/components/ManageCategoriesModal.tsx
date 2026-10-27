@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Category, User } from '../types/inventory';
 import { X, Plus, Trash2, FolderPlus, Layers, AlertCircle, CheckCircle2 } from 'lucide-react';
 
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+
 interface ManageCategoriesModalProps {
   categories: Category[];
   currentUser: User;
@@ -22,6 +24,8 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [isDeletingCategory, setIsDeletingCategory] = useState(false);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,17 +54,17 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
     }
   };
 
-  const handleDelete = async (cat: Category) => {
-    if (!window.confirm(`Are you sure you want to delete category "${cat.name}"?`)) {
-      return;
-    }
-
+  const handleConfirmDelete = async () => {
+    if (!categoryToDelete) return;
     try {
-      setDeletingId(cat.id);
-      await onDeleteCategory(cat.id);
+      setIsDeletingCategory(true);
+      setDeletingId(categoryToDelete.id);
+      await onDeleteCategory(categoryToDelete.id);
+      setCategoryToDelete(null);
     } catch (err: any) {
-      alert(`Could not delete category: ${err.message || 'Unknown error'}`);
+      setErrorMsg(`Could not delete category: ${err.message || 'Unknown error'}`);
     } finally {
+      setIsDeletingCategory(false);
       setDeletingId(null);
     }
   };
@@ -159,7 +163,7 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
                 <button
                   type="button"
                   disabled={deletingId === cat.id}
-                  onClick={() => handleDelete(cat)}
+                  onClick={() => setCategoryToDelete(cat)}
                   title={`Delete category "${cat.name}"`}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
                 >
@@ -180,6 +184,20 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Confirmation Modal with Red Yes button & No button */}
+      <ConfirmDeleteModal
+        isOpen={!!categoryToDelete}
+        title="Delete Category"
+        itemTitle={categoryToDelete?.name}
+        message={`Are you sure you want to delete category "${categoryToDelete?.name}"?`}
+        details="All existing products currently linked to this category will automatically become 'Unassigned'. They will not be deleted."
+        confirmLabel="Yes, Delete"
+        cancelLabel="No, Cancel"
+        isDeleting={isDeletingCategory}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setCategoryToDelete(null)}
+      />
     </div>
   );
 };

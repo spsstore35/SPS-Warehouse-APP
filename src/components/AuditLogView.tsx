@@ -7,19 +7,13 @@ interface AuditLogViewProps {
   onClearLogs?: () => void;
 }
 
-export const AuditLogView: React.FC<AuditLogViewProps> = ({ logs, onClearLogs }) => {
+export const AuditLogView: React.FC<AuditLogViewProps> = ({ logs }) => {
   const [filter, setFilter] = useState<string>('all');
 
   const filteredLogs = logs.filter((log) => {
     if (filter === 'all') return true;
     return log.action === filter;
   });
-
-  const handleClear = () => {
-    if (window.confirm('Are you sure you want to clear all recorded activity logs? This will reset the audit timeline.')) {
-      onClearLogs?.();
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -32,16 +26,6 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ logs, onClearLogs })
             Complete traceability of all stock adjustments, worker submissions, and master catalog edits.
           </p>
         </div>
-
-        {onClearLogs && logs.length > 0 && (
-          <button
-            onClick={handleClear}
-            className="self-start sm:self-auto px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Clear Activity History</span>
-          </button>
-        )}
       </div>
 
       {/* Filter Tabs */}

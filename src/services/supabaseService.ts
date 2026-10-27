@@ -223,11 +223,21 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
   });
 
   return productsData.map((p: any) => {
-    const variants = variantsByProdId[p.id] || [];
+    const rawVariants = variantsByProdId[p.id] || [];
+    
+    // Deduplicate variants in memory by size + colorName (keeping the latest one)
+    const dedupedVariantsMap = new Map<string, ProductVariant>();
+    rawVariants.forEach((v) => {
+      const key = `${v.size}_${v.colorName}`.toLowerCase();
+      // Keep or update to the one with non-zero stock if duplicate
+      if (!dedupedVariantsMap.has(key) || v.quantity > 0) {
+        dedupedVariantsMap.set(key, v);
+      }
+    });
+    const variants = Array.from(dedupedVariantsMap.values());
     const totalQuantity = variants.reduce((sum, v) => sum + v.quantity, 0);
 
     // Resolve category name accurately:
-    // If p.category is missing or defaults, look up p.category_id in dynamicCatMap
     let resolvedCategory = p.category;
     const catId = p.category_id ? String(p.category_id).trim() : '';
     const catIdLower = catId.toLowerCase();
@@ -249,6 +259,27 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
 
     const resolvedAudience = p.target_audience_id || p.target_audience || 'Unisex';
 
+    // Parse primary image and multi-image list
+    let primaryImage = '';
+    let imageList: string[] = [];
+    if (p.image_url) {
+      if (typeof p.image_url === 'string' && p.image_url.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(p.image_url);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            imageList = parsed;
+            primaryImage = parsed[0] || '';
+          }
+        } catch {
+          primaryImage = p.image_url;
+          imageList = [p.image_url];
+        }
+      } else {
+        primaryImage = p.image_url;
+        imageList = [p.image_url];
+      }
+    }
+
     return {
       id: p.id,
       sku: p.sku,
@@ -259,7 +290,8 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
       description: p.description || '',
       fabricDetails: p.fabric_details || '',
       price: p.price ? Number(p.price) : undefined,
-      image: p.image_url || '',
+      image: primaryImage,
+      images: imageList,
       variants,
       totalQuantity,
       createdAt: p.created_at,
@@ -270,8 +302,16 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
 
 export async function upsertProductToDb(product: Product): Promise<void> {
   // 1. Upsert product
-  // Note: Modern relational schema uses 'category_id' referencing categories(id).
-  // We do NOT send 'category' by default to avoid PostgREST "Could not find 'category' column" error.
+  const imagesToStore = product.images && product.images.length > 0
+    ? product.images
+    : product.image
+    ? [product.image]
+    : [];
+
+  const storedImageUrl = imagesToStore.length > 1
+    ? JSON.stringify(imagesToStore)
+    : (imagesToStore[0] || product.image || '');
+
   const productPayload: Record<string, any> = {
     id: product.id,
     sku: product.sku,
@@ -281,7 +321,7 @@ export async function upsertProductToDb(product: Product): Promise<void> {
     description: product.description || '',
     fabric_details: product.fabricDetails || null,
     price: product.price || null,
-    image_url: product.image || '',
+    image_url: storedImageUrl,
     updated_at: new Date().toISOString(),
   };
 
@@ -337,9 +377,42 @@ export async function upsertProductToDb(product: Product): Promise<void> {
 
   if (prodError) throw prodError;
 
-  // 2. Upsert variants
+  // 2. Upsert variants & Prune stale variants for this product to prevent duplicate rows
   if (product.variants && product.variants.length > 0) {
-    const variantRows = product.variants.map((v) => ({
+    // Deduplicate by size + colorName before sending to Supabase
+    const dedupedVariantsMap = new Map<string, ProductVariant>();
+    product.variants.forEach((v) => {
+      const key = `${v.size}_${v.colorName}`.toLowerCase();
+      dedupedVariantsMap.set(key, v);
+    });
+    const cleanVariants = Array.from(dedupedVariantsMap.values());
+
+    const validVariantIds = cleanVariants.map((v) => v.id);
+
+    // Prune stale variants in database that no longer match the product's variants
+    try {
+      if (validVariantIds.length > 0) {
+        // Fetch current variant IDs in DB for this product
+        const { data: existingRows } = await supabase
+          .from('product_variants')
+          .select('id')
+          .eq('product_id', product.id);
+
+        if (existingRows && existingRows.length > 0) {
+          const toDelete = existingRows
+            .map((r) => r.id)
+            .filter((id) => !validVariantIds.includes(id));
+
+          if (toDelete.length > 0) {
+            await supabase.from('product_variants').delete().in('id', toDelete);
+          }
+        }
+      }
+    } catch (pruneErr) {
+      console.warn('Notice pruning stale variants:', pruneErr);
+    }
+
+    const variantRows = cleanVariants.map((v) => ({
       id: v.id,
       product_id: product.id,
       size: v.size,
@@ -364,7 +437,21 @@ export async function upsertProductToDb(product: Product): Promise<void> {
 }
 
 export async function deleteProductFromDb(productId: string): Promise<void> {
+  // Cascades in Supabase, but we also proactively clean product_variants
+  try {
+    await supabase.from('product_variants').delete().eq('product_id', productId);
+  } catch {}
   const { error } = await supabase.from('products').delete().eq('id', productId);
+  if (error) throw error;
+}
+
+export async function deleteProductVariantFromDb(variantId: string): Promise<void> {
+  const { error } = await supabase.from('product_variants').delete().eq('id', variantId);
+  if (error) throw error;
+}
+
+export async function deleteUserFromDb(userId: string): Promise<void> {
+  const { error } = await supabase.from('profiles').delete().eq('id', userId);
   if (error) throw error;
 }
 
