@@ -128,4 +128,14 @@ export interface AuditLogEntry {
   details?: string;
   productId?: string;
   productName?: string;
+  productImage?: string;
+  variantSize?: string;
+  variantColor?: string;
+  oldQuantity?: number;
+  newQuantity?: number;
+  delta?: number;
+  totalQuantityBefore?: number;
+  totalQuantityAfter?: number;
+  reason?: string;
+  note?: string;
 }

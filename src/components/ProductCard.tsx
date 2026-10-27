@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product, Role, ProductVariant } from '../types/inventory';
-import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2 } from 'lucide-react';
+import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
@@ -20,7 +20,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onDeleteProduct,
 }) => {
   const [imageError, setImageError] = useState(false);
+  const [activeImgIdx, setActiveImgIdx] = useState(0);
   const isAdmin = userRole === 'admin';
+
+  // Gather all photos available
+  const allCardImages = (product.images && product.images.length > 0)
+    ? product.images
+    : (product.image ? [product.image] : []);
+  const currentImage = allCardImages[activeImgIdx] || product.image;
 
   // Extract unique colors and sizes
   const uniqueColors = Array.from(
@@ -42,9 +49,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col group">
       {/* Product Image Box */}
       <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden flex items-center justify-center border-b border-slate-100">
-        {!imageError && product.image ? (
+        {!imageError && currentImage ? (
           <img
-            src={product.image}
+            src={currentImage}
             alt={product.name}
             onError={() => setImageError(true)}
             referrerPolicy="no-referrer"
@@ -55,6 +62,46 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <ImageIcon className="w-10 h-10 mb-2 stroke-[1.5]" />
             <span className="text-xs font-medium text-slate-500">{product.category}</span>
           </div>
+        )}
+
+        {/* Glassy Left and Right arrows for cycling photos */}
+        {allCardImages.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveImgIdx((prev) => (prev > 0 ? prev - 1 : allCardImages.length - 1));
+              }}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-80 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 hover:shadow-xl"
+              title="Previous photo"
+            >
+              <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveImgIdx((prev) => (prev < allCardImages.length - 1 ? prev + 1 : 0));
+              }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-80 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 hover:shadow-xl"
+              title="Next photo"
+            >
+              <ChevronRight className="w-4 h-4 stroke-[2.5]" />
+            </button>
+
+            {/* Dots indicator at the bottom */}
+            <div className="absolute bottom-2.5 inset-x-0 flex items-center justify-center gap-1 z-15 pointer-events-none">
+              {allCardImages.map((_, i) => (
+                <span
+                  key={i}
+                  className={`h-1.5 rounded-full transition-all shadow-xs ${
+                    activeImgIdx === i ? 'w-4 bg-white shadow-md' : 'w-1.5 bg-white/50 backdrop-blur-xs'
+                  }`}
+                />
+              ))}
+            </div>
+          </>
         )}
 
         {/* Target Audience Badge */}

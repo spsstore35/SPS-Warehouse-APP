@@ -61,6 +61,7 @@ import { ApprovalsView } from './components/ApprovalsView';
 import { WorkerRequestsView } from './components/WorkerRequestsView';
 import { AuditLogView } from './components/AuditLogView';
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal';
+import { ActivityDetailModal } from './components/ActivityDetailModal';
 import {
   Search,
   Plus,
@@ -71,6 +72,8 @@ import {
   X,
   RefreshCw,
   FolderPlus,
+  ChevronRight,
+  Eye,
 } from 'lucide-react';
 
 export default function App() {
@@ -105,14 +108,18 @@ export default function App() {
   const [productToEdit, setProductToEdit] = useState<Product | undefined>(undefined);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
 
-  // Toast notification
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Rich Toast notification & Activity Detail
+  const [toastNotification, setToastNotification] = useState<{
+    message: string;
+    log?: AuditLogEntry;
+  } | null>(null);
+  const [selectedActivityLog, setSelectedActivityLog] = useState<AuditLogEntry | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  const showToast = (msg: string, log?: AuditLogEntry) => {
+    setToastNotification({ message: msg, log });
     setTimeout(() => {
-      setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 4000);
+      setToastNotification((prev) => (prev?.message === msg ? null : prev));
+    }, 6000);
   };
 
   // Sync to localStorage as offline cache
@@ -445,6 +452,8 @@ export default function App() {
       details: `${product.variants.length} size/color variants (${product.totalQuantity} total units).`,
       productId: product.id,
       productName: product.name,
+      productImage: product.image || product.images?.[0],
+      totalQuantityAfter: product.totalQuantity,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
 
@@ -458,7 +467,7 @@ export default function App() {
     // Then record audit log
     insertAuditLogInDb(newLog).catch(() => {});
 
-    showToast(isEdit ? 'Product updated in Supabase' : 'New item saved to Supabase');
+    showToast(isEdit ? `Updated "${product.name}"` : `Added "${product.name}" to inventory`, newLog);
     setProductToEdit(undefined);
   };
 
@@ -555,23 +564,33 @@ export default function App() {
 
     // Audit log
     const delta = data.newQuantity - oldQty;
+    const oldProductTotal = affectedProduct?.totalQuantity || 0;
+    const newProductTotal = oldProductTotal + delta;
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
       action: 'stock_adjusted',
-      actorName: currentUser?.name || 'Admin Boss',
+      actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
-      summary: `Direct stock adjustment for "${affectedProduct?.name || 'Product'}"`,
-      details: `${variantSize} / ${variantColor}: ${oldQty} → ${data.newQuantity} (${
-        delta > 0 ? `+${delta}` : delta
-      } units). Reason: ${data.reason}. ${data.note ? `Note: ${data.note}` : ''}`,
+      summary: `Updated inventory for "${affectedProduct?.name || 'Item'}"`,
+      details: `Added to inventory: Size ${variantSize}${variantColor ? ` (${variantColor})` : ''} adjusted from ${oldQty} to ${data.newQuantity} units (${delta > 0 ? `+${delta}` : delta} units). Total units changed from ${oldProductTotal} to ${newProductTotal} units. Reason: ${data.reason}. ${data.note ? `Note: ${data.note}` : ''}`,
       productId: data.productId,
       productName: affectedProduct?.name,
+      productImage: affectedProduct?.image || affectedProduct?.images?.[0],
+      variantSize,
+      variantColor,
+      oldQuantity: oldQty,
+      newQuantity: data.newQuantity,
+      delta,
+      totalQuantityBefore: oldProductTotal,
+      totalQuantityAfter: newProductTotal,
+      reason: data.reason,
+      note: data.note,
     };
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
 
-    showToast(`Inventory updated to ${data.newQuantity} units in Supabase.`);
+    showToast(`Inventory updated: ${affectedProduct?.name || 'Item'} (${variantSize}) is now ${data.newQuantity} units.`, newLog);
   };
 
   // Admin Approves a Worker Request (Persisted to Supabase)
@@ -626,6 +645,11 @@ export default function App() {
     });
 
     // 4. Record Audit Log
+    const matchedProd = products.find((p) => p.id === targetReq.productId);
+    const oldProductTotal = matchedProd?.totalQuantity || 0;
+    const delta = targetReq.requestedQuantity - targetReq.currentQuantity;
+    const nextProductTotal = oldProductTotal + delta;
+
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -635,18 +659,28 @@ export default function App() {
       summary: `Approved stock change for "${targetReq.productName}"`,
       details: `Worker ${targetReq.workerName} requested ${targetReq.currentQuantity} → ${
         targetReq.requestedQuantity
-      } (${targetReq.delta > 0 ? `+${targetReq.delta}` : targetReq.delta} units) for Size ${
+      } (${delta > 0 ? `+${delta}` : delta} units) for Size ${
         targetReq.size
-      } / ${targetReq.colorName}. Reason: ${targetReq.reason}.${
+      } / ${targetReq.colorName}. Total units changed from ${oldProductTotal} to ${nextProductTotal} units. Reason: ${targetReq.reason}.${
         adminNote ? ` Admin note: ${adminNote}` : ''
       }`,
       productId: targetReq.productId,
       productName: targetReq.productName,
+      productImage: targetReq.productImage,
+      variantSize: targetReq.size,
+      variantColor: targetReq.colorName,
+      oldQuantity: targetReq.currentQuantity,
+      newQuantity: targetReq.requestedQuantity,
+      delta,
+      totalQuantityBefore: oldProductTotal,
+      totalQuantityAfter: nextProductTotal,
+      reason: targetReq.reason,
+      note: adminNote || targetReq.workerNote,
     };
 
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
-    showToast(`Approved! Stock for ${targetReq.productName} updated in Supabase.`);
+    showToast(`Approved! Stock for ${targetReq.productName} updated to ${targetReq.requestedQuantity} units.`, newLog);
   };
 
   // Admin Rejects a Worker Request (Persisted to Supabase)
@@ -1273,7 +1307,14 @@ export default function App() {
 
         {/* VIEW 4: AUDIT LOG */}
         {activeView === 'audit-log' && (
-          <AuditLogView logs={auditLogs} />
+          <AuditLogView
+            logs={auditLogs}
+            products={products}
+            onViewProduct={(pId) => {
+              const p = products.find((prod) => prod.id === pId);
+              if (p) setDetailProduct(p);
+            }}
+          />
         )}
 
         {/* Global Footer */}
@@ -1374,16 +1415,71 @@ export default function App() {
         onCancel={() => setProductToDelete(null)}
       />
 
-      {/* Toast Notification Alert in Clean Light Mode */}
-      {toastMessage && (
-        <div className="fixed bottom-20 md:bottom-6 right-4 left-4 md:left-auto md:max-w-md z-50 p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xl text-xs text-slate-900 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200">
-          <div className="flex items-center gap-2 min-w-0">
-            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span className="truncate font-semibold">{toastMessage}</span>
+      {/* MODAL 5: Detailed Activity Breakdown Modal */}
+      {selectedActivityLog && (
+        <ActivityDetailModal
+          log={selectedActivityLog}
+          product={products.find(
+            (p) =>
+              p.id === selectedActivityLog.productId ||
+              p.name === selectedActivityLog.productName
+          )}
+          onClose={() => setSelectedActivityLog(null)}
+          onViewProduct={(pId) => {
+            const p = products.find((prod) => prod.id === pId);
+            if (p) {
+              setDetailProduct(p);
+              setActiveView('inventory');
+            }
+          }}
+        />
+      )}
+
+      {/* Toast Notification Alert with Click-to-open Detailed Breakdown */}
+      {toastNotification && (
+        <div
+          onClick={() => {
+            if (toastNotification.log) {
+              setSelectedActivityLog(toastNotification.log);
+              setToastNotification(null);
+            }
+          }}
+          className={`fixed bottom-20 md:bottom-6 right-4 left-4 md:left-auto md:max-w-md z-50 p-3 sm:p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xl text-xs text-slate-900 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200 transition-all ${
+            toastNotification.log
+              ? 'cursor-pointer hover:border-amber-400 hover:shadow-amber-500/10'
+              : ''
+          }`}
+          title={toastNotification.log ? 'Click to view detailed breakdown' : undefined}
+        >
+          {toastNotification.log?.productImage && (
+            <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 shadow-xs">
+              <img
+                src={toastNotification.log.productImage}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 font-bold text-slate-900">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="truncate">{toastNotification.message}</span>
+            </div>
+            {toastNotification.log && (
+              <div className="text-[11px] text-amber-800 font-bold mt-0.5 flex items-center gap-1">
+                <Eye className="w-3 h-3 text-amber-600" />
+                <span>Tap to view detailed breakdown</span>
+                <span aria-hidden="true">→</span>
+              </div>
+            )}
           </div>
           <button
-            onClick={() => setToastMessage(null)}
-            className="text-slate-400 hover:text-slate-700 p-1"
+            onClick={(e) => {
+              e.stopPropagation();
+              setToastNotification(null);
+            }}
+            className="text-slate-400 hover:text-slate-700 p-1 shrink-0"
+            title="Dismiss"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1391,4 +1487,4 @@ export default function App() {
       )}
     </div>
   );
-}
+};

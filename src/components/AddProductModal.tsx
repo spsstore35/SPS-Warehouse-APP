@@ -29,6 +29,8 @@ import {
   Crop,
   Star,
   Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 interface AddProductModalProps {
@@ -523,7 +525,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       )}
 
                       {/* Action buttons on active photo */}
-                      <div className="absolute top-2 right-2 flex items-center gap-1">
+                      <div className="absolute top-2 right-2 flex items-center gap-1 z-10">
                         <button
                           type="button"
                           onClick={() => {
@@ -544,6 +546,37 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
+
+                      {/* Glassy Left and Right arrows for cycling photos */}
+                      {images.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveImageIdx((prev) => (prev > 0 ? prev - 1 : images.length - 1))
+                            }
+                            className="absolute left-2.5 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-85 hover:opacity-100"
+                            title="Previous photo"
+                          >
+                            <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveImageIdx((prev) => (prev < images.length - 1 ? prev + 1 : 0))
+                            }
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-85 hover:opacity-100"
+                            title="Next photo"
+                          >
+                            <ChevronRight className="w-5 h-5 stroke-[2.5]" />
+                          </button>
+
+                          {/* Indicator pill */}
+                          <div className="absolute bottom-2 right-2 z-10 px-2 py-0.5 rounded-full backdrop-blur-md bg-slate-900/60 border border-white/20 text-[10px] font-bold text-white shadow-sm pointer-events-none">
+                            {activeImageIdx + 1} / {images.length}
+                          </div>
+                        </>
+                      )}
 
                       {activeImageIdx !== 0 && (
                         <button

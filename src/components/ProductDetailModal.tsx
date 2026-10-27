@@ -10,6 +10,8 @@ import {
   Edit3,
   Layers,
   Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -168,18 +170,49 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
             {/* Multi-image preview */}
             <div className="sm:col-span-5 space-y-2">
-              <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center">
+              <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center group">
                 {allImages.length > 0 && allImages[activeImageIdx] ? (
                   <img
                     src={allImages[activeImageIdx]}
                     alt={product.name}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover transition-transform duration-300"
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center text-slate-400 p-4">
                     <ImageIcon className="w-8 h-8 mb-1" />
                     <span className="text-[11px]">No photo</span>
                   </div>
+                )}
+
+                {/* Glassy Left and Right navigation arrows */}
+                {allImages.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveImageIdx((prev) => (prev > 0 ? prev - 1 : allImages.length - 1))
+                      }
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-85 hover:opacity-100"
+                      title="Previous photo"
+                    >
+                      <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setActiveImageIdx((prev) => (prev < allImages.length - 1 ? prev + 1 : 0))
+                      }
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-85 hover:opacity-100"
+                      title="Next photo"
+                    >
+                      <ChevronRight className="w-5 h-5 stroke-[2.5]" />
+                    </button>
+
+                    {/* Counter Pill */}
+                    <div className="absolute bottom-2.5 right-2.5 z-10 px-2.5 py-0.5 rounded-full backdrop-blur-md bg-slate-900/60 border border-white/20 text-[10px] font-bold text-white shadow-sm pointer-events-none">
+                      {activeImageIdx + 1} / {allImages.length}
+                    </div>
+                  </>
                 )}
               </div>
 
