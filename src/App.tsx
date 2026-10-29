@@ -432,36 +432,53 @@ export default function App() {
   // Product CRUD (Persisted to Supabase)
   const handleSaveProduct = async (product: Product) => {
     const isEdit = products.some((p) => p.id === product.id);
+    const isAdmin = isUserAdmin(currentUser);
+
+    // If staff is creating a product (not editing existing approved), it is pending approval
+    const finalProd: Product = {
+      ...product,
+      status: isEdit ? (product.status || 'active') : (isAdmin ? 'active' : 'pending'),
+      createdByRole: product.createdByRole || (isAdmin ? 'admin' : 'worker'),
+      createdByName: product.createdByName || currentUser?.name || 'Staff',
+      createdById: product.createdById || currentUser?.id,
+    };
+
     let updatedProducts: Product[];
     if (isEdit) {
-      updatedProducts = products.map((p) => (p.id === product.id ? product : p));
+      updatedProducts = products.map((p) => (p.id === finalProd.id ? finalProd : p));
     } else {
-      updatedProducts = [product, ...products];
+      updatedProducts = [finalProd, ...products];
     }
 
     setProducts(updatedProducts);
 
     // Audit log
+    const actionType = isEdit
+      ? 'product_updated'
+      : (isAdmin ? 'product_created' : 'product_submitted');
+
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
-      action: isEdit ? 'product_updated' : 'product_created',
-      actorName: currentUser?.name || 'Admin',
-      actorRole: currentUser?.role || 'admin',
+      action: actionType as any,
+      actorName: currentUser?.name || (isAdmin ? 'Admin' : 'Staff'),
+      actorRole: currentUser?.role || 'worker',
       summary: isEdit
-        ? `Updated garment "${product.name}"`
-        : `Added new garment "${product.name}"`,
-      details: `${product.variants.length} size/color variants (${product.totalQuantity} total units).`,
-      productId: product.id,
-      productName: product.name,
-      productImage: product.image || product.images?.[0],
-      totalQuantityAfter: product.totalQuantity,
+        ? `Updated garment "${finalProd.name}"`
+        : isAdmin
+        ? `Added new garment "${finalProd.name}"`
+        : `Submitted new item "${finalProd.name}" for Admin approval`,
+      details: `${finalProd.variants.length} size/color variants (${finalProd.totalQuantity} total units).`,
+      productId: finalProd.id,
+      productName: finalProd.name,
+      productImage: finalProd.image || finalProd.images?.[0],
+      totalQuantityAfter: finalProd.totalQuantity,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
 
     // Save product to Supabase FIRST so foreign key constraint is satisfied before writing audit logs
     try {
-      await upsertProductToDb(product);
+      await upsertProductToDb(finalProd);
     } catch (err: any) {
       console.warn('Supabase upsert product error:', err?.message);
     }
@@ -469,8 +486,89 @@ export default function App() {
     // Then record audit log
     insertAuditLogInDb(newLog).catch(() => {});
 
-    showToast(isEdit ? `Updated "${product.name}"` : `Added "${product.name}" to inventory`, newLog);
+    showToast(
+      isEdit
+        ? `Updated "${finalProd.name}"`
+        : isAdmin
+        ? `Added "${finalProd.name}" to inventory`
+        : `Item "${finalProd.name}" submitted for Admin approval.`,
+      newLog
+    );
     setProductToEdit(undefined);
+  };
+
+  // Admin Approves a pending staff-submitted item
+  const handleApproveProduct = async (productId: string) => {
+    if (!isUserAdmin(currentUser)) return;
+    const targetProd = products.find((p) => p.id === productId);
+    if (!targetProd) return;
+
+    const approvedProd: Product = {
+      ...targetProd,
+      status: 'active',
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextProds = products.map((p) => (p.id === productId ? approvedProd : p));
+    setProducts(nextProds);
+    saveStoredProducts(nextProds);
+
+    try {
+      await upsertProductToDb(approvedProd);
+    } catch (err: any) {
+      console.warn('Supabase product approve error:', err?.message);
+    }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'product_created',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Approved new item "${targetProd.name}" for live catalog`,
+      details: `Item submitted by ${targetProd.createdByName || 'Staff'} was approved with ${targetProd.variants.length} variant(s) and ${targetProd.totalQuantity} total units.`,
+      productId: targetProd.id,
+      productName: targetProd.name,
+      productImage: targetProd.image || targetProd.images?.[0],
+      totalQuantityAfter: targetProd.totalQuantity,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Item "${targetProd.name}" approved and published to live catalog!`, newLog);
+  };
+
+  // Admin Declines a pending staff-submitted item
+  const handleRejectProduct = async (productId: string, note?: string) => {
+    if (!isUserAdmin(currentUser)) return;
+    const targetProd = products.find((p) => p.id === productId);
+    if (!targetProd) return;
+
+    const nextProds = products.filter((p) => p.id !== productId);
+    setProducts(nextProds);
+    saveStoredProducts(nextProds);
+
+    try {
+      await deleteProductFromDb(productId);
+    } catch (err: any) {
+      console.warn('Supabase product reject delete error:', err?.message);
+    }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'product_deleted',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Declined item submission "${targetProd.name}"`,
+      details: `Submission by ${targetProd.createdByName || 'Staff'} was declined.${note ? ` Reason: ${note}` : ''}`,
+      productId: targetProd.id,
+      productName: targetProd.name,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Submission for "${targetProd.name}" declined.`);
   };
 
   // Worker submits a stock change request (Persisted to Supabase)
@@ -953,11 +1051,13 @@ export default function App() {
     refreshFromSupabase(true);
   };
 
-  // Pending count for alerts (includes pending staff registrations for admin)
+  // Pending count for alerts (includes pending staff registrations and pending items for admin)
   const pendingRequestsCount = requests.filter((r) => r.status === 'pending').length;
   const pendingUsersCount = users.filter((u) => u.status === 'pending').length;
+  const pendingProducts = products.filter((p) => p.status === 'pending');
+  const pendingProductsCount = pendingProducts.length;
   const pendingCount = isUserAdmin(currentUser) 
-    ? (pendingRequestsCount + pendingUsersCount) 
+    ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount) 
     : pendingRequestsCount;
 
   // Navigation handler supporting direct routing to Account Approvals & Stock Approvals
@@ -1029,8 +1129,9 @@ export default function App() {
   });
 
   // KPI Calculations
-  const totalUnits = products.reduce((sum, p) => sum + p.totalQuantity, 0);
-  const lowStockCount = products.filter((p) =>
+  const activeProducts = products.filter((p) => isUserAdmin(currentUser) || p.status !== 'pending');
+  const totalUnits = activeProducts.reduce((sum, p) => sum + p.totalQuantity, 0);
+  const lowStockCount = activeProducts.filter((p) =>
     p.variants.some((v) => v.minThreshold !== undefined && v.quantity <= v.minThreshold)
   ).length;
 
@@ -1158,18 +1259,17 @@ export default function App() {
 
               {/* Action buttons */}
               <div className="flex items-center gap-2">
-                {isAdmin && (
-                  <button
-                    onClick={() => {
-                      setProductToEdit(undefined);
-                      setShowAddModal(true);
-                    }}
-                    className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm transition-all min-h-[44px]"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Add New Item</span>
-                  </button>
-                )}
+                <button
+                  onClick={() => {
+                    setProductToEdit(undefined);
+                    setShowAddModal(true);
+                  }}
+                  className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm transition-all min-h-[44px]"
+                  title={isAdmin ? 'Add New Item to Catalog' : 'Submit New Item for Approval'}
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>{isAdmin ? 'Add New Item' : '+ Add New Item'}</span>
+                </button>
               </div>
             </div>
 
@@ -1222,16 +1322,14 @@ export default function App() {
                 ))}
               </div>
 
-              {isAdmin && (
-                <button
-                  onClick={() => setShowManageCategoriesModal(true)}
-                  className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0 shadow-2xs hover:border-slate-300 ml-auto"
-                  title="Manage Categories"
-                >
-                  <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
-                  <span className="hidden sm:inline">Manage Categories</span>
-                </button>
-              )}
+              <button
+                onClick={() => setShowManageCategoriesModal(true)}
+                className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0 shadow-2xs hover:border-slate-300 ml-auto"
+                title="Manage Categories"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
+                <span className="hidden sm:inline">Manage Categories</span>
+              </button>
             </div>
 
             {/* Product Grid or Clean Empty State */}
@@ -1288,6 +1386,7 @@ export default function App() {
                       setShowAddModal(true);
                     }}
                     onDeleteProduct={(p) => setProductToDelete(p)}
+                    onApproveProduct={handleApproveProduct}
                   />
                 ))}
               </div>
@@ -1301,6 +1400,7 @@ export default function App() {
             requests={requests}
             users={users}
             currentUser={currentUser}
+            pendingProducts={pendingProducts}
             initialTab={approvalsTab}
             onRefreshFromDb={() => refreshFromSupabase(true)}
             onApprove={handleApproveRequest}
@@ -1309,6 +1409,8 @@ export default function App() {
             onRejectUser={handleRejectUser}
             onDeleteUser={handleDeleteUser}
             onCreateUserDirectly={handleCreateUserDirectly}
+            onApproveProduct={handleApproveProduct}
+            onRejectProduct={handleRejectProduct}
           />
         )}
 
@@ -1368,6 +1470,7 @@ export default function App() {
             setProductToEdit(p);
             setShowAddModal(true);
           }}
+          onApproveProduct={handleApproveProduct}
         />
       )}
 

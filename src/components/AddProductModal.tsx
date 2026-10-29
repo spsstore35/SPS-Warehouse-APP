@@ -78,9 +78,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [categoryId, setCategoryId] = useState<string>(productToEdit?.categoryId || '');
   const [category, setCategory] = useState<string>(productToEdit?.category || '');
 
-  // Target audience - defaults to Unisex if not specified
-  const [targetAudience, setTargetAudience] = useState<TargetAudience | ''>(
-    productToEdit?.targetAudience || ''
+  // Target audience - defaults to Men if not specified, or existing item's audience
+  const [targetAudience, setTargetAudience] = useState<TargetAudience>(
+    productToEdit?.targetAudience || 'Men'
   );
 
   const [description, setDescription] = useState(productToEdit?.description || '');
@@ -364,7 +364,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     }
 
     const finalSku = sku.trim() || `WH-${Math.floor(1000 + Math.random() * 9000)}`;
-    const finalAudience: TargetAudience = (targetAudience || 'Unisex') as TargetAudience;
+    const finalAudience: TargetAudience = targetAudience || 'Men';
     // An item does not have to be assigned to a category; default to 'Unassigned'
     const finalCategory = category.trim() || 'Unassigned';
 
@@ -426,6 +426,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       });
     }
 
+    const isAdmin = currentUser.role === 'admin';
     const finalProduct: Product = {
       id: productToEdit ? productToEdit.id : `prod_${Date.now()}`,
       sku: finalSku,
@@ -440,6 +441,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       images: images,
       variants,
       totalQuantity: variants.reduce((sum, v) => sum + v.quantity, 0),
+      status: productToEdit ? (productToEdit.status || 'active') : (isAdmin ? 'active' : 'pending'),
+      createdByRole: productToEdit ? productToEdit.createdByRole : (isAdmin ? 'admin' : 'worker'),
+      createdByName: productToEdit ? productToEdit.createdByName : (currentUser.name || 'Staff'),
+      createdById: productToEdit ? productToEdit.createdById : currentUser.id,
       createdAt: productToEdit ? productToEdit.createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -447,6 +452,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     onSaveProduct(finalProduct);
     onClose();
   };
+
+  const isAdmin = currentUser.role === 'admin';
 
   return (
     <>
@@ -474,11 +481,26 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 <Package className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                  {isEditing ? 'Edit Item' : 'New Item'}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                    {isEditing ? 'Edit Item' : 'New Item'}
+                  </h2>
+                  {!isEditing && (
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        isAdmin
+                          ? 'bg-amber-50 text-amber-900 border-amber-300'
+                          : 'bg-sky-50 text-sky-900 border-sky-300'
+                      }`}
+                    >
+                      {isAdmin ? 'Direct Active Publish' : 'Requires Admin Approval'}
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-slate-500">
-                  Configure item details, description, and inventory stock
+                  {isAdmin
+                    ? 'Configure item details, description, and live inventory stock'
+                    : 'Submit new item with variants & quantities for Admin approval'}
                 </p>
               </div>
             </div>
@@ -748,10 +770,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Target Audience (Optional)</span>
+                    <span>Target Audience</span>
                   </span>
-                  <span className="text-[11px] font-semibold text-slate-500">
-                    {targetAudience ? `Selected: ${targetAudience}` : 'Unisex (Default)'}
+                  <span className="text-[11px] font-bold text-amber-800">
+                    Selected: {targetAudience}
                   </span>
                 </label>
                 <div className="grid grid-cols-4 gap-2">
@@ -761,10 +783,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       <button
                         key={aud}
                         type="button"
-                        onClick={() => setTargetAudience(isSelected ? '' : aud)}
+                        onClick={() => setTargetAudience(aud)}
                         className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 ${
                           isSelected
-                            ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm font-black'
+                            ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm font-black ring-2 ring-amber-500/20'
                             : 'bg-white text-slate-700 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
                         }`}
                       >
@@ -1296,7 +1318,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               type="submit"
               className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow-sm transition-all min-h-[44px]"
             >
-              {isEditing ? 'Save Changes' : 'Add New Item'}
+              {isEditing
+                ? 'Save Changes'
+                : isAdmin
+                ? 'Add New Item to Catalog'
+                : 'Submit Item for Admin Approval'}
             </button>
           </div>
         </form>

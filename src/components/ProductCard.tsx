@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product, Role, ProductVariant } from '../types/inventory';
-import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Clock, Check } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
@@ -9,6 +9,7 @@ interface ProductCardProps {
   onRequestAdjustment: (product: Product, variant?: ProductVariant) => void;
   onEditProduct?: (product: Product) => void;
   onDeleteProduct?: (product: Product) => void;
+  onApproveProduct?: (productId: string) => void;
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({
@@ -18,6 +19,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onRequestAdjustment,
   onEditProduct,
   onDeleteProduct,
+  onApproveProduct,
 }) => {
   const [imageError, setImageError] = useState(false);
   const [activeImgIdx, setActiveImgIdx] = useState(0);
@@ -45,8 +47,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     (product.variants[0].size === 'One Size' || product.variants[0].size === 'Standard' || !product.variants[0].size) &&
     (product.variants[0].colorName === 'Standard' || !product.variants[0].colorName);
 
+  const isPending = product.status === 'pending';
+
   return (
-    <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col group">
+    <div
+      className={`rounded-2xl overflow-hidden shadow-sm transition-all flex flex-col group ${
+        isPending
+          ? 'bg-slate-50/95 border-2 border-dashed border-amber-300 ring-2 ring-amber-300/30 hover:border-amber-400'
+          : 'bg-white border border-slate-200/90 hover:shadow-md hover:border-slate-300'
+      }`}
+    >
       {/* Product Image Box */}
       <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden flex items-center justify-center border-b border-slate-100">
         {!imageError && currentImage ? (
@@ -55,7 +65,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             alt={product.name}
             onError={() => setImageError(true)}
             referrerPolicy="no-referrer"
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
+              isPending ? 'grayscale-[25%] opacity-90' : ''
+            }`}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-400 p-4">
@@ -104,21 +116,35 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </>
         )}
 
-        {/* Target Audience Badge */}
-        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-white/95 backdrop-blur-sm border border-slate-200 text-[11px] font-black text-slate-900 shadow-sm flex items-center gap-1.5">
-          <span
-            className={`w-2 h-2 rounded-full ${
-              product.targetAudience === 'Men'
-                ? 'bg-blue-500'
-                : product.targetAudience === 'Women'
-                ? 'bg-rose-500'
-                : product.targetAudience === 'Kids'
-                ? 'bg-amber-500'
-                : 'bg-emerald-500'
-            }`}
-          />
-          <span>{product.targetAudience || 'Unisex'}</span>
-        </div>
+        {/* Target Audience / Pending Status Badge */}
+        {isPending ? (
+          <div className="absolute top-3 left-3 z-10 px-2.5 py-1 rounded-md bg-amber-500 text-slate-950 font-black text-[11px] shadow-md border border-amber-400 flex items-center gap-1.5 animate-pulse">
+            <Clock className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Pending Approval</span>
+          </div>
+        ) : (
+          <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-white/95 backdrop-blur-sm border border-slate-200 text-[11px] font-black text-slate-900 shadow-sm flex items-center gap-1.5">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                product.targetAudience === 'Men'
+                  ? 'bg-blue-500'
+                  : product.targetAudience === 'Women'
+                  ? 'bg-rose-500'
+                  : product.targetAudience === 'Kids'
+                  ? 'bg-amber-500'
+                  : 'bg-emerald-500'
+              }`}
+            />
+            <span>{product.targetAudience || 'Men'}</span>
+          </div>
+        )}
+
+        {/* Creator indicator if pending */}
+        {isPending && (
+          <div className="absolute top-3 right-3 z-10 px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-sm border border-white/20 text-[10px] font-bold text-slate-100 shadow-sm">
+            By {product.createdByName || 'Staff'}
+          </div>
+        )}
 
         {/* Low Stock Warning Badge */}
         {lowStockVariants.length > 0 && (
@@ -233,6 +259,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Pending Status Callout & Quick Approval */}
+          {isPending && (
+            <div className="mb-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between gap-2 text-amber-950">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="text-[11px] font-bold truncate">Awaiting Admin Approval</span>
+              </div>
+              {isAdmin && onApproveProduct && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onApproveProduct(product.id);
+                  }}
+                  className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-black rounded-lg shadow-xs transition-colors shrink-0 flex items-center gap-1"
+                  title="Approve and activate this item"
+                >
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>Approve</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Primary Action Buttons */}
           <div className="grid grid-cols-2 gap-2">

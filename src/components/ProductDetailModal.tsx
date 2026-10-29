@@ -12,6 +12,8 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  Check,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -23,6 +25,7 @@ interface ProductDetailModalProps {
   onDeleteProduct?: (productId: string) => void;
   onDeleteVariant?: (productId: string, variantId: string) => void;
   onEditProduct?: (product: Product) => void;
+  onApproveProduct?: (productId: string) => void;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -33,6 +36,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onDeleteProduct,
   onDeleteVariant,
   onEditProduct,
+  onApproveProduct,
 }) => {
   const isAdmin = userRole === 'admin';
 
@@ -166,6 +170,37 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-5 overflow-y-auto flex-1 space-y-5">
+          {/* Pending Approval Banner */}
+          {product.status === 'pending' && (
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-2.5">
+                <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-bold text-amber-950">
+                    Item Awaiting Admin Approval
+                  </h4>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    Submitted by <strong>{product.createdByName || 'Floor Staff'}</strong> on{' '}
+                    {new Date(product.createdAt).toLocaleDateString()}. Sizes, colors, and stock quantities are configured below.
+                  </p>
+                </div>
+              </div>
+
+              {isAdmin && onApproveProduct && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onApproveProduct(product.id);
+                    onClose();
+                  }}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-colors shrink-0 flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>Approve & Activate Now</span>
+                </button>
+              )}
+            </div>
+          )}
           {/* Photos and Overview */}
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
             {/* Multi-image preview */}

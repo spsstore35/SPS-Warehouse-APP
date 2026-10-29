@@ -258,7 +258,7 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
       resolvedCategory = 'Unassigned';
     }
 
-    const resolvedAudience = p.target_audience_id || p.target_audience || 'Unisex';
+    const resolvedAudience = p.target_audience || p.target_audience_id || 'Men';
 
     // Parse primary image and multi-image list
     let primaryImage = '';
@@ -295,6 +295,10 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
       images: imageList,
       variants,
       totalQuantity,
+      status: (p.status as any) || 'active',
+      createdByRole: p.created_by_role || undefined,
+      createdByName: p.created_by_name || undefined,
+      createdById: p.created_by_id || undefined,
       createdAt: p.created_at,
       updatedAt: p.updated_at,
     };
@@ -318,15 +322,36 @@ export async function upsertProductToDb(product: Product): Promise<void> {
     sku: product.sku,
     name: product.name,
     category_id: product.categoryId || null,
-    target_audience: product.targetAudience || 'Unisex',
+    target_audience: product.targetAudience || 'Men',
+    target_audience_id: product.targetAudience || 'Men',
     description: product.description || '',
     fabric_details: product.fabricDetails || null,
     price: product.price || null,
     image_url: storedImageUrl,
+    status: product.status || 'active',
+    created_by_role: product.createdByRole || null,
+    created_by_name: product.createdByName || null,
+    created_by_id: product.createdById || null,
     updated_at: new Date().toISOString(),
   };
 
   let { error: prodError } = await supabase.from('products').upsert(productPayload);
+
+  // If remote schema does not have status / created_by columns, strip and retry
+  if (
+    prodError &&
+    (prodError.message?.includes('status') ||
+      prodError.message?.includes('created_by') ||
+      prodError.details?.includes('status') ||
+      prodError.details?.includes('created_by'))
+  ) {
+    delete productPayload.status;
+    delete productPayload.created_by_role;
+    delete productPayload.created_by_name;
+    delete productPayload.created_by_id;
+    const retry = await supabase.from('products').upsert(productPayload);
+    prodError = retry.error;
+  }
 
   // If remote schema does not have category_id column (legacy flat schema), fallback to 'category' text column
   if (

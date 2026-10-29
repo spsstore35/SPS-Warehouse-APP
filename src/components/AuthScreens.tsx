@@ -515,7 +515,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   type="submit"
                   className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm shadow-sm transition-all min-h-[46px]"
                 >
-                  <span>Register Account (Pending Approval)</span>
+                  <span>Register Account</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>

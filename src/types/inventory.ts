@@ -69,6 +69,10 @@ export interface Product {
   variants: ProductVariant[];
   totalQuantity: number;
   location?: string; // e.g. "Rack B-04 / Shelf 2"
+  status?: 'active' | 'pending' | 'rejected';
+  createdByRole?: Role;
+  createdByName?: string;
+  createdById?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,6 +118,7 @@ export interface AuditLogEntry {
   action:
     | 'stock_adjusted'
     | 'product_created'
+    | 'product_submitted'
     | 'product_updated'
     | 'product_deleted'
     | 'variant_deleted'

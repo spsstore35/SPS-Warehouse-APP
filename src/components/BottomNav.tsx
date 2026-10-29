@@ -81,26 +81,16 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </button>
         )}
 
-        {/* Tab 3: Center Primary Action */}
-        {isAdmin ? (
-          <button
-            onClick={() => onNavigate('add-product')}
-            className="flex flex-col items-center justify-center min-h-[44px] py-1 text-amber-600 group"
-          >
-            <div className="w-10 h-10 rounded-full bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center justify-center shadow-md active:scale-95 transition-transform">
-              <PlusCircle className="w-6 h-6 stroke-[2.2]" />
-            </div>
-          </button>
-        ) : (
-          <button
-            onClick={() => onNavigate('inventory')}
-            className="flex flex-col items-center justify-center min-h-[44px] py-1 text-sky-600 group"
-          >
-            <div className="w-10 h-10 rounded-full bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center shadow-md active:scale-95 transition-transform">
-              <span className="text-xs font-black uppercase tracking-tighter">Count</span>
-            </div>
-          </button>
-        )}
+        {/* Tab 3: Center Primary Action - Add New Item */}
+        <button
+          onClick={() => onNavigate('add-product')}
+          className="flex flex-col items-center justify-center min-h-[44px] py-1 text-amber-600 group"
+          title={isAdmin ? 'Add New Item' : 'Submit New Item'}
+        >
+          <div className={`w-10 h-10 rounded-full ${isAdmin ? 'bg-amber-500 hover:bg-amber-600 text-slate-950' : 'bg-sky-500 hover:bg-sky-600 text-white'} flex items-center justify-center shadow-md active:scale-95 transition-transform`}>
+            <PlusCircle className="w-6 h-6 stroke-[2.2]" />
+          </div>
+        </button>
 
         {/* Tab 4: Account Approvals (Admin) or Audit Log (Worker) */}
         {isAdmin ? (

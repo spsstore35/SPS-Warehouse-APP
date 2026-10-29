@@ -49,16 +49,19 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/90 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-3 md:gap-6 h-14 md:h-16">
-          {/* Zone 1: Brand title, one line wordmark */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Left spacer on mobile to keep centered brand perfectly balanced with right avatar */}
+          <div className="w-9 sm:w-10 md:hidden shrink-0" aria-hidden="true" />
+
+          {/* Zone 1: Brand title & logo (centered on mobile, left on desktop) */}
+          <div className="flex items-center justify-center md:justify-start gap-2.5 sm:gap-3 flex-1 md:flex-none">
             <button
               onClick={() => onNavigate('inventory')}
-              className="flex items-center gap-2.5 text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap shrink-0 text-left hover:text-amber-700 transition-colors"
+              className="flex items-center gap-2 sm:gap-2.5 text-base sm:text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap text-left hover:text-amber-700 transition-colors"
             >
               <img
                 src="/assets/aistudio/SPS_LOGO_3443b8ef.jpg"
                 alt="SPS Logo"
-                className="w-8 h-8 rounded-lg object-contain bg-white border border-slate-200 shadow-xs"
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg object-contain bg-white border border-slate-200 shadow-xs"
               />
               <span>SPS Warehouse</span>
             </button>
@@ -135,19 +138,31 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               </>
             ) : (
-              <button
-                onClick={() => onNavigate('worker-requests')}
-                className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                  activeView === 'worker-requests' ? 'text-sky-800 font-bold border-b-2 border-sky-600 pb-0.5' : ''
-                }`}
-              >
-                <span>My Adjustment Requests</span>
-                {pendingStockCount > 0 && (
-                  <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
-                    {pendingStockCount}
-                  </span>
-                )}
-              </button>
+              <>
+                <button
+                  onClick={() => onNavigate('worker-requests')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'worker-requests' ? 'text-sky-800 font-bold border-b-2 border-sky-600 pb-0.5' : ''
+                  }`}
+                >
+                  <span>My Adjustment Requests</span>
+                  {pendingStockCount > 0 && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
+                      {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Staff can also submit new items */}
+                <button
+                  onClick={() => onNavigate('add-product')}
+                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+                    activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                  }`}
+                >
+                  + Add New Item
+                </button>
+              </>
             )}
 
             <button
@@ -160,33 +175,8 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </nav>
 
-          {/* Zone 3: Mobile alert & Interactive User Profile Avatar */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {/* Quick Pending Alert Icons for Mobile */}
-            {isAdmin && pendingAccountsCount > 0 && (
-              <button
-                onClick={() => onNavigate('account-approvals')}
-                className="md:hidden relative p-2 text-amber-700 bg-amber-50 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center border border-amber-300"
-                title={`${pendingAccountsCount} staff accounts awaiting approval`}
-              >
-                <Users className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-black text-[10px] rounded-full animate-pulse">
-                  {pendingAccountsCount}
-                </span>
-              </button>
-            )}
-
-            {isAdmin && pendingStockCount > 0 && (
-              <button
-                onClick={() => onNavigate('stock-approvals')}
-                className="md:hidden relative p-2 text-slate-700 hover:bg-slate-100 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center"
-                title={`${pendingStockCount} stock changes waiting`}
-              >
-                <Bell className="w-5 h-5 text-amber-600" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-500 rounded-full" />
-              </button>
-            )}
-
+          {/* Zone 3: Interactive User Profile Avatar (without mobile alert icons) */}
+          <div className="flex items-center justify-end shrink-0">
             {/* Clickable User Avatar Initial with Popover Menu */}
             <div className="relative" ref={profileMenuRef}>
               <button
@@ -251,6 +241,20 @@ export const Header: React.FC<HeaderProps> = ({
                       <span className="flex items-center gap-2">
                         <Package className="w-3.5 h-3.5 text-slate-500" />
                         <span>Inventory Catalog</span>
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        onNavigate('add-product');
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
+                        <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
                       </span>
                     </button>
 
