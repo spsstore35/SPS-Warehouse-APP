@@ -62,6 +62,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [activeTab, setActiveTab] = useState<'stock' | 'staff' | 'items'>(initialTab);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [staffStatusFilter, setStaffStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
+  const [staffRoleFilter, setStaffRoleFilter] = useState<'all' | 'worker' | 'admin'>('all');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
 
@@ -122,12 +123,23 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
 
   const filteredStaffUsers = React.useMemo(() => {
     return allStaffUsers.filter((u) => {
-      if (staffStatusFilter === 'all') return true;
-      if (staffStatusFilter === 'pending') return u.status === 'pending';
-      if (staffStatusFilter === 'active') return u.status === 'active';
+      // Status filtering (all / pending / active)
+      if (staffStatusFilter === 'pending' && u.status !== 'pending') return false;
+      if (staffStatusFilter === 'active' && u.status !== 'active') return false;
+
+      // Role filtering (all / worker / admin)
+      if (staffRoleFilter === 'worker') {
+        const isWorker = u.role === 'worker' || (u.status === 'pending' && u.requestedRole === 'worker');
+        if (!isWorker) return false;
+      }
+      if (staffRoleFilter === 'admin') {
+        const isAdmin = u.role === 'admin' || (u.status === 'pending' && u.requestedRole === 'admin');
+        if (!isAdmin) return false;
+      }
+
       return true;
     });
-  }, [allStaffUsers, staffStatusFilter]);
+  }, [allStaffUsers, staffStatusFilter, staffRoleFilter]);
 
   const handleConfirmReject = (requestId: string) => {
     onReject(requestId, rejectNote.trim() || undefined);
@@ -560,12 +572,115 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
             </button>
           </div>
 
-          {/* Policy Info Card */}
-          <div className="p-3.5 bg-amber-50/70 border border-amber-200/90 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
-            <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-[11px] leading-relaxed font-medium">
-              Self-registered accounts wait in <strong>Pending Status</strong> until approved by an Admin.
-              Accounts created via <strong>+ Add Account</strong> bypass approvals and activate immediately.
+          {/* Warehouse Access Roles & Permissions (Interactive Filter Cards) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                Filter by Warehouse Access Level:
+              </span>
+              {staffRoleFilter !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setStaffRoleFilter('all')}
+                  className="text-xs font-bold text-amber-800 hover:text-amber-900 hover:underline cursor-pointer"
+                >
+                  Show All Roles ({allStaffUsers.length})
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Floor Staff Access Filter Card */}
+              <button
+                type="button"
+                onClick={() => setStaffRoleFilter((prev) => (prev === 'worker' ? 'all' : 'worker'))}
+                className={`p-3.5 rounded-2xl flex items-start gap-3 text-left transition-all cursor-pointer ${
+                  staffRoleFilter === 'worker'
+                    ? 'bg-sky-50/90 border-2 border-sky-500 shadow-md ring-2 ring-sky-400/25'
+                    : 'bg-white hover:bg-sky-50/50 border border-slate-200 hover:border-sky-300 shadow-xs'
+                }`}
+                title="Click to filter by Floor Staff"
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    staffRoleFilter === 'worker'
+                      ? 'bg-sky-600 text-white shadow-xs'
+                      : 'bg-sky-100 border border-sky-200 text-sky-700'
+                  }`}
+                >
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-sky-950 uppercase tracking-wider">
+                      Floor Staff Access
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+                        staffRoleFilter === 'worker'
+                          ? 'bg-sky-600 text-white'
+                          : 'bg-sky-100 text-sky-800'
+                      }`}
+                    >
+                      {staffRoleFilter === 'worker'
+                        ? '✓ Active Filter'
+                        : `Staff (${allStaffUsers.filter((u) => u.role === 'worker' || u.requestedRole === 'worker').length})`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                    Can browse garments, count stock, submit new garments (pending Admin approval), and submit stock adjustment requests with verification notes.
+                  </p>
+                  <span className="inline-block mt-2 text-[10px] font-bold text-sky-700">
+                    {staffRoleFilter === 'worker' ? '• Click to reset' : '• Click to filter staff'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Admin Authority Access Filter Card */}
+              <button
+                type="button"
+                onClick={() => setStaffRoleFilter((prev) => (prev === 'admin' ? 'all' : 'admin'))}
+                className={`p-3.5 rounded-2xl flex items-start gap-3 text-left transition-all cursor-pointer ${
+                  staffRoleFilter === 'admin'
+                    ? 'bg-amber-50/90 border-2 border-amber-500 shadow-md ring-2 ring-amber-400/25'
+                    : 'bg-white hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 shadow-xs'
+                }`}
+                title="Click to filter by Admin Authority"
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    staffRoleFilter === 'admin'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'bg-amber-100 border border-amber-200 text-amber-800'
+                  }`}
+                >
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                      Admin Authority Access
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+                        staffRoleFilter === 'admin'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-amber-100 text-amber-900'
+                      }`}
+                    >
+                      {staffRoleFilter === 'admin'
+                        ? '✓ Active Filter'
+                        : `Admin (${allStaffUsers.filter((u) => u.role === 'admin' || u.requestedRole === 'admin').length})`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                    Full warehouse control: direct stock overrides, approving or rejecting submissions, managing categories, and deleting items, sizes, or accounts.
+                  </p>
+                  <span className="inline-block mt-2 text-[10px] font-bold text-amber-700">
+                    {staffRoleFilter === 'admin' ? '• Click to reset' : '• Click to filter admins'}
+                  </span>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -575,23 +690,38 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               <div className="p-8 text-center bg-white border border-slate-200 rounded-2xl space-y-3">
                 <Users className="w-8 h-8 text-slate-300 mx-auto" />
                 <h4 className="text-sm font-bold text-slate-700">
-                  {staffStatusFilter === 'pending'
+                  {staffRoleFilter !== 'all'
+                    ? `No ${staffRoleFilter === 'worker' ? 'Floor Staff' : 'Admin Authority'} accounts match this selection`
+                    : staffStatusFilter === 'pending'
                     ? 'No pending account approvals'
                     : 'No staff accounts match this filter'}
                 </h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  {staffStatusFilter === 'pending'
+                  {staffRoleFilter !== 'all'
+                    ? 'Try clearing the role filter or changing the status filter above.'
+                    : staffStatusFilter === 'pending'
                     ? 'All user registration requests have been reviewed and approved.'
                     : 'Add staff members directly or have workers register from the login screen.'}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateUserModal(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-sm"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Create Account Now</span>
-                </button>
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  {staffRoleFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setStaffRoleFilter('all')}
+                      className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors"
+                    >
+                      Show All Roles
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateUserModal(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-sm"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Create Account Now</span>
+                  </button>
+                </div>
               </div>
             ) : (
               filteredStaffUsers.map((user) => {
@@ -953,7 +1083,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     required
                     value={newUserName}
                     onChange={(e) => setNewUserName(e.target.value)}
-                    placeholder="e.g. Mahmoud Hassan"
+                    placeholder="e.g. Myriam Joseph"
                     className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
                   />
                 </div>

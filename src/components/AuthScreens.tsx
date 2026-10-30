@@ -399,7 +399,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                       required
                       value={signUpName}
                       onChange={(e) => setSignUpName(e.target.value)}
-                      placeholder="e.g. Mahmoud Hassan"
+                      placeholder="e.g. Myriam Joseph"
                       className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
                     />
                   </div>
