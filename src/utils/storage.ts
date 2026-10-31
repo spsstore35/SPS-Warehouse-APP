@@ -1,4 +1,4 @@
-import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category } from '../types/inventory';
+import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category, Booking } from '../types/inventory';
 import { INITIAL_PRODUCTS, INITIAL_REQUESTS, INITIAL_AUDIT_LOGS, INITIAL_USERS, INITIAL_CATEGORIES } from '../data/initialData';
 
 const STORAGE_KEYS = {
@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   USER: 'wearhouse_current_user_v4_live',
   USERS_LIST: 'wearhouse_all_accounts_v4_live',
   CATEGORIES: 'wearhouse_categories_v4_live',
+  BOOKINGS: 'wearhouse_bookings_v4_live',
 };
 
 export function getStoredUsers(): User[] {
@@ -262,6 +263,7 @@ export function resetAllToDemo(): {
   saveStoredRequests(INITIAL_REQUESTS);
   saveStoredAuditLogs(INITIAL_AUDIT_LOGS);
   saveStoredUsers(INITIAL_USERS);
+  saveStoredBookings([]);
   return {
     products: INITIAL_PRODUCTS,
     requests: INITIAL_REQUESTS,
@@ -269,3 +271,23 @@ export function resetAllToDemo(): {
     users: INITIAL_USERS,
   };
 }
+
+export function getStoredBookings(): Booking[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.BOOKINGS);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Failed to load bookings from storage:', err);
+    return [];
+  }
+}
+
+export function saveStoredBookings(bookings: Booking[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.BOOKINGS, JSON.stringify(bookings));
+  } catch (err) {
+    console.error('Failed to save bookings to storage:', err);
+  }
+}
+

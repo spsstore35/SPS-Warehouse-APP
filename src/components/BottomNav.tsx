@@ -238,6 +238,23 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 type="button"
                 onClick={() => {
                   setShowAccountSheet(false);
+                  onNavigate('bookings');
+                }}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-blue-950 font-bold text-xs hover:bg-blue-100 transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Package className="w-4 h-4 text-blue-600" />
+                  <span>Client Bookings & Quotations</span>
+                </span>
+                <span className="text-[10px] bg-blue-600 text-white font-bold px-1.5 py-0.5 rounded">
+                  New
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountSheet(false);
                   onNavigate('audit-log');
                 }}
                 className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"

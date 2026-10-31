@@ -209,19 +209,12 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-8 sm:px-6 lg:px-8">
       {/* Brand Header */}
       <div className="w-full max-w-md mx-auto text-center mb-6 sm:mb-8">
-        <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-white border border-slate-200/90 p-2 shadow-sm mb-3">
-          <img
-            src="/assets/aistudio/SPS_LOGO_3443b8ef.jpg"
-            alt="SPS Warehouse Logo"
-            className="w-full h-full object-contain rounded-2xl"
-          />
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 text-amber-400 shadow-md mb-3">
+          <Warehouse className="w-8 h-8 stroke-[1.75]" />
         </div>
         <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900">
           SPS Warehouse
         </h1>
-        <p className="mt-1 text-xs sm:text-sm text-slate-600 font-medium">
-          Apparel stock control, variant matrix & approval workflows
-        </p>
       </div>
 
       {/* Main Card */}

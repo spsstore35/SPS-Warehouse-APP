@@ -8,6 +8,8 @@ import {
   ProductVariant,
   AdjustmentReason,
   Category,
+  Booking,
+  BookingStatus,
 } from './types/inventory';
 import {
   getStoredProducts,
@@ -25,6 +27,8 @@ import {
   getStoredCategories,
   saveStoredCategories,
   clearStoredAuditLogs,
+  getStoredBookings,
+  saveStoredBookings,
 } from './utils/storage';
 import { isUserAdmin } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA } from './data/initialData';
@@ -47,6 +51,10 @@ import {
   createCategoryInDb,
   deleteCategoryFromDb,
   clearAuditLogsInDb,
+  fetchBookingsFromDb,
+  insertBookingInDb,
+  updateBookingInDb,
+  deleteBookingFromDb,
   CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
@@ -63,6 +71,9 @@ import { WorkerRequestsView } from './components/WorkerRequestsView';
 import { AuditLogView } from './components/AuditLogView';
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal';
 import { ActivityDetailModal } from './components/ActivityDetailModal';
+import { BookingsView } from './components/BookingsView';
+import { BookingModal } from './components/BookingModal';
+import { BookingPrintModal } from './components/BookingPrintModal';
 import {
   Search,
   Plus,
@@ -124,6 +135,14 @@ export default function App() {
     }, 6000);
   };
 
+  // Bookings state
+  const [bookings, setBookings] = useState<Booking[]>(() => getStoredBookings());
+  const [bookingModalProduct, setBookingModalProduct] = useState<Product | undefined>(undefined);
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [printBooking, setPrintBooking] = useState<Booking | null>(null);
+  const [printDocType, setPrintDocType] = useState<'quotation' | 'production'>('quotation');
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+
   // Sync to localStorage as offline cache
   useEffect(() => {
     saveStoredUser(currentUser);
@@ -144,6 +163,10 @@ export default function App() {
   useEffect(() => {
     saveStoredAuditLogs(auditLogs);
   }, [auditLogs]);
+
+  useEffect(() => {
+    saveStoredBookings(bookings);
+  }, [bookings]);
 
   // Category handlers
   const handleAddCategory = async (name: string, description?: string) => {
@@ -348,12 +371,13 @@ export default function App() {
       setDbStatus(status);
 
       if (status.connected && status.tablesExist) {
-        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs] = await Promise.allSettled([
+        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs, dbBookings] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
           fetchUsersFromDb(),
           fetchCategoriesFromDb(),
           fetchAuditLogsFromDb(),
+          fetchBookingsFromDb(),
         ]);
 
         if (dbProducts.status === 'fulfilled') {
@@ -371,9 +395,12 @@ export default function App() {
         if (dbLogs.status === 'fulfilled' && dbLogs.value.length > 0) {
           setAuditLogs(dbLogs.value);
         }
+        if (dbBookings.status === 'fulfilled' && dbBookings.value.length > 0) {
+          setBookings(dbBookings.value);
+        }
 
         if (notify) {
-          showToast('Live inventory synchronized with Supabase.');
+          showToast('Live inventory & bookings synchronized with Supabase.');
         }
       } else if (notify && status.error) {
         showToast(status.error);
@@ -1046,6 +1073,207 @@ export default function App() {
     }
   };
 
+  // Booking Management Handlers
+  const handleSaveBooking = (newBooking: Booking, autoAdvanceToPreparing = false) => {
+    let nextProducts = [...products];
+
+    // INVENTORY RULE: If created directly in preparing (50% deposit confirmed upfront), deduct in-stock reserved units!
+    // Otherwise, booking remains in 'pending' and inventory stock is NOT touched.
+    if (autoAdvanceToPreparing) {
+      newBooking.items.forEach((item) => {
+        const prodIndex = nextProducts.findIndex((p) => p.id === item.productId);
+        if (prodIndex >= 0) {
+          const prod = nextProducts[prodIndex];
+          const deductUnits = Math.min(item.quantity, item.availableStock);
+          if (deductUnits > 0) {
+            const nextVariants = prod.variants.map((v) => {
+              if (v.id === item.variantId) {
+                return {
+                  ...v,
+                  quantity: Math.max(0, v.quantity - deductUnits),
+                };
+              }
+              return v;
+            });
+            const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
+            nextProducts[prodIndex] = {
+              ...prod,
+              variants: nextVariants,
+              totalQuantity: nextTotal,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        }
+      });
+      setProducts(nextProducts);
+      newBooking.inventoryDeducted = true;
+    }
+
+    const updatedBookings = [newBooking, ...bookings];
+    setBookings(updatedBookings);
+    saveStoredBookings(updatedBookings);
+
+    // Sync booking & items to Supabase Database
+    insertBookingInDb(newBooking).catch((err) => {
+      console.warn('Notice saving booking to Supabase:', err?.message);
+    });
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_created',
+      actorName: currentUser?.name || 'Staff',
+      actorRole: currentUser?.role || 'worker',
+      summary: `Created Booking #${newBooking.bookingNumber} for "${newBooking.clientName}"`,
+      details: `Booking created with ${newBooking.items.length} garments (${newBooking.items.reduce((acc, it) => acc + it.quantity, 0)} units total, ${newBooking.total.toFixed(2)} EGP). Status: ${newBooking.status.toUpperCase()}. Deposit required: ${newBooking.depositRequired.toFixed(2)} EGP. ${autoAdvanceToPreparing ? 'Stock reserved and deducted.' : 'Inventory stock untouched while pending 50% deposit.'}`,
+    };
+    setAuditLogs([newLog, ...auditLogs]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(
+      autoAdvanceToPreparing
+        ? `Booking ${newBooking.bookingNumber} created & in preparation (stock deducted).`
+        : `Booking ${newBooking.bookingNumber} created (Pending 50% deposit - stock untouched).`,
+      newLog
+    );
+  };
+
+  const handleAdvanceBookingStatus = (bookingId: string, nextStatus: BookingStatus) => {
+    let nextProducts = [...products];
+    let affectedBooking: Booking | undefined;
+
+    const updatedBookings = bookings.map((b) => {
+      if (b.id !== bookingId) return b;
+      affectedBooking = { ...b };
+
+      const isAdvancingToPreparing = (b.status === 'pending' && nextStatus === 'preparing');
+      let inventoryDeducted = b.inventoryDeducted;
+
+      // CRITICAL INVENTORY DEDUCTION RULE:
+      // Deduct stock ONLY when transitioning to 'preparing' after 50% deposit is paid!
+      if (isAdvancingToPreparing && !inventoryDeducted) {
+        b.items.forEach((item) => {
+          const prodIndex = nextProducts.findIndex((p) => p.id === item.productId);
+          if (prodIndex >= 0) {
+            const prod = nextProducts[prodIndex];
+            const deductUnits = Math.min(item.quantity, item.availableStock);
+            if (deductUnits > 0) {
+              const nextVariants = prod.variants.map((v) => {
+                if (v.id === item.variantId) {
+                  return {
+                    ...v,
+                    quantity: Math.max(0, v.quantity - deductUnits),
+                  };
+                }
+                return v;
+              });
+              const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
+              nextProducts[prodIndex] = {
+                ...prod,
+                variants: nextVariants,
+                totalQuantity: nextTotal,
+                updatedAt: new Date().toISOString(),
+              };
+            }
+          }
+        });
+        inventoryDeducted = true;
+      }
+
+      const updatedB: Booking = {
+        ...b,
+        status: nextStatus,
+        inventoryDeducted,
+        depositPaid: nextStatus !== 'pending' ? true : b.depositPaid,
+        depositPaidAmount: nextStatus !== 'pending' ? b.depositRequired : b.depositPaidAmount,
+        depositPaidAt: nextStatus === 'preparing' && !b.depositPaidAt ? new Date().toISOString() : b.depositPaidAt,
+        finalPaidAmount: nextStatus === 'done' ? (b.total - b.depositRequired) : b.finalPaidAmount,
+        finalPaidAt: nextStatus === 'done' ? new Date().toISOString() : b.finalPaidAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Sync booking update to Supabase
+      updateBookingInDb(b.id, updatedB).catch((err) => {
+        console.warn('Notice updating booking status in Supabase:', err?.message);
+      });
+
+      return updatedB;
+    });
+
+    if (affectedBooking) {
+      setProducts(nextProducts);
+      setBookings(updatedBookings);
+      saveStoredBookings(updatedBookings);
+
+      const actionText =
+        nextStatus === 'preparing'
+          ? '50% Deposit Confirmed & Stock Deducted'
+          : nextStatus === 'delivered'
+          ? 'Delivered to Client'
+          : 'Fully Paid & Order Closed';
+
+      const newLog: AuditLogEntry = {
+        id: `log_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        action: 'booking_status_changed',
+        actorName: currentUser?.name || 'Admin',
+        actorRole: currentUser?.role || 'admin',
+        summary: `Booking #${affectedBooking.bookingNumber} moved to ${nextStatus.toUpperCase()}`,
+        details: `${actionText} for client "${affectedBooking.clientName}".`,
+      };
+      setAuditLogs([newLog, ...auditLogs]);
+      insertAuditLogInDb(newLog).catch(() => {});
+      showToast(`Booking ${affectedBooking.bookingNumber}: ${actionText}.`, newLog);
+    }
+  };
+
+  const handleDeleteBooking = (bookingId: string) => {
+    const target = bookings.find((b) => b.id === bookingId);
+    if (!target) return;
+
+    // Restore deducted stock if deleted while in 'preparing'
+    if (target.inventoryDeducted && target.status === 'preparing') {
+      const nextProducts = [...products];
+      target.items.forEach((item) => {
+        const prodIndex = nextProducts.findIndex((p) => p.id === item.productId);
+        if (prodIndex >= 0) {
+          const prod = nextProducts[prodIndex];
+          const restoreUnits = Math.min(item.quantity, item.availableStock);
+          if (restoreUnits > 0) {
+            const nextVariants = prod.variants.map((v) => {
+              if (v.id === item.variantId) {
+                return {
+                  ...v,
+                  quantity: v.quantity + restoreUnits,
+                };
+              }
+              return v;
+            });
+            const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
+            nextProducts[prodIndex] = {
+              ...prod,
+              variants: nextVariants,
+              totalQuantity: nextTotal,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        }
+      });
+      setProducts(nextProducts);
+    }
+
+    const nextBookings = bookings.filter((b) => b.id !== bookingId);
+    setBookings(nextBookings);
+    saveStoredBookings(nextBookings);
+
+    // Delete from Supabase
+    deleteBookingFromDb(bookingId).catch((err) => {
+      console.warn('Notice deleting booking in Supabase:', err?.message);
+    });
+
+    showToast(`Booking ${target.bookingNumber} deleted.`);
+  };
+
   // Refresh data from Supabase
   const handleResetData = () => {
     refreshFromSupabase(true);
@@ -1154,6 +1382,7 @@ export default function App() {
         pendingCount={pendingCount}
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
+        pendingBookingsCount={bookings.filter((b) => b.status === 'pending').length}
         approvalsTab={approvalsTab}
       />
 
@@ -1387,6 +1616,10 @@ export default function App() {
                     }}
                     onDeleteProduct={(p) => setProductToDelete(p)}
                     onApproveProduct={handleApproveProduct}
+                    onOpenBooking={(p) => {
+                      setBookingModalProduct(p);
+                      setIsBookingModalOpen(true);
+                    }}
                   />
                 ))}
               </div>
@@ -1432,6 +1665,25 @@ export default function App() {
               const p = products.find((prod) => prod.id === pId);
               if (p) setDetailProduct(p);
             }}
+          />
+        )}
+
+        {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
+        {activeView === 'bookings' && (
+          <BookingsView
+            bookings={bookings}
+            currentUser={currentUser}
+            onOpenNewBookingModal={() => {
+              setBookingModalProduct(undefined);
+              setIsBookingModalOpen(true);
+            }}
+            onOpenPrintModal={(booking, docType) => {
+              setPrintBooking(booking);
+              setPrintDocType(docType);
+              setIsPrintModalOpen(true);
+            }}
+            onAdvanceStatus={handleAdvanceBookingStatus}
+            onDeleteBooking={handleDeleteBooking}
           />
         )}
 
@@ -1546,6 +1798,35 @@ export default function App() {
               setDetailProduct(p);
               setActiveView('inventory');
             }
+          }}
+        />
+      )}
+
+      {/* MODAL 6: Create Client Booking (Quotation & Deficit Calculation) */}
+      {isBookingModalOpen && (
+        <BookingModal
+          isOpen={isBookingModalOpen}
+          onClose={() => {
+            setIsBookingModalOpen(false);
+            setBookingModalProduct(undefined);
+          }}
+          products={products}
+          initialProduct={bookingModalProduct}
+          currentUser={currentUser}
+          existingBookings={bookings}
+          onSaveBooking={handleSaveBooking}
+        />
+      )}
+
+      {/* MODAL 7: A4 Print & PDF Document Generator */}
+      {isPrintModalOpen && printBooking && (
+        <BookingPrintModal
+          isOpen={isPrintModalOpen}
+          booking={printBooking}
+          defaultDocType={printDocType}
+          onClose={() => {
+            setIsPrintModalOpen(false);
+            setPrintBooking(null);
           }}
         />
       )}

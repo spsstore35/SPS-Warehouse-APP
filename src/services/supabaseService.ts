@@ -12,6 +12,9 @@ import {
   GarmentCategory,
   AdjustmentReason,
   Category,
+  Booking,
+  BookingItem,
+  BookingStatus,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -768,4 +771,193 @@ export async function clearAuditLogsInDb(): Promise<void> {
     console.warn('Notice clearing audit logs:', err?.message);
   }
 }
+
+/**
+ * CLIENT BOOKINGS & QUOTATIONS DATABASE SYNCHRONIZATION
+ */
+
+export async function fetchBookingsFromDb(): Promise<Booking[]> {
+  try {
+    const { data: bookingsData, error: bookingsError } = await supabase
+      .from('bookings')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (bookingsError || !bookingsData) {
+      if (bookingsError && !bookingsError.message?.includes('does not exist')) {
+        console.warn('Notice fetching bookings from DB:', bookingsError.message);
+      }
+      return [];
+    }
+
+    const { data: itemsData, error: itemsError } = await supabase
+      .from('booking_items')
+      .select('*');
+
+    if (itemsError && !itemsError.message?.includes('does not exist')) {
+      console.warn('Notice fetching booking items from DB:', itemsError.message);
+    }
+
+    const allItems = itemsData || [];
+
+    return bookingsData.map((b: any) => {
+      const lineItems: BookingItem[] = allItems
+        .filter((it: any) => it.booking_id === b.id)
+        .map((it: any) => ({
+          id: it.id,
+          productId: it.product_id,
+          productName: it.product_name,
+          productSku: it.product_sku,
+          productImage: it.product_image || undefined,
+          variantId: it.variant_id,
+          size: it.size as GarmentSize,
+          colorName: it.color_name,
+          colorHex: it.color_hex,
+          quantity: it.quantity,
+          unitPrice: Number(it.unit_price) || 0,
+          totalPrice: Number(it.total_price) || 0,
+          availableStock: it.available_stock ?? 0,
+          deficitQuantity: it.deficit_quantity ?? 0,
+          minThreshold: it.min_threshold ?? 5,
+          recommendedProduction: it.recommended_production ?? 0,
+        }));
+
+      return {
+        id: b.id,
+        bookingNumber: b.booking_number,
+        clientName: b.client_name,
+        clientPhone: b.client_phone || 'N/A',
+        notes: b.notes || undefined,
+        items: lineItems,
+        subtotal: Number(b.subtotal) || 0,
+        discount: Number(b.discount) || 0,
+        total: Number(b.total) || 0,
+        depositRate: Number(b.deposit_rate) || 0.5,
+        depositRequired: Number(b.deposit_required) || 0,
+        depositPaid: Boolean(b.deposit_paid),
+        depositPaidAmount: Number(b.deposit_paid_amount) || 0,
+        depositPaidAt: b.deposit_paid_at || undefined,
+        finalPaidAmount: b.final_paid_amount !== null ? Number(b.final_paid_amount) : undefined,
+        finalPaidAt: b.final_paid_at || undefined,
+        status: (b.status || 'pending') as BookingStatus,
+        inventoryDeducted: Boolean(b.inventory_deducted),
+        createdById: b.created_by_id,
+        createdByName: b.created_by_name,
+        createdByRole: b.created_by_role as Role,
+        createdAt: b.created_at,
+        updatedAt: b.updated_at || b.created_at,
+      };
+    });
+  } catch (err: any) {
+    console.warn('Error fetching bookings from Supabase:', err?.message);
+    return [];
+  }
+}
+
+export async function insertBookingInDb(booking: Booking): Promise<void> {
+  try {
+    const bookingPayload = {
+      id: booking.id,
+      booking_number: booking.bookingNumber,
+      client_name: booking.clientName,
+      client_phone: booking.clientPhone || 'N/A',
+      notes: booking.notes || null,
+      subtotal: booking.subtotal,
+      discount: booking.discount,
+      total: booking.total,
+      deposit_rate: booking.depositRate,
+      deposit_required: booking.depositRequired,
+      deposit_paid: booking.depositPaid,
+      deposit_paid_amount: booking.depositPaidAmount || 0,
+      deposit_paid_at: booking.depositPaidAt || null,
+      final_paid_amount: booking.finalPaidAmount || 0,
+      final_paid_at: booking.finalPaidAt || null,
+      status: booking.status,
+      inventory_deducted: booking.inventoryDeducted,
+      created_by_id: booking.createdById,
+      created_by_name: booking.createdByName,
+      created_by_role: booking.createdByRole,
+      created_at: booking.createdAt,
+      updated_at: booking.updatedAt,
+    };
+
+    const { error: bookingErr } = await supabase.from('bookings').upsert(bookingPayload);
+    if (bookingErr) {
+      console.warn('Notice inserting booking in Supabase:', bookingErr.message);
+      throw bookingErr;
+    }
+
+    if (booking.items && booking.items.length > 0) {
+      const itemsPayload = booking.items.map((it) => ({
+        id: it.id,
+        booking_id: booking.id,
+        product_id: it.productId,
+        product_name: it.productName,
+        product_sku: it.productSku,
+        product_image: it.productImage || null,
+        variant_id: it.variantId,
+        size: it.size,
+        color_name: it.colorName,
+        color_hex: it.colorHex,
+        quantity: it.quantity,
+        unit_price: it.unitPrice,
+        total_price: it.totalPrice,
+        available_stock: it.availableStock,
+        deficit_quantity: it.deficitQuantity,
+        min_threshold: it.minThreshold ?? 5,
+        recommended_production: it.recommendedProduction ?? 0,
+        created_at: booking.createdAt,
+      }));
+
+      const { error: itemsErr } = await supabase.from('booking_items').upsert(itemsPayload);
+      if (itemsErr) {
+        console.warn('Notice inserting booking items in Supabase:', itemsErr.message);
+      }
+    }
+  } catch (err: any) {
+    console.warn('Supabase booking sync warning:', err?.message);
+    throw err;
+  }
+}
+
+export async function updateBookingInDb(
+  bookingId: string,
+  updates: Partial<Booking>
+): Promise<void> {
+  try {
+    const payload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
+    if (updates.depositPaid !== undefined) payload.deposit_paid = updates.depositPaid;
+    if (updates.depositPaidAmount !== undefined) payload.deposit_paid_amount = updates.depositPaidAmount;
+    if (updates.depositPaidAt !== undefined) payload.deposit_paid_at = updates.depositPaidAt;
+    if (updates.finalPaidAmount !== undefined) payload.final_paid_amount = updates.finalPaidAmount;
+    if (updates.finalPaidAt !== undefined) payload.final_paid_at = updates.finalPaidAt;
+    if (updates.notes !== undefined) payload.notes = updates.notes;
+    if (updates.discount !== undefined) payload.discount = updates.discount;
+    if (updates.total !== undefined) payload.total = updates.total;
+
+    const { error } = await supabase.from('bookings').update(payload).eq('id', bookingId);
+    if (error) {
+      console.warn('Notice updating booking in Supabase:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('Supabase updateBooking notice:', err?.message);
+  }
+}
+
+export async function deleteBookingFromDb(bookingId: string): Promise<void> {
+  try {
+    const { error } = await supabase.from('bookings').delete().eq('id', bookingId);
+    if (error) {
+      console.warn('Notice deleting booking from Supabase:', error.message);
+    }
+  } catch (err: any) {
+    console.warn('Supabase deleteBooking notice:', err?.message);
+  }
+}
+
 

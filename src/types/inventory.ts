@@ -126,7 +126,10 @@ export interface AuditLogEntry {
     | 'request_approved'
     | 'request_rejected'
     | 'staff_approved'
-    | 'staff_rejected';
+    | 'staff_rejected'
+    | 'booking_created'
+    | 'booking_status_changed'
+    | 'booking_deposit_paid';
   actorName: string;
   actorRole: Role;
   summary: string;
@@ -144,3 +147,51 @@ export interface AuditLogEntry {
   reason?: string;
   note?: string;
 }
+
+export type BookingStatus = 'pending' | 'preparing' | 'delivered' | 'done';
+
+export interface BookingItem {
+  id: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  productImage?: string;
+  variantId: string;
+  size: GarmentSize;
+  colorName: string;
+  colorHex: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  availableStock: number;
+  deficitQuantity: number;
+  minThreshold?: number;
+  recommendedProduction?: number;
+}
+
+export interface Booking {
+  id: string;
+  bookingNumber: string;
+  clientName: string;
+  clientPhone: string;
+  notes?: string;
+  items: BookingItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  depositRate: number; // 0.5 (50%)
+  depositRequired: number; // total * 0.5
+  depositPaid: boolean;
+  depositPaidAmount: number;
+  depositPaidAt?: string;
+  finalPaidAmount?: number;
+  finalPaidAt?: string;
+  status: BookingStatus;
+  inventoryDeducted: boolean;
+  createdById: string;
+  createdByName: string;
+  createdByRole: Role;
+  createdAt: string;
+  updatedAt: string;
+}
+

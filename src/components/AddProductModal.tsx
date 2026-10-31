@@ -826,7 +826,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                    Price ($ / EGP)
+                    Price (EGP)
                   </label>
                   <input
                     type="number"

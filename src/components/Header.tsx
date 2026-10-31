@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck } from 'lucide-react';
 import { isUserAdmin } from '../utils/security';
 
 interface HeaderProps {
@@ -11,6 +11,7 @@ interface HeaderProps {
   pendingCount: number;
   pendingStockCount?: number;
   pendingAccountsCount?: number;
+  pendingBookingsCount?: number;
   approvalsTab?: 'stock' | 'staff';
   onSwitchRole?: () => void;
 }
@@ -23,6 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
   pendingCount,
   pendingStockCount = 0,
   pendingAccountsCount = 0,
+  pendingBookingsCount = 0,
   approvalsTab = 'stock',
 }) => {
   const isAdmin = isUserAdmin(currentUser);
@@ -58,11 +60,9 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => onNavigate('inventory')}
               className="flex items-center gap-2 sm:gap-2.5 text-base sm:text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap text-left hover:text-amber-700 transition-colors"
             >
-              <img
-                src="/assets/aistudio/SPS_LOGO_3443b8ef.jpg"
-                alt="SPS Logo"
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg object-contain bg-white border border-slate-200 shadow-xs"
-              />
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-slate-900 text-amber-400 flex items-center justify-center font-black text-xs shadow-xs border border-slate-800">
+                <Package className="w-4 h-4 text-amber-400" />
+              </div>
               <span>SPS Warehouse</span>
             </button>
             <span
@@ -85,6 +85,25 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               Inventory Catalog
+            </button>
+
+            {/* Bookings navigation item */}
+            <button
+              onClick={() => onNavigate('bookings')}
+              className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                activeView === 'bookings'
+                  ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
+                  : ''
+              }`}
+              title="Client bookings, quotations and 50% deposit tracking"
+            >
+              <CalendarCheck className="w-4 h-4 text-blue-600" />
+              <span>Bookings</span>
+              {pendingBookingsCount > 0 && (
+                <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
+                  {pendingBookingsCount}
+                </span>
+              )}
             </button>
 
             {isAdmin ? (

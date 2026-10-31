@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product, Role, ProductVariant } from '../types/inventory';
-import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Clock, Check } from 'lucide-react';
+import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Clock, Check, CalendarCheck } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
@@ -10,6 +10,7 @@ interface ProductCardProps {
   onEditProduct?: (product: Product) => void;
   onDeleteProduct?: (product: Product) => void;
   onApproveProduct?: (productId: string) => void;
+  onOpenBooking?: (product: Product) => void;
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({
@@ -20,6 +21,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onEditProduct,
   onDeleteProduct,
   onApproveProduct,
+  onOpenBooking,
 }) => {
   const [imageError, setImageError] = useState(false);
   const [activeImgIdx, setActiveImgIdx] = useState(0);
@@ -285,31 +287,46 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           )}
 
           {/* Primary Action Buttons */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2">
+            {/* Top Full Width Button: Sizes & Colors */}
             <button
               type="button"
               onClick={() => onOpenDetails(product)}
-              className="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 min-h-[44px]"
+              className="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 min-h-[42px]"
             >
               <Layers className="w-3.5 h-3.5 text-slate-600" />
               <span>{isStandardItem ? 'View Details' : 'Sizes & Colors'}</span>
             </button>
 
+            {/* Bottom Row: Actions */}
             {isAdmin ? (
               <div className="flex items-center gap-1.5 w-full">
                 <button
                   type="button"
                   onClick={() => onEditProduct ? onEditProduct(product) : onOpenDetails(product)}
-                  className="flex-1 py-2.5 px-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[44px]"
+                  className="flex-1 py-2 px-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
+                  title="Edit product"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
                   <span>Edit</span>
                 </button>
+
+                {/* User Requested: Blue Booking Button next to Edit */}
+                <button
+                  type="button"
+                  onClick={() => onOpenBooking ? onOpenBooking(product) : undefined}
+                  className="flex-1 py-2 px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
+                  title="Create client booking quotation"
+                >
+                  <CalendarCheck className="w-3.5 h-3.5" />
+                  <span>Booking</span>
+                </button>
+
                 {onDeleteProduct && (
                   <button
                     type="button"
                     onClick={() => onDeleteProduct(product)}
-                    className="p-2.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-200 transition-colors flex items-center justify-center min-h-[44px] min-w-[40px] shrink-0"
+                    className="p-2.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-200 transition-colors flex items-center justify-center min-h-[42px] min-w-[40px] shrink-0"
                     title="Delete Item (Admin Only)"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -317,14 +334,27 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 )}
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => onRequestAdjustment(product)}
-                className="w-full py-2.5 px-3 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 shadow-sm min-h-[44px]"
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                <span>Request Count</span>
-              </button>
+              <div className="flex items-center gap-1.5 w-full">
+                <button
+                  type="button"
+                  onClick={() => onRequestAdjustment(product)}
+                  className="flex-1 py-2 px-2.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Request Count</span>
+                </button>
+
+                {/* User Requested: Blue Booking Button next to Request Count for Floor Staff */}
+                <button
+                  type="button"
+                  onClick={() => onOpenBooking ? onOpenBooking(product) : undefined}
+                  className="flex-1 py-2 px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
+                  title="Create client booking quotation"
+                >
+                  <CalendarCheck className="w-3.5 h-3.5" />
+                  <span>Booking</span>
+                </button>
+              </div>
             )}
           </div>
         </div>

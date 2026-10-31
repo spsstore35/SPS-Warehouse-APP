@@ -1,0 +1,5 @@
+{
+  "summary":  "Complete specification of the Saint Paul Scouts (TsPs) Client Quotation & Production Booking system, including SPS-DD-MM-YYYY-N serial numbering logic, 50% advance deposit policies, item nomenclature, print layouts without SKU, and Supabase SQL/RLS architecture.",
+  "updatedAt":  "2026-10-31T14:23:28.569183296Z",
+  "userFacing":  true
+}
