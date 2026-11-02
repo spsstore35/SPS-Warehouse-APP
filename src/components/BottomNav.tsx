@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Plus, Sparkles } from 'lucide-react';
 import { isUserAdmin } from '../utils/security';
 
 interface BottomNavProps {
@@ -13,6 +13,8 @@ interface BottomNavProps {
   pendingAccountsCount?: number;
   approvalsTab?: 'stock' | 'staff';
   onSwitchRole?: () => void;
+  onOpenAddProduct?: () => void;
+  onOpenNewBooking?: () => void;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
@@ -24,9 +26,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   pendingStockCount = 0,
   pendingAccountsCount = 0,
   approvalsTab = 'stock',
+  onOpenAddProduct,
+  onOpenNewBooking,
 }) => {
   const isAdmin = isUserAdmin(currentUser);
   const [showAccountSheet, setShowAccountSheet] = useState(false);
+  const [showCreateChoiceSheet, setShowCreateChoiceSheet] = useState(false);
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 md:hidden pb-safe shadow-lg">
@@ -81,11 +86,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </button>
         )}
 
-        {/* Tab 3: Center Primary Action - Add New Item */}
+        {/* Tab 3: Center Primary Action - Prompt choice: New Item vs New Booking */}
         <button
-          onClick={() => onNavigate('add-product')}
+          onClick={() => setShowCreateChoiceSheet(true)}
           className="flex flex-col items-center justify-center min-h-[44px] py-1 text-amber-600 group"
-          title={isAdmin ? 'Add New Item' : 'Submit New Item'}
+          title="Create New Item or Booking"
         >
           <div className={`w-10 h-10 rounded-full ${isAdmin ? 'bg-amber-500 hover:bg-amber-600 text-slate-950' : 'bg-sky-500 hover:bg-sky-600 text-white'} flex items-center justify-center shadow-md active:scale-95 transition-transform`}>
             <PlusCircle className="w-6 h-6 stroke-[2.2]" />
@@ -278,6 +283,107 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               >
                 <LogOut className="w-4 h-4 text-rose-600" />
                 <span>Log out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile + Action Prompt Sheet: New Item vs New Booking */}
+      {showCreateChoiceSheet && (
+        <div 
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setShowCreateChoiceSheet(false)}
+        >
+          <div
+            className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl p-5 animate-in slide-in-from-bottom duration-200 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sheet Handle */}
+            <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto sm:hidden" />
+
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Create New Action</h3>
+                <p className="text-xs text-slate-500">What would you like to add?</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateChoiceSheet(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Two Choices */}
+            <div className="grid grid-cols-1 gap-3 py-1">
+              {/* Option 1: New Item / Product */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateChoiceSheet(false);
+                  if (onOpenAddProduct) {
+                    onOpenAddProduct();
+                  } else {
+                    onNavigate('add-product');
+                  }
+                }}
+                className="w-full p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50/50 hover:from-amber-100 hover:to-orange-100/60 border border-amber-200/90 text-left transition-all active:scale-98 flex items-center gap-3.5 shadow-2xs group"
+              >
+                <div className="w-12 h-12 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                  <Package className="w-6 h-6 stroke-[2.2]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-black text-slate-900 flex items-center justify-between">
+                    <span>New Item / Product</span>
+                    <span className="text-[10px] font-bold text-amber-900 bg-amber-200/70 px-2 py-0.5 rounded-full">
+                      Stock
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Add new apparel model, colors, size matrix & prices
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 2: New Client Booking */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateChoiceSheet(false);
+                  if (onOpenNewBooking) {
+                    onOpenNewBooking();
+                  } else {
+                    onNavigate('bookings');
+                  }
+                }}
+                className="w-full p-4 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50/50 hover:from-blue-100 hover:to-indigo-100/60 border border-blue-200/90 text-left transition-all active:scale-98 flex items-center gap-3.5 shadow-2xs group"
+              >
+                <div className="w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                  <CalendarCheck className="w-6 h-6 stroke-[2.2]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-black text-slate-900 flex items-center justify-between">
+                    <span>New Client Booking</span>
+                    <span className="text-[10px] font-bold text-blue-900 bg-blue-200/70 px-2 py-0.5 rounded-full">
+                      50% Deposit
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Create bulk client order, quotation & workshop sheet
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCreateChoiceSheet(false)}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Cancel
               </button>
             </div>
           </div>

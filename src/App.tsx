@@ -1703,6 +1703,14 @@ export default function App() {
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
         approvalsTab={approvalsTab}
+        onOpenAddProduct={() => {
+          setProductToEdit(undefined);
+          setShowAddModal(true);
+        }}
+        onOpenNewBooking={() => {
+          setBookingModalProduct(undefined);
+          setIsBookingModalOpen(true);
+        }}
       />
 
       {/* MODAL 1: Size & Color Detail Matrix */}

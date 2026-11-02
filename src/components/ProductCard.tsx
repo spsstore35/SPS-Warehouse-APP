@@ -304,22 +304,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 <button
                   type="button"
                   onClick={() => onEditProduct ? onEditProduct(product) : onOpenDetails(product)}
-                  className="flex-1 py-2 px-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
+                  className="flex-1 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm min-h-[42px]"
                   title="Edit product"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  <span>Edit</span>
-                </button>
-
-                {/* User Requested: Blue Booking Button next to Edit */}
-                <button
-                  type="button"
-                  onClick={() => onOpenBooking ? onOpenBooking(product) : undefined}
-                  className="flex-1 py-2 px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
-                  title="Create client booking quotation"
-                >
-                  <CalendarCheck className="w-3.5 h-3.5" />
-                  <span>Booking</span>
+                  <span>Edit Item</span>
                 </button>
 
                 {onDeleteProduct && (
@@ -338,21 +327,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 <button
                   type="button"
                   onClick={() => onRequestAdjustment(product)}
-                  className="flex-1 py-2 px-2.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
+                  className="w-full py-2 px-3 rounded-xl bg-sky-500 hover:bg-sky-600 active:scale-98 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm min-h-[42px]"
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>Request Count</span>
-                </button>
-
-                {/* User Requested: Blue Booking Button next to Request Count for Floor Staff */}
-                <button
-                  type="button"
-                  onClick={() => onOpenBooking ? onOpenBooking(product) : undefined}
-                  className="flex-1 py-2 px-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1 shadow-sm min-h-[42px]"
-                  title="Create client booking quotation"
-                >
-                  <CalendarCheck className="w-3.5 h-3.5" />
-                  <span>Booking</span>
+                  <span>Request Count Adjustment</span>
                 </button>
               </div>
             )}
