@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <defs>
+    <path id="textArc" d="M 85 240 A 185 185 0 0 1 450 250" fill="none" />
+  </defs>
+  
+  <!-- Background -->
+  <rect width="100%" height="100%" rx="60" fill="#ffffff" />
+  
+  <!-- Arabic Curved Text: مجموعة القديس بولس الكشفية -->
+  <text fill="#485922" font-family="'Plus Jakarta Sans', 'Segoe UI', Tahoma, Arial, sans-serif" font-size="25" font-weight="800" letter-spacing="1">
+    <textPath href="#textArc" startOffset="8%" text-anchor="middle">
+      مجموعة القديس بولس الكشفية
+    </textPath>
+  </text>
+
+  <!-- Scout Emblem: St. Paul Scouts (TsPs) -->
+  <g transform="translate(45, 40) scale(0.85)">
+    <!-- Right Golden/Amber Double Petal / Flame -->
+    <path d="M 270 85 C 235 90 205 115 195 140 C 230 145 285 200 240 260 C 295 260 330 205 325 155 C 320 110 295 85 270 85 Z" fill="#f5a623" />
+    <path d="M 235 255 C 275 255 315 280 305 325 C 295 365 245 375 220 335 C 215 310 220 280 235 255 Z" fill="#f5a623" />
+    
+    <!-- Left Olive Petal -->
+    <path d="M 185 85 C 130 95 105 155 125 210 C 145 255 185 270 195 280 C 190 255 175 240 160 225 C 140 205 135 175 145 150 C 155 120 175 100 185 85 Z" fill="#4b5d27" />
+    <path d="M 125 210 C 85 235 55 280 60 345 C 65 410 125 435 185 410 C 135 395 105 360 105 315 C 105 275 120 240 135 220 Z" fill="#4b5d27" />
+
+    <!-- Center Fleur/Cross intersection & TsPs Stylized Lettering -->
+    <!-- Stylized "T" and crossbar -->
+    <path d="M 175 350 L 285 345 C 290 345 292 355 285 360 L 180 375 Z" fill="#4b5d27" />
+    <!-- Main stem / T-leg -->
+    <path d="M 185 320 C 185 360 185 440 175 480 C 165 485 155 470 160 450 C 170 410 170 360 170 320 Z" fill="#4b5d27" />
+    
+    <!-- Stylized "s" / "P" / "s" -->
+    <!-- "s" -->
+    <path d="M 195 385 C 215 380 225 390 220 405 C 215 420 195 425 200 440 C 205 455 225 450 230 445 C 228 460 205 470 190 460 C 175 450 180 430 190 420 C 200 410 210 405 205 395 C 200 385 185 395 180 400 Z" fill="#4b5d27" />
+    <!-- "P" -->
+    <path d="M 235 375 L 245 470 C 240 475 230 470 232 455 L 235 375 Z" fill="#4b5d27" />
+    <path d="M 235 375 C 265 370 280 390 275 415 C 270 435 245 440 235 435 Z M 245 388 L 245 422 C 258 422 265 415 267 405 C 269 395 260 388 245 388 Z" fill="#4b5d27" />
+    <!-- "s" at the end -->
+    <path d="M 285 390 C 305 385 320 395 315 415 C 310 435 285 440 290 460 C 295 475 320 470 325 465 C 322 482 295 490 280 475 C 265 460 270 435 285 425 C 298 415 305 410 300 400 C 295 390 275 400 270 405 Z" fill="#4b5d27" />
+  </g>
+</svg>

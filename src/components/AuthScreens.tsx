@@ -209,12 +209,19 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-8 sm:px-6 lg:px-8">
       {/* Brand Header */}
       <div className="w-full max-w-md mx-auto text-center mb-6 sm:mb-8">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 text-amber-400 shadow-md mb-3">
-          <Warehouse className="w-8 h-8 stroke-[1.75]" />
+        <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white border border-slate-200 shadow-md mb-3 p-1 overflow-hidden">
+          <img
+            src="/sps-logo.svg"
+            alt="Saint Paul Scouts"
+            className="w-full h-full object-contain"
+          />
         </div>
         <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900">
           SPS Warehouse
         </h1>
+        <p className="text-xs text-slate-500 font-semibold mt-1">
+          Saint Paul Scouts • مجموعة القديس بولس الكشفية
+        </p>
       </div>
 
       {/* Main Card */}

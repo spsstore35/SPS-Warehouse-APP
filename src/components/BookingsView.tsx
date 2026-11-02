@@ -44,6 +44,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [detailsScale, setDetailsScale] = useState<'0.75' | '1.0'>('0.75');
 
   // Filter bookings
   const filteredBookings = bookings.filter((b) => {
@@ -312,14 +313,19 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         </div>
       )}
 
-      {/* DEDICATED FULL DETAILS MODAL WITH PREMIUM MOBILE RESPONSIVENESS & CLEAN HIERARCHY */}
+      {/* DEDICATED FULL DETAILS MODAL WITH 0.75X SCALE AS REQUESTED */}
       {activeBooking && (
         <div
           className="fixed inset-0 z-50 flex flex-col sm:items-center sm:justify-center sm:p-4 bg-slate-950/75 backdrop-blur-sm overflow-hidden print:hidden animate-in fade-in duration-150"
           onClick={() => setSelectedBookingId(null)}
         >
           <div
-            className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl bg-white sm:rounded-3xl border-0 sm:border sm:border-slate-200/90 shadow-2xl flex flex-col overflow-hidden"
+            className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl bg-white sm:rounded-3xl border-0 sm:border sm:border-slate-200/90 shadow-2xl flex flex-col overflow-hidden transition-transform"
+            style={{
+              zoom: detailsScale === '0.75' ? 0.75 : 1.0,
+              width: detailsScale === '0.75' ? '133.333%' : '100%',
+              height: detailsScale === '0.75' ? '133.333%' : '100%',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header: High Contrast, Compact, Non-cluttered */}
@@ -340,14 +346,27 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedBookingId(null)}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-colors shrink-0 ml-2"
-                title="Close"
-              >
-                <X className="w-4 h-4 sm:w-5 sm:h-5" />
-              </button>
+              <div className="flex items-center gap-2 shrink-0 ml-2">
+                {/* Scale View Toggle (0.75x by default) */}
+                <button
+                  type="button"
+                  onClick={() => setDetailsScale(detailsScale === '0.75' ? '1.0' : '0.75')}
+                  className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-white font-mono font-black text-xs flex items-center gap-1 transition-all"
+                  title="Toggle 0.75x / 1.0x view scale"
+                >
+                  <span className="text-slate-300 font-sans text-[10px]">Scale:</span>
+                  <span className="text-amber-400">{detailsScale}x</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedBookingId(null)}
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-colors"
+                  title="Close"
+                >
+                  <X className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body: Smooth Single Scroll Container */}
