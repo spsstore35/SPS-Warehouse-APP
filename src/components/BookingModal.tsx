@@ -40,21 +40,34 @@ function generateBookingSerial(existingBookings: Booking[] = []): string {
   const now = new Date();
   const day = String(now.getDate()).padStart(2, '0');
   const month = String(now.getMonth() + 1).padStart(2, '0');
-  const year = now.getFullYear();
-  const prefix = `SPS-${day}-${month}-${year}-`;
+  const yearShort = String(now.getFullYear()).slice(-2);
+  const prefix = `SPS-${day}${month}${yearShort}`;
 
   let maxSeq = 0;
   existingBookings.forEach((b) => {
-    if (b.bookingNumber && b.bookingNumber.startsWith(prefix)) {
-      const rest = b.bookingNumber.substring(prefix.length);
-      const seq = parseInt(rest, 10);
-      if (!isNaN(seq) && seq > maxSeq) {
-        maxSeq = seq;
+    if (b.bookingNumber) {
+      if (b.bookingNumber.startsWith(prefix)) {
+        const rest = b.bookingNumber.substring(prefix.length);
+        const seq = parseInt(rest, 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      } else {
+        // Also support backward compatibility with older dashed format (SPS-DD-MM-YYYY-N)
+        const oldPrefix = `SPS-${day}-${month}-${now.getFullYear()}-`;
+        if (b.bookingNumber.startsWith(oldPrefix)) {
+          const rest = b.bookingNumber.substring(oldPrefix.length);
+          const seq = parseInt(rest, 10);
+          if (!isNaN(seq) && seq > maxSeq) {
+            maxSeq = seq;
+          }
+        }
       }
     }
   });
 
-  return `${prefix}${maxSeq + 1}`;
+  const nextSeq = String(maxSeq + 1).padStart(2, '0');
+  return `${prefix}${nextSeq}`;
 }
 
 export const BookingModal: React.FC<BookingModalProps> = ({
@@ -347,7 +360,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 New Client Booking & Quotation
               </h2>
               <p className="text-[11px] text-slate-500 font-medium hidden sm:block">
-                Serial Format: <span className="font-mono font-bold text-blue-700">SPS-DD-MM-YYYY-N</span> • All Currency in EGP
+                Serial Format: <span className="font-mono font-bold text-blue-700">SPS-DDMMYYXX</span> (e.g. SPS-01112601) • All Currency in EGP
               </p>
             </div>
           </div>

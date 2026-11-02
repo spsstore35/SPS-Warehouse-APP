@@ -50,11 +50,11 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto print:static print:inset-auto print:bg-white print:p-0 print:m-0 print:overflow-visible">
       {/* Modal Container */}
-      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl my-0 sm:my-6 flex flex-col max-h-[95vh] overflow-hidden">
-        {/* Top Control Bar (Hidden when printing via CSS @media print) */}
-        <div className="print:hidden p-3.5 sm:p-4 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+      <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl my-0 sm:my-6 flex flex-col max-h-[95vh] overflow-hidden print:max-h-none print:h-auto print:border-none print:shadow-none print:rounded-none print:overflow-visible print:my-0 print:w-full">
+        {/* Top Control Bar (Hidden strictly when printing) */}
+        <div className="no-print print:hidden p-3.5 sm:p-4 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div className="flex items-center justify-between w-full sm:w-auto">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
@@ -68,7 +68,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[10px] sm:text-[11px] text-slate-300">
-                  A4 Standard Printable & PDF
+                  A4 Single-Page Printable & PDF
                 </p>
               </div>
             </div>
@@ -76,14 +76,14 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="sm:hidden w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+              className="sm:hidden w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors no-print"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
           {/* Switch Document Type, Notes Toggle & Print Action */}
-          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 w-full sm:w-auto no-print">
             {booking.notes && (
               <button
                 type="button"
@@ -140,7 +140,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="hidden sm:flex w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white items-center justify-center transition-colors"
+              className="hidden sm:flex w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white items-center justify-center transition-colors no-print"
             >
               <X className="w-4 h-4" />
             </button>
@@ -148,20 +148,35 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
         </div>
 
         {/* Printable Sheet Viewport */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-slate-100/60 print:bg-white print:p-0">
-          {/* Embedded Print Stylesheet for A4 Single-Page Output */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-slate-100/60 print:bg-white print:p-0 print:overflow-visible">
+          {/* Embedded Print Stylesheet for Strict A4 Single-Page Output */}
           <style dangerouslySetInnerHTML={{
             __html: `
               @media print {
                 @page {
                   size: A4 portrait;
-                  margin: 12mm 15mm;
+                  margin: 10mm;
                 }
-                body {
-                  background: white !important;
-                  color: black !important;
-                  -webkit-print-color-adjust: exact;
-                  print-color-adjust: exact;
+                *, *::before, *::after {
+                  -webkit-print-color-adjust: exact !important;
+                  print-color-adjust: exact !important;
+                }
+                body, html {
+                  background: #ffffff !important;
+                  color: #0f172a !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  height: auto !important;
+                  overflow: visible !important;
+                }
+                .no-print,
+                button,
+                nav,
+                header,
+                footer,
+                aside,
+                [role="navigation"] {
+                  display: none !important;
                 }
                 #printable-a4-area {
                   border: none !important;
@@ -171,6 +186,12 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   width: 100% !important;
                   max-width: 100% !important;
                   min-height: auto !important;
+                  page-break-after: avoid !important;
+                  break-after: avoid !important;
+                }
+                .sheet-card {
+                  page-break-inside: avoid !important;
+                  break-inside: avoid !important;
                 }
               }
             `
@@ -179,13 +200,13 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
           {/* A4 Sheet Simulation */}
           <div
             id="printable-a4-area"
-            className="w-full max-w-[210mm] min-h-[297mm] mx-auto bg-white border border-slate-200/90 shadow-lg p-6 sm:p-10 font-sans text-slate-900 print:border-none print:shadow-none print:p-0 print:m-0 print:w-full print:max-w-none text-xs leading-relaxed"
+            className="w-full max-w-[210mm] mx-auto bg-white border border-slate-200/90 shadow-lg p-6 sm:p-8 font-sans text-slate-900 print:border-none print:shadow-none print:p-0 print:m-0 print:w-full print:max-w-none text-xs leading-relaxed"
           >
             {/* DOCUMENT 1: CLIENT QUOTATION */}
             {docType === 'quotation' && (
-              <div className="space-y-6">
+              <div className="space-y-4 sm:space-y-5">
                 {/* Header matching user's exact structure */}
-                <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4">
+                <div className="sheet-card flex items-start justify-between border-b-2 border-slate-900 pb-3">
                   <div>
                     <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 uppercase">
                       SAINT PAUL SCOUTS WAREHOUSE
@@ -223,7 +244,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 </div>
 
                 {/* Quotation Info Card */}
-                <div className="grid grid-cols-2 gap-4 bg-slate-50/80 border border-slate-200 rounded-2xl p-4 sm:p-5">
+                <div className="sheet-card grid grid-cols-2 gap-4 bg-slate-50/80 border border-slate-200 rounded-2xl p-3.5 sm:p-4">
                   <div>
                     <div className="text-[10px] uppercase tracking-wider font-black text-slate-500 mb-1">
                       QUOTATION PREPARED FOR
@@ -273,25 +294,25 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 </div>
 
                 {/* Items Table matching exact structure */}
-                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                <div className="sheet-card border border-slate-200 rounded-2xl overflow-hidden">
                   <table className="w-full text-left border-collapse">
                     <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200 text-[11px]">
                       <tr>
-                        <th className="py-3 px-4">#</th>
-                        <th className="py-3 px-4">Item Description</th>
-                        <th className="py-3 px-4 text-left">Color</th>
-                        <th className="py-3 px-4 text-center">Size</th>
-                        <th className="py-3 px-4 text-center">Qty</th>
-                        <th className="py-3 px-4 text-right">Unit Price (EGP)</th>
-                        <th className="py-3 px-4 text-right">Line Total (EGP)</th>
+                        <th className="py-2.5 px-3.5">#</th>
+                        <th className="py-2.5 px-3.5">Item Description</th>
+                        <th className="py-2.5 px-3.5 text-left">Color</th>
+                        <th className="py-2.5 px-3.5 text-center">Size</th>
+                        <th className="py-2.5 px-3.5 text-center">Qty</th>
+                        <th className="py-2.5 px-3.5 text-right">Unit Price (EGP)</th>
+                        <th className="py-2.5 px-3.5 text-right">Line Total (EGP)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-xs bg-white">
                       {booking.items.map((it, idx) => (
                         <tr key={it.id}>
-                          <td className="py-3 px-4 font-mono text-slate-400 font-bold">{idx + 1}</td>
-                          <td className="py-3 px-4 font-black text-slate-900">{it.productName}</td>
-                          <td className="py-3 px-4 text-left">
+                          <td className="py-2.5 px-3.5 font-mono text-slate-400 font-bold">{idx + 1}</td>
+                          <td className="py-2.5 px-3.5 font-black text-slate-900">{it.productName}</td>
+                          <td className="py-2.5 px-3.5 text-left">
                             <span className="inline-flex items-center gap-2 font-medium">
                               <span
                                 className="w-3 h-3 rounded-full border border-slate-300 inline-block shrink-0 shadow-2xs"
@@ -300,14 +321,14 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                               <span className="text-slate-800 font-semibold">{it.colorName}</span>
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-center font-mono font-bold text-slate-800">{it.size}</td>
-                          <td className="py-3 px-4 text-center font-mono font-bold text-slate-900">
+                          <td className="py-2.5 px-3.5 text-center font-mono font-bold text-slate-800">{it.size}</td>
+                          <td className="py-2.5 px-3.5 text-center font-mono font-bold text-slate-900">
                             {it.quantity}
                           </td>
-                          <td className="py-3 px-4 text-right font-mono font-semibold text-slate-700">
+                          <td className="py-2.5 px-3.5 text-right font-mono font-semibold text-slate-700">
                             {it.unitPrice.toFixed(2)} EGP
                           </td>
-                          <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
+                          <td className="py-2.5 px-3.5 text-right font-mono font-black text-slate-900">
                             {it.totalPrice.toFixed(2)} EGP
                           </td>
                         </tr>
@@ -317,8 +338,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 </div>
 
                 {/* Enlarged Totals Box (Bottom Right) as requested */}
-                <div className="flex justify-end pt-2">
-                  <div className="w-full sm:w-96 bg-slate-50/90 border border-slate-200 rounded-2xl p-5 space-y-2.5 shadow-2xs">
+                <div className="sheet-card flex justify-end pt-1">
+                  <div className="w-full sm:w-96 bg-slate-50/90 border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-2 shadow-2xs">
                     <div className="flex justify-between text-xs text-slate-600">
                       <span>Subtotal:</span>
                       <span className="font-mono font-bold text-slate-900">{booking.subtotal.toFixed(2)} EGP</span>

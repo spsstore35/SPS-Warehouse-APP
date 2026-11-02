@@ -18,6 +18,10 @@ import {
   Trash2,
   Tag,
   Boxes,
+  Calendar,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -89,11 +93,92 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     setUserToDelete(null);
   };
 
+  // Helper date functions for Stock Approvals Day-by-Day filter
+  const toDateKey = (isoString?: string): string => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    } catch {
+      return '';
+    }
+  };
+
+  const getTodayKey = (): string => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const formatFriendlyDate = (dateKey: string): string => {
+    if (!dateKey) return '';
+    const [y, m, d] = dateKey.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    const todayKey = getTodayKey();
+
+    const formatted = date.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    if (dateKey === todayKey) {
+      return `Today (${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+    }
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+    if (dateKey === yesterdayKey) {
+      return `Yesterday (${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`;
+    }
+
+    return formatted;
+  };
+
+  const shiftDate = (dateKey: string, deltaDays: number): string => {
+    const [y, m, d] = dateKey.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    date.setDate(date.getDate() + deltaDays);
+    const newY = date.getFullYear();
+    const newM = String(date.getMonth() + 1).padStart(2, '0');
+    const newD = String(date.getDate()).padStart(2, '0');
+    return `${newY}-${newM}-${newD}`;
+  };
+
+  // Stock Approvals date filtering state
+  const todayKey = React.useMemo(() => getTodayKey(), []);
+  const initialStockDate = React.useMemo(() => {
+    if (requests.length > 0) {
+      const datesWithRequests = requests.map((r) => toDateKey(r.createdAt)).filter(Boolean);
+      if (datesWithRequests.includes(todayKey)) return todayKey;
+      return datesWithRequests[0] || todayKey;
+    }
+    return todayKey;
+  }, [requests, todayKey]);
+
+  const [selectedStockDate, setSelectedStockDate] = useState<string>(initialStockDate);
+  const [isStockDayFilterEnabled, setIsStockDayFilterEnabled] = useState<boolean>(false);
+
   const pendingRequests = requests.filter((r) => r.status === 'pending');
   const filteredRequests = requests.filter((r) => {
-    if (filter === 'all') return true;
-    return r.status === filter;
+    if (filter !== 'all' && r.status !== filter) return false;
+    if (isStockDayFilterEnabled && selectedStockDate) {
+      if (toDateKey(r.createdAt) !== selectedStockDate) return false;
+    }
+    return true;
   });
+
+  const countForSelectedStockDate = React.useMemo(() => {
+    return requests.filter((r) => toDateKey(r.createdAt) === selectedStockDate).length;
+  }, [requests, selectedStockDate]);
 
   const pendingUsers = users.filter((u) => u.status === 'pending');
 
@@ -225,17 +310,125 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       {/* TAB 1: STOCK ADJUSTMENT REQUESTS */}
       {activeTab === 'stock' && (
         <div className="space-y-4">
+          {/* Day-by-Day Date Navigation Bar ("agyeb el haga bel ayam") */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-4 shadow-xs">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              {/* Day-by-Day Navigator Controls */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedStockDate((curr) => shiftDate(curr, -1));
+                    setIsStockDayFilterEnabled(true);
+                  }}
+                  className="p-2 sm:px-3 sm:py-2 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs"
+                  title="Previous Day"
+                >
+                  <ChevronLeft className="w-4 h-4 text-slate-600" />
+                  <span className="hidden sm:inline">Prev Day</span>
+                </button>
+
+                {/* Interactive Date Picker & Formatted Day Label */}
+                <div className="relative flex items-center bg-amber-50/70 border border-amber-200/90 rounded-xl px-3 py-1.5 gap-2.5 shadow-xs hover:border-amber-400 transition-colors">
+                  <Calendar className="w-4 h-4 text-amber-700 shrink-0" />
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-800">
+                      {formatFriendlyDate(selectedStockDate)}
+                    </span>
+                    <input
+                      type="date"
+                      value={selectedStockDate}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setSelectedStockDate(e.target.value);
+                          setIsStockDayFilterEnabled(true);
+                        }
+                      }}
+                      className="bg-transparent text-xs font-mono font-bold text-slate-800 focus:outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedStockDate((curr) => shiftDate(curr, 1));
+                    setIsStockDayFilterEnabled(true);
+                  }}
+                  className="p-2 sm:px-3 sm:py-2 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs"
+                  title="Next Day"
+                >
+                  <span className="hidden sm:inline">Next Day</span>
+                  <ChevronRight className="w-4 h-4 text-slate-600" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedStockDate(todayKey);
+                    setIsStockDayFilterEnabled(true);
+                  }}
+                  className="px-3 py-2 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all shadow-xs"
+                >
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  <span>Today</span>
+                </button>
+              </div>
+
+              {/* All Dates vs By Date Selector */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start lg:self-auto border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setIsStockDayFilterEnabled(false)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                    !isStockDayFilterEnabled
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All Dates ({requests.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsStockDayFilterEnabled(true)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                    isStockDayFilterEnabled
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  By Date ({countForSelectedStockDate})
+                </button>
+              </div>
+            </div>
+
+            {isStockDayFilterEnabled && (
+              <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
+                <span>
+                  Showing stock adjustments on <strong>{formatFriendlyDate(selectedStockDate)}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsStockDayFilterEnabled(false)}
+                  className="text-amber-800 hover:underline font-bold text-[11px]"
+                >
+                  Show All Dates
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Sub filter tabs */}
-          <div className="flex items-center gap-1 p-1 bg-white border border-slate-200 rounded-xl self-start sm:self-auto overflow-x-auto max-w-full shadow-sm">
+          <div className="flex items-center gap-1 p-1 bg-white border border-slate-200 rounded-xl self-start sm:self-auto overflow-x-auto max-w-full shadow-xs">
             <button
               onClick={() => setFilter('pending')}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors whitespace-nowrap ${
                 filter === 'pending'
-                  ? 'bg-amber-500 text-slate-950 shadow-sm'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Pending ({pendingRequests.length})
+              Pending ({requests.filter((r) => r.status === 'pending').length})
             </button>
             <button
               onClick={() => setFilter('approved')}
@@ -270,13 +463,15 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
           </div>
 
           {filteredRequests.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center max-w-md mx-auto my-6 shadow-sm">
+            <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center max-w-md mx-auto my-6 shadow-xs">
               <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
                 <CheckSquare className="w-6 h-6" />
               </div>
               <h3 className="text-base font-bold text-slate-900">No requests in this queue</h3>
               <p className="text-xs text-slate-500 mt-1">
-                {filter === 'pending'
+                {isStockDayFilterEnabled
+                  ? `No stock adjustments found on ${formatFriendlyDate(selectedStockDate)}.`
+                  : filter === 'pending'
                   ? 'All worker stock adjustments have been reviewed and approved.'
                   : 'No historical requests found matching this filter.'}
               </p>
@@ -291,31 +486,35 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 return (
                   <div
                     key={req.id}
-                    className={`bg-white border rounded-2xl p-4 sm:p-5 transition-all shadow-sm ${
+                    className={`bg-white border rounded-2xl p-4 sm:p-5 transition-all shadow-xs ${
                       isPending ? 'border-amber-400 ring-1 ring-amber-400/20' : 'border-slate-200'
                     }`}
                   >
-                    {/* Header info */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 mb-3.5 border-b border-slate-100 gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-sky-50 text-sky-700 flex items-center justify-center text-xs font-bold border border-sky-200">
+                    {/* Header info with prominent Date and Time badge */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 mb-3.5 border-b border-slate-100 gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-sky-50 text-sky-700 flex items-center justify-center text-xs font-bold border border-sky-200 shrink-0">
                           <UserCheck className="w-4 h-4" />
                         </div>
-                        <div>
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-bold text-slate-900">{req.workerName}</span>
-                          <span className="text-[11px] text-slate-500 ml-2 font-medium">
-                            {new Date(req.createdAt).toLocaleDateString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                          <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/80 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-slate-500" />
+                            <span>
+                              {new Date(req.createdAt).toLocaleDateString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
                           </span>
                         </div>
                       </div>
 
                       {/* Status Badge */}
-                      <div>
+                      <div className="self-start sm:self-auto">
                         {isPending && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-xs font-bold">
                             <Clock className="w-3.5 h-3.5 text-amber-600" />

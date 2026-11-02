@@ -19,3 +19,37 @@
 .pt-safe {
   padding-top: env(safe-area-inset-top, 0px);
 }
+
+/* Strict A4 Single-Page Print & PDF Stylesheet */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body, html {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .no-print,
+  button,
+  nav,
+  header,
+  footer,
+  aside,
+  [role="navigation"],
+  .bottom-nav {
+    display: none !important;
+  }
+}
+
