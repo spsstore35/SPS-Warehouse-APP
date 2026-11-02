@@ -1371,9 +1371,10 @@ export default function App() {
   const isAdmin = isUserAdmin(currentUser);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col pb-20 md:pb-8 selection:bg-amber-500/20 selection:text-amber-900">
-      {/* Top Bar Header */}
-      <Header
+    <>
+      <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col pb-20 md:pb-8 selection:bg-amber-500/20 selection:text-amber-900 print:hidden">
+        {/* Top Bar Header */}
+        <Header
         currentUser={currentUser}
         activeView={activeView}
         onNavigate={handleNavigate}
@@ -1826,7 +1827,59 @@ export default function App() {
         />
       )}
 
-      {/* MODAL 7: A4 Print & PDF Document Generator */}
+        {/* Toast Notification Alert with Click-to-open Detailed Breakdown */}
+        {toastNotification && (
+          <div
+            onClick={() => {
+              if (toastNotification.log) {
+                setSelectedActivityLog(toastNotification.log);
+                setToastNotification(null);
+              }
+            }}
+            className={`fixed bottom-20 md:bottom-6 right-4 left-4 md:left-auto md:max-w-md z-50 p-3 sm:p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xl text-xs text-slate-900 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200 transition-all ${
+              toastNotification.log
+                ? 'cursor-pointer hover:border-amber-400 hover:shadow-amber-500/10'
+                : ''
+            }`}
+            title={toastNotification.log ? 'Click to view detailed breakdown' : undefined}
+          >
+            {toastNotification.log?.productImage && (
+              <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 shadow-xs">
+                <img
+                  src={toastNotification.log.productImage}
+                  alt=""
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 font-bold text-slate-900">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="truncate">{toastNotification.message}</span>
+              </div>
+              {toastNotification.log && (
+                <div className="text-[11px] text-amber-800 font-bold mt-0.5 flex items-center gap-1">
+                  <Eye className="w-3 h-3 text-amber-600" />
+                  <span>Tap to view detailed breakdown</span>
+                  <span aria-hidden="true">→</span>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setToastNotification(null);
+              }}
+              className="text-slate-400 hover:text-slate-700 p-1 shrink-0"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* MODAL 7: A4 Print & PDF Document Generator (Isolated outside print:hidden) */}
       {isPrintModalOpen && printBooking && (
         <BookingPrintModal
           isOpen={isPrintModalOpen}
@@ -1838,57 +1891,6 @@ export default function App() {
           }}
         />
       )}
-
-      {/* Toast Notification Alert with Click-to-open Detailed Breakdown */}
-      {toastNotification && (
-        <div
-          onClick={() => {
-            if (toastNotification.log) {
-              setSelectedActivityLog(toastNotification.log);
-              setToastNotification(null);
-            }
-          }}
-          className={`fixed bottom-20 md:bottom-6 right-4 left-4 md:left-auto md:max-w-md z-50 p-3 sm:p-3.5 rounded-2xl bg-white border border-slate-200 shadow-2xl text-xs text-slate-900 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200 transition-all ${
-            toastNotification.log
-              ? 'cursor-pointer hover:border-amber-400 hover:shadow-amber-500/10'
-              : ''
-          }`}
-          title={toastNotification.log ? 'Click to view detailed breakdown' : undefined}
-        >
-          {toastNotification.log?.productImage && (
-            <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 shadow-xs">
-              <img
-                src={toastNotification.log.productImage}
-                alt=""
-                className="w-full h-full object-cover"
-              />
-            </div>
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 font-bold text-slate-900">
-              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="truncate">{toastNotification.message}</span>
-            </div>
-            {toastNotification.log && (
-              <div className="text-[11px] text-amber-800 font-bold mt-0.5 flex items-center gap-1">
-                <Eye className="w-3 h-3 text-amber-600" />
-                <span>Tap to view detailed breakdown</span>
-                <span aria-hidden="true">→</span>
-              </div>
-            )}
-          </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setToastNotification(null);
-            }}
-            className="text-slate-400 hover:text-slate-700 p-1 shrink-0"
-            title="Dismiss"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-    </div>
+    </>
   );
 };
