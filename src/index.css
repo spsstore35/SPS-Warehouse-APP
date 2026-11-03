@@ -10,6 +10,13 @@
     overflow-x: hidden;
   }
 
+  /* Natural mobile scaling: gives a sleek, proportional ~84% scale on mobile at default 100% zoom */
+  @media (max-width: 640px) {
+    html {
+      font-size: 13.5px;
+    }
+  }
+
   #root {
     max-width: 100vw;
     overflow-x: hidden;

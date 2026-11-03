@@ -44,7 +44,6 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
-  const [detailsScale, setDetailsScale] = useState<'0.75' | '1.0'>('0.75');
 
   // Filter bookings
   const filteredBookings = bookings.filter((b) => {
@@ -320,12 +319,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
           onClick={() => setSelectedBookingId(null)}
         >
           <div
-            className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl bg-white sm:rounded-3xl border-0 sm:border sm:border-slate-200/90 shadow-2xl flex flex-col overflow-hidden transition-transform"
-            style={{
-              zoom: detailsScale === '0.75' ? 0.75 : 1.0,
-              width: detailsScale === '0.75' ? '133.333%' : '100%',
-              height: detailsScale === '0.75' ? '133.333%' : '100%',
-            }}
+            className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl bg-white sm:rounded-3xl border-0 sm:border sm:border-slate-200/90 shadow-2xl flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header: High Contrast, Compact, Non-cluttered */}
@@ -346,27 +340,14 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0 ml-2">
-                {/* Scale View Toggle (0.75x by default) */}
-                <button
-                  type="button"
-                  onClick={() => setDetailsScale(detailsScale === '0.75' ? '1.0' : '0.75')}
-                  className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-white font-mono font-black text-xs flex items-center gap-1 transition-all"
-                  title="Toggle 0.75x / 1.0x view scale"
-                >
-                  <span className="text-slate-300 font-sans text-[10px]">Scale:</span>
-                  <span className="text-amber-400">{detailsScale}x</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedBookingId(null)}
-                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-colors"
-                  title="Close"
-                >
-                  <X className="w-4 h-4 sm:w-5 sm:h-5" />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedBookingId(null)}
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-colors shrink-0"
+                title="Close"
+              >
+                <X className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
             </div>
 
             {/* Modal Body: Smooth Single Scroll Container */}
@@ -444,7 +425,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                       </div>
                       <div>
                         <div className="text-sm font-black text-white flex items-center gap-1.5">
-                          <span>Quotation PDF (A4)</span>
+                          <span>Quotation PDF</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 uppercase font-mono font-bold">1 Page</span>
                         </div>
                         <div className="text-[11px] text-blue-100 mt-0.5">
@@ -565,14 +546,24 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                         )}
                       </div>
 
-                      {/* Line pricing and breakdown */}
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                        <span className="font-mono text-slate-600 font-medium">
-                          {it.quantity} pcs @ {it.unitPrice.toFixed(2)} EGP
-                        </span>
-                        <span className="font-mono font-black text-sm text-blue-900">
-                          Line Total: {it.totalPrice.toFixed(2)} EGP
-                        </span>
+                      {/* Line pricing and pieces breakdown: Clear, bold badges */}
+                      <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200/80 text-blue-950 font-black">
+                            <span className="font-mono text-sm text-blue-700">{it.quantity}</span>
+                            <span className="text-[11px] font-bold text-blue-900 uppercase">pcs</span>
+                          </span>
+                          <span className="text-slate-600 font-medium">
+                            @ <span className="font-mono font-black text-slate-900">{it.unitPrice.toFixed(2)}</span> EGP / piece
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-400 font-semibold uppercase">Total:</span>
+                          <span className="font-mono font-black text-sm text-blue-950 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                            {it.totalPrice.toFixed(2)} EGP
+                          </span>
+                        </div>
                       </div>
                     </div>
                   ))}

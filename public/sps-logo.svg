@@ -1,45 +1,60 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
   <defs>
-    <!-- Clockwise path starting at top-left and sweeping over to right perimeter -->
-    <path id="spsTextArc" d="M 180 32 C 280 20, 395 70, 442 225 C 452 265, 435 305, 400 320" fill="none" />
+    <!-- Clockwise sweep for Arabic RTL text so "مجموعة" is at top-left and "الكشفية" is at bottom-right -->
+    <path id="arabicArc" d="M 485 385 C 530 320, 540 250, 515 190 C 465 75, 335 25, 215 50" fill="none" />
   </defs>
 
-  <!-- Clean White Background -->
-  <rect width="100%" height="100%" rx="64" fill="#ffffff" />
+  <rect width="100%" height="100%" fill="#ffffff" rx="48" />
 
   <!-- Arabic Curved Text: مجموعة القديس بولس الرسول الكشفية -->
-  <text fill="#485c24" font-family="'Plus Jakarta Sans', Arial, Tahoma, sans-serif" font-size="21" font-weight="900" letter-spacing="0.5">
-    <textPath href="#spsTextArc" startOffset="0%">
+  <text fill="#4a5e26" font-family="'Cairo', 'Plus Jakarta Sans', system-ui, Tahoma, sans-serif" font-size="26" font-weight="900" letter-spacing="0.5">
+    <textPath href="#arabicArc" startOffset="3%">
       مجموعة القديس بولس الرسول الكشفية
     </textPath>
   </text>
 
-  <!-- Saint Paul Scouts Emblem (TsPs) -->
-  <g id="sps-emblem">
-    <!-- Right Golden/Amber Flame (3 Lobes) -->
-    <path d="M 220 85 C 245 70, 280 95, 290 120 C 315 95, 345 130, 340 170 C 365 190, 370 240, 345 270 C 365 295, 340 335, 305 340 C 275 345, 245 315, 240 290 C 270 290, 320 260, 310 200 C 300 150, 245 130, 220 85 Z" fill="#f5a81c" />
-    <path d="M 240 260 C 280 265, 305 295, 295 325 C 285 350, 255 355, 235 325 Z" fill="#f5a81c" opacity="0.95" />
+  <!-- Scout Lily & Flame Emblem -->
+  <!-- Left Olive Green Petal -->
+  <path d="M 264 82
+           C 215 90, 165 140, 155 195
+           C 125 215, 75 265, 75 325
+           C 75 385, 130 415, 180 388
+           C 215 370, 240 335, 246 295
+           C 225 255, 202 210, 222 150
+           C 232 120, 248 95, 264 82 Z"
+        fill="#4a5e26" />
 
-    <!-- Left Olive Green Petal -->
-    <path d="M 215 130 C 185 85, 140 100, 120 160 C 95 235, 120 300, 165 315 C 145 285, 140 240, 155 200 C 170 160, 195 140, 215 130 Z" fill="#495d25" />
-    <!-- Lower left swooping lobe connecting down to stem -->
-    <path d="M 125 210 C 70 250, 50 320, 85 390 C 115 440, 185 435, 215 390 C 160 395, 115 355, 115 295 C 115 255, 120 230, 125 210 Z" fill="#495d25" />
+  <!-- Right Golden Amber Flame (3 Lobes) -->
+  <path d="M 264 88
+           C 285 75, 325 105, 335 130
+           C 358 105, 398 145, 388 190
+           C 418 205, 438 255, 412 305
+           C 432 330, 412 370, 368 380
+           C 328 390, 292 350, 298 310
+           C 338 315, 378 280, 368 215
+           C 358 155, 298 125, 264 88 Z"
+        fill="#f7a61a" />
 
-    <!-- Stylized "TsPs" Cross & Typography -->
-    <!-- "T" Cross Stem & Crossbar -->
-    <!-- Horizontal Crossbar extending to the right across the letters -->
-    <path d="M 165 348 L 310 344 C 315 344, 318 354, 310 358 L 165 362 Z" fill="#495d25" />
-    <!-- Main Vertical Stem curling at bottom left -->
-    <path d="M 218 320 C 224 365, 226 425, 228 450 C 230 475, 220 485, 205 480 C 195 476, 200 460, 206 445 C 212 410, 210 365, 208 320 Z" fill="#495d25" />
+  <!-- Stylized Tau Cross & SPS Monogram in Olive Green -->
+  <!-- T Crossbar -->
+  <path d="M 195 400 L 372 397"
+        fill="none" stroke="#4a5e26" stroke-width="16" stroke-linecap="round" />
 
-    <!-- "s" (lowercase script) -->
-    <path d="M 252 400 C 255 385, 275 378, 285 388 C 295 398, 280 412, 268 420 C 255 430, 265 448, 282 445 C 295 442, 298 430, 296 422 C 300 422, 302 438, 292 450 C 275 458, 250 452, 250 435 C 250 420, 265 410, 275 402 C 282 396, 278 390, 270 390 C 262 390, 255 395, 252 400 Z" fill="#495d25" />
+  <!-- T Vertical Stem extending down with hook at foot -->
+  <path d="M 265 330 L 265 525 C 265 560, 245 568, 230 556"
+        fill="none" stroke="#4a5e26" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
 
-    <!-- "P" (capital script with vertical stem and loop on the RIGHT) -->
-    <path d="M 318 375 L 322 470 C 318 474, 308 470, 310 455 L 314 375 Z" fill="#495d25" />
-    <path d="M 314 372 C 345 365, 375 385, 370 415 C 365 438, 335 445, 318 435 L 318 422 C 330 430, 355 428, 358 412 C 360 395, 340 380, 318 382 Z" fill="#495d25" />
+  <!-- Monogram Letter 'S' (Standard calligraphic S) -->
+  <path d="M 356 450 C 336 438, 308 446, 308 472 C 308 500, 360 504, 360 530 C 360 554, 334 562, 310 550"
+        fill="none" stroke="#4a5e26" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
 
-    <!-- "s" (second lowercase script at the end) -->
-    <path d="M 388 402 C 392 388, 410 382, 422 392 C 432 402, 418 416, 405 425 C 392 435, 402 452, 420 448 C 432 445, 435 432, 432 425 C 438 425, 440 440, 430 452 C 412 460, 388 454, 388 436 C 388 422, 402 412, 412 405 C 418 400, 415 394, 408 394 C 398 394, 392 398, 388 402 Z" fill="#495d25" />
-  </g>
+  <!-- Monogram Letter 'P' (Uppercase P: straight vertical stem, loop on UPPER right only) -->
+  <path d="M 388 430 L 388 554"
+        fill="none" stroke="#4a5e26" stroke-width="16" stroke-linecap="round" />
+  <path d="M 388 430 C 438 424, 452 446, 452 470 C 452 494, 426 504, 388 502"
+        fill="none" stroke="#4a5e26" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Monogram Letter 'S' (Second standard calligraphic S) -->
+  <path d="M 498 450 C 478 438, 450 446, 450 472 C 450 500, 502 504, 502 530 C 502 554, 476 562, 452 550"
+        fill="none" stroke="#4a5e26" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
 </svg>

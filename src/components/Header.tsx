@@ -60,9 +60,9 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => onNavigate('inventory')}
               className="flex items-center gap-2 sm:gap-2.5 text-base sm:text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap text-left hover:text-amber-700 transition-colors"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl overflow-hidden bg-white shadow-2xs border border-slate-200/90 flex items-center justify-center shrink-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden bg-white shadow-2xs border border-slate-200/90 flex items-center justify-center p-0.5 shrink-0">
                 <img
-                  src="/sps-logo.svg"
+                  src="/sps-logo.png"
                   alt="SPS Logo"
                   className="w-full h-full object-contain"
                 />

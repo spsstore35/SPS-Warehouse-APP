@@ -26,7 +26,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   defaultDocType = 'quotation',
 }) => {
   const [docType, setDocType] = useState<'quotation' | 'production'>(defaultDocType);
-  const [previewScale, setPreviewScale] = useState<'0.75' | '1.0'>('0.75');
+  const previewScale = '0.75';
   const [includeNotes, setIncludeNotes] = useState<boolean>(
     Boolean(booking?.notes && booking.notes.trim().length > 0)
   );
@@ -67,9 +67,6 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     {booking.bookingNumber}
                   </span>
                 </div>
-                <p className="text-[10px] sm:text-[11px] text-slate-400 truncate">
-                  Formatted for 1-Page A4 Printable PDF
-                </p>
               </div>
             </div>
 
@@ -97,7 +94,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>Quotation (A4)</span>
+                <span>Quotation</span>
               </button>
 
               <button
@@ -113,17 +110,6 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 <span>Workshop Deficit</span>
               </button>
             </div>
-
-            {/* Preview Scale Toggle (defaults to 0.75x per user request) */}
-            <button
-              type="button"
-              onClick={() => setPreviewScale(previewScale === '0.75' ? '1.0' : '0.75')}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors flex items-center gap-1.5 bg-slate-900 text-slate-300 border-slate-800 hover:text-white"
-              title="Toggle preview zoom (0.75x / 1.0x)"
-            >
-              <span className="text-[10px] text-slate-400">Scale:</span>
-              <span className="font-mono text-amber-400 font-black">{previewScale}x</span>
-            </button>
 
             {/* Notes Toggle (if notes available) */}
             {booking.notes && (
@@ -142,31 +128,16 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               </button>
             )}
 
-            {/* Primary Print / Save PDF Action */}
+            {/* Primary Print Action */}
             <button
               type="button"
               onClick={handlePrint}
               className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
             >
               <Printer className="w-4 h-4 stroke-[2.5]" />
-              <span>Print / Save PDF (A4)</span>
+              <span>Print</span>
             </button>
           </div>
-        </div>
-
-        {/* Mobile Helper Hint Bar (screen only) */}
-        <div className="sm:hidden bg-blue-50 border-b border-blue-200/80 px-3 py-1.5 text-[11px] text-blue-900 flex items-center justify-between no-print print:hidden shrink-0">
-          <span className="font-semibold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block" />
-            1-Page A4 Sheet Preview • {previewScale}x
-          </span>
-          <button
-            type="button"
-            onClick={() => setPreviewScale(previewScale === '0.75' ? '1.0' : '0.75')}
-            className="text-blue-700 underline font-bold active:text-blue-900"
-          >
-            {previewScale === '0.75' ? 'Switch to 1.0x' : 'Switch to 0.75x'}
-          </button>
         </div>
 
         {/* Preview Scrollable Viewport */}
@@ -241,11 +212,13 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 {/* Header: Company Name, Phone, Email & Quotation Tag */}
                 <div className="sheet-card flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b-2 border-slate-900 pb-3">
                   <div className="flex items-center gap-3">
-                    <img
-                      src="/sps-logo.svg"
-                      alt="Saint Paul Scouts"
-                      className="w-12 h-12 sm:w-14 sm:h-14 object-contain rounded-xl shrink-0"
-                    />
+                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white border border-slate-200/90 shadow-2xs p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                      <img
+                        src="/sps-logo.png"
+                        alt="Saint Paul Scouts"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
                     <div>
                       <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-950 uppercase leading-tight">
                         SAINT PAUL SCOUTS WAREHOUSE
@@ -451,11 +424,13 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 {/* Header */}
                 <div className="sheet-card flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b-2 border-slate-900 pb-3">
                   <div className="flex items-center gap-3">
-                    <img
-                      src="/sps-logo.svg"
-                      alt="Saint Paul Scouts"
-                      className="w-12 h-12 sm:w-14 sm:h-14 object-contain rounded-xl shrink-0"
-                    />
+                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white border border-slate-200/90 shadow-2xs p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                      <img
+                        src="/sps-logo.png"
+                        alt="Saint Paul Scouts"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
                     <div>
                       <h1 className="text-lg sm:text-xl font-black tracking-tight text-slate-950 uppercase">
                         Workshop Production & Deficit Sheet

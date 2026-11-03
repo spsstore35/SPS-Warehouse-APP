@@ -211,7 +211,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       <div className="w-full max-w-md mx-auto text-center mb-6 sm:mb-8">
         <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white border border-slate-200 shadow-md mb-3 p-1 overflow-hidden">
           <img
-            src="/sps-logo.svg"
+            src="/sps-logo.png"
             alt="Saint Paul Scouts"
             className="w-full h-full object-contain"
           />

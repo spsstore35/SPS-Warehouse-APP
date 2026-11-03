@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+  <defs>
+    <!-- Counter-clockwise arc for text so Arabic text baseline faces inward and heads face outward -->
+    <path id="textArc" d="M 530 380 C 510 200, 380 40, 210 35" fill="none" />
+  </defs>
+  <rect width="100%" height="100%" fill="#ffffff" rx="40" />
+  <text fill="#4d6028" font-family="'Plus Jakarta Sans', 'Segoe UI', Tahoma, Arial, sans-serif" font-size="26" font-weight="bold">
+    <textPath href="#textArc" startOffset="2%">
+      مجموعة القديس بولس الرسول الكشفية
+    </textPath>
+  </text>
+</svg>
