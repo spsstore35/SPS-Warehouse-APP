@@ -273,20 +273,28 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             {/* Product Meta */}
             <div className="sm:col-span-7 flex flex-col justify-between space-y-3">
               <div className="space-y-2">
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 grid grid-cols-3 gap-2">
                   <div>
                     <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
                       Total In Stock
                     </span>
-                    <div className="text-2xl font-black font-mono tabular-nums text-slate-900 mt-0.5">
-                      {product.totalQuantity} <span className="text-xs font-sans font-normal text-slate-500">units</span>
+                    <div className="text-xl sm:text-2xl font-black font-mono tabular-nums text-slate-900 mt-0.5">
+                      {product.totalQuantity} <span className="text-xs font-sans font-normal text-slate-500">pcs</span>
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
+                      Unit Price
+                    </span>
+                    <div className="text-xl sm:text-2xl font-black font-mono tabular-nums text-emerald-700 mt-0.5">
+                      {product.price ?? 250} <span className="text-xs font-sans font-bold text-emerald-600">EGP</span>
                     </div>
                   </div>
                   <div className="text-right">
                     <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
                       Audience
                     </span>
-                    <div className="text-sm font-bold text-slate-800 mt-0.5">
+                    <div className="text-sm font-bold text-slate-800 mt-1">
                       {product.targetAudience || 'Unisex'}
                     </div>
                   </div>

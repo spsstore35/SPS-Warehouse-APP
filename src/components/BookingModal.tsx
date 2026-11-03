@@ -86,6 +86,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [clientPhone, setClientPhone] = useState('');
   const [notes, setNotes] = useState('');
   const [discount, setDiscount] = useState<number | ''>('');
+  const [depositPct, setDepositPct] = useState<number>(50);
+  const [customPctInput, setCustomPctInput] = useState<string>('');
+  const [isCustomMode, setIsCustomMode] = useState<boolean>(false);
   const [markDepositPaidImmediately, setMarkDepositPaidImmediately] = useState(false);
 
   // Items in this booking
@@ -297,9 +300,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const subtotal = items.reduce((acc, it) => acc + it.totalPrice, 0);
   const discountNumeric = typeof discount === 'number' ? discount : 0;
   const total = Math.max(0, subtotal - discountNumeric);
-  const depositRate = 0.5; // 50% policy
+
+  const activeDepositPct = isCustomMode
+    ? (customPctInput === '' ? 50 : Math.min(100, Math.max(0, Number(customPctInput) || 0)))
+    : depositPct;
+  const depositRate = activeDepositPct / 100;
   const depositRequired = Math.round(total * depositRate);
-  const remainingBalance = total - depositRequired;
+  const remainingBalance = Math.max(0, total - depositRequired);
+  const remainingPct = Math.max(0, 100 - activeDepositPct);
 
   const totalUnits = items.reduce((acc, it) => acc + it.quantity, 0);
   const totalDeficit = items.reduce((acc, it) => acc + it.deficitQuantity, 0);
@@ -327,7 +335,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       subtotal,
       discount: discountNumeric,
       total,
-      depositRate: 0.5,
+      depositRate,
+      depositPercentage: activeDepositPct,
       depositRequired,
       depositPaid: markDepositPaidImmediately,
       depositPaidAmount: markDepositPaidImmediately ? depositRequired : 0,
@@ -870,7 +879,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             )}
           </div>
 
-          {/* Section 4: Enhanced Financial Quotation & 50% Deposit Breakdown (EGP) */}
+          {/* Section 4: Enhanced Financial Quotation & Upfront Deposit Breakdown (EGP) */}
           <div className="bg-gradient-to-b from-slate-50 to-slate-100/60 border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-200">
               <div className="flex items-center gap-2">
@@ -879,16 +888,75 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                    Financial Quotation & 50% Deposit Breakdown
+                    Financial Quotation & Upfront Deposit Breakdown
                   </h3>
                   <p className="text-[11px] text-slate-500">
-                    Official dual-stage payment plan denominated in Egyptian Pounds (EGP)
+                    Select advance payment policy denominated in Egyptian Pounds (EGP)
                   </p>
                 </div>
               </div>
-              <span className="self-start sm:self-auto px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-100 text-blue-900 border border-blue-200">
-                50% Milestone Policy
+              <span className="self-start sm:self-auto px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                {activeDepositPct === 100 ? '100% Full Payment' : `${activeDepositPct}% Advance Deposit`}
               </span>
+            </div>
+
+            {/* Upfront Payment Selector Buttons (50%, 70%, 100%, Custom) */}
+            <div className="mb-4 p-3 bg-white rounded-xl border border-slate-200 shadow-2xs">
+              <div className="text-xs font-bold text-slate-700 mb-2 flex items-center justify-between">
+                <span>Select Upfront Advance Percentage:</span>
+                <span className="text-[11px] font-mono font-bold text-amber-800">
+                  Current: {activeDepositPct}%
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {[50, 70, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => {
+                      setIsCustomMode(false);
+                      setDepositPct(pct);
+                    }}
+                    className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                      !isCustomMode && depositPct === pct
+                        ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400 scale-[1.02]'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    <span>{pct === 100 ? '100% (Full Payment)' : `${pct}% Deposit`}</span>
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCustomMode(true);
+                    if (!customPctInput) setCustomPctInput(String(depositPct));
+                  }}
+                  className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                    isCustomMode
+                      ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  <span>Custom %</span>
+                </button>
+
+                {isCustomMode && (
+                  <div className="relative flex items-center">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={customPctInput}
+                      onChange={(e) => setCustomPctInput(e.target.value)}
+                      placeholder="e.g. 60"
+                      className="w-20 px-2 py-1.5 text-center font-mono font-bold text-xs border-2 border-amber-400 rounded-xl bg-amber-50 focus:bg-white focus:outline-none"
+                    />
+                    <span className="ml-1 text-xs font-bold text-slate-500">%</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -937,44 +1005,48 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
 
-              {/* Right Column: 50% Advance & 50% Handover Milestone Split */}
+              {/* Right Column: Upfront Advance & Handover Milestone Split */}
               <div className="md:col-span-6 space-y-2.5">
-                {/* 50% Advance Required Card (Prominent Amber Theme) */}
+                {/* Advance Required Card (Prominent Amber Theme) */}
                 <div className="p-3.5 rounded-xl bg-amber-50/90 border-2 border-amber-300 shadow-xs flex items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                       <span className="text-xs font-black uppercase tracking-wider text-amber-950">
-                        50% Advance Required
+                        {activeDepositPct === 100 ? '100% Full Payment Required' : `${activeDepositPct}% Advance Required`}
                       </span>
                     </div>
                     <p className="text-[10px] text-amber-800 font-medium mt-0.5">
-                      Mandatory before physical workshop preparation begins
+                      Required before physical workshop preparation begins
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <div className="font-mono font-black text-lg sm:text-xl text-amber-950">
                       {depositRequired.toFixed(2)}
                     </div>
-                    <span className="text-[10px] font-mono font-bold text-amber-800">EGP (50%)</span>
+                    <span className="text-[10px] font-mono font-bold text-amber-800">
+                      EGP ({activeDepositPct}%)
+                    </span>
                   </div>
                 </div>
 
-                {/* 50% Balance on Handover Card */}
+                {/* Balance on Handover Card */}
                 <div className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-xs flex items-center justify-between gap-3">
                   <div>
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
-                      50% Balance on Handover
+                      {activeDepositPct === 100 ? 'Remaining Balance' : `${remainingPct}% Balance on Handover`}
                     </span>
                     <p className="text-[10px] text-slate-500 mt-0.5">
-                      Due upon final order delivery & item inspection
+                      {activeDepositPct === 100 ? 'Fully settled upfront' : 'Due upon final delivery & item inspection'}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <div className="font-mono font-bold text-base sm:text-lg text-slate-800">
                       {remainingBalance.toFixed(2)}
                     </div>
-                    <span className="text-[10px] font-mono font-medium text-slate-500">EGP (50%)</span>
+                    <span className="text-[10px] font-mono font-medium text-slate-500">
+                      {activeDepositPct === 100 ? 'EGP (Fully Paid)' : `EGP (${remainingPct}%)`}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -991,18 +1063,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300"
                   />
                   <span>
-                    50% Deposit already received now (advance directly to <em>Preparing</em> and
-                    reserve warehouse stock)
+                    {activeDepositPct === 100
+                      ? '100% Full payment already received now (advance directly to Preparing and reserve warehouse stock)'
+                      : `${activeDepositPct}% Deposit already received now (advance directly to Preparing and reserve warehouse stock)`}
                   </span>
                 </label>
               </div>
             )}
           </div>
 
-          {/* Stock Rule Note — Styled in Yellow / Amber as requested */}
+          {/* Stock Rule Note — Styled in Yellow / Amber */}
           <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-950 font-medium leading-relaxed">
             <strong>Stock Rule Note:</strong> This booking starts in <strong>Pending</strong> status.
-            Inventory stock units will <strong>NOT</strong> be deducted until the 50% deposit is
+            Inventory stock units will <strong>NOT</strong> be deducted until the upfront payment ({activeDepositPct}%) is
             marked as paid and the booking advances to <strong>Preparing</strong>.
           </div>
 
@@ -1013,7 +1086,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 Total: <strong className="text-blue-900">{total.toFixed(2)} EGP</strong>
               </span>
               <span className="text-amber-800">
-                Deposit (50%): <strong>{depositRequired.toFixed(2)} EGP</strong>
+                Upfront ({activeDepositPct}%): <strong>{depositRequired.toFixed(2)} EGP</strong>
               </span>
             </div>
 
@@ -1034,7 +1107,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <span>
                   {markDepositPaidImmediately
                     ? 'Create & Start Preparing'
-                    : 'Create Booking (Pending 50%)'}
+                    : (activeDepositPct === 100 ? 'Create Booking (Pending 100%)' : `Create Booking (Pending ${activeDepositPct}%)`)}
                 </span>
               </button>
             </div>

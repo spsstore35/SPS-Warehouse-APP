@@ -50,6 +50,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     (product.variants[0].colorName === 'Standard' || !product.variants[0].colorName);
 
   const isPending = product.status === 'pending';
+  const displayPrice = product.price ?? 250;
 
   return (
     <div
@@ -164,6 +165,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         )}
 
+        {/* Prominent Unit Price Tag on Image */}
+        <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-slate-950/85 backdrop-blur-md border border-white/20 text-white font-mono font-black text-xs shadow-md flex items-center gap-1">
+          <span className="text-amber-400 font-sans font-bold text-[10px] uppercase">Price:</span>
+          <span>{displayPrice} EGP</span>
+        </div>
+
         {/* Hover overlay to view details */}
         <button
           onClick={() => onOpenDetails(product)}
@@ -187,13 +194,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <span className="font-bold text-slate-800">{product.targetAudience || 'Unisex'}</span>
           </div>
 
-          {/* Item Title */}
-          <h3
-            onClick={() => onOpenDetails(product)}
-            className="text-base font-bold text-slate-900 group-hover:text-amber-700 transition-colors line-clamp-1 cursor-pointer"
-          >
-            {product.name}
-          </h3>
+          {/* Item Title & Price Tag */}
+          <div className="flex items-start justify-between gap-2">
+            <h3
+              onClick={() => onOpenDetails(product)}
+              className="text-base font-bold text-slate-900 group-hover:text-amber-700 transition-colors line-clamp-1 cursor-pointer flex-1"
+            >
+              {product.name}
+            </h3>
+            <span className="shrink-0 font-mono font-black text-xs text-emerald-800 bg-emerald-50 border border-emerald-200/90 px-2 py-0.5 rounded-lg shadow-2xs">
+              {displayPrice} EGP
+            </span>
+          </div>
 
           {/* Product Description */}
           <p className="mt-1.5 text-xs text-slate-600 line-clamp-2 leading-relaxed">
@@ -245,19 +257,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
         {/* Bottom Stock Breakdown & Action Buttons */}
         <div className="mt-4 pt-3.5 border-t border-slate-100">
-          <div className="flex items-center justify-between mb-3.5">
+          <div className="flex items-center justify-between mb-3.5 bg-slate-50/80 p-2.5 rounded-xl border border-slate-100">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Total Stock</div>
-              <div className="text-xl font-bold font-mono tabular-nums text-slate-900 flex items-baseline gap-1">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Available Pieces</div>
+              <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 flex items-baseline gap-1">
                 <span>{product.totalQuantity}</span>
-                <span className="text-xs font-normal text-slate-500 font-sans">units</span>
+                <span className="text-xs font-semibold text-slate-500 font-sans">pcs</span>
               </div>
             </div>
 
             <div className="text-right">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Variants</div>
-              <div className="text-sm font-semibold font-mono tabular-nums text-slate-700">
-                {isStandardItem ? '1 Standard' : `${product.variants.length} combinations`}
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Unit Price</div>
+              <div className="text-base sm:text-lg font-black font-mono tabular-nums text-emerald-700 flex items-baseline justify-end gap-1">
+                <span>{displayPrice}</span>
+                <span className="text-xs font-bold text-emerald-600 font-sans">EGP / pc</span>
               </div>
             </div>
           </div>

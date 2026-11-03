@@ -44,6 +44,9 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
     0
   );
 
+  const depositPct = booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50);
+  const remainingPct = Math.max(0, 100 - depositPct);
+
   return (
     <div
       id="print-modal-container"
@@ -293,7 +296,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                           }`}
                         >
                           {booking.status === 'pending'
-                            ? 'AWAITING 50% DEPOSIT'
+                            ? (depositPct === 100 ? 'AWAITING FULL PAYMENT' : `AWAITING ${depositPct}% DEPOSIT`)
                             : booking.status === 'preparing'
                             ? 'IN PREPARATION / STOCK RESERVED'
                             : booking.status === 'delivered'
@@ -375,21 +378,23 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     {/* Deposit Breakdown */}
                     <div className="pt-2 border-t border-dashed border-slate-300 space-y-1.5 text-xs">
                       <div className="flex justify-between font-bold text-amber-900 text-xs">
-                        <span>50% Required Advance Deposit:</span>
+                        <span>{depositPct === 100 ? '100% Full Payment Required:' : `${depositPct}% Required Advance Deposit:`}</span>
                         <span className="font-mono text-amber-950 font-black">{booking.depositRequired.toFixed(2)} EGP</span>
                       </div>
 
                       <div className="flex justify-between text-xs text-slate-600">
                         <span>Deposit Payment Status:</span>
                         <span className={`font-mono font-black ${booking.depositPaid ? 'text-emerald-700' : 'text-amber-800'}`}>
-                          {booking.depositPaid ? 'RECEIVED & CONFIRMED' : 'PENDING 50% PAYMENT'}
+                          {booking.depositPaid
+                            ? 'RECEIVED & CONFIRMED'
+                            : (depositPct === 100 ? 'PENDING FULL PAYMENT' : `PENDING ${depositPct}% PAYMENT`)}
                         </span>
                       </div>
 
                       <div className="flex justify-between font-bold text-slate-800 pt-1.5 border-t border-slate-200">
-                        <span>50% Balance (Due on Handover):</span>
+                        <span>{depositPct === 100 ? 'Remaining Balance:' : `${remainingPct}% Balance (Due on Handover):`}</span>
                         <span className="font-mono font-black">
-                          {(booking.total - booking.depositRequired).toFixed(2)} EGP
+                          {Math.max(0, booking.total - booking.depositRequired).toFixed(2)} EGP
                         </span>
                       </div>
                     </div>
@@ -399,12 +404,20 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 {/* Terms & Official Sign-off Footer: Fits cleanly inside 1-page A4 */}
                 <div className="sheet-card pt-2 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-[10px] text-slate-500">
                   <div className="text-center sm:text-left">
-                    <p className="font-medium text-slate-600">
-                      • 50% advance deposit confirms booking and secures workshop manufacturing schedule.
-                    </p>
-                    <p className="font-medium text-slate-600">
-                      • Remaining 50% balance payable upon physical delivery & quality inspection.
-                    </p>
+                    {depositPct === 100 ? (
+                      <p className="font-medium text-slate-600">
+                        • Full 100% payment required to confirm booking and commence workshop production schedule.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="font-medium text-slate-600">
+                          • {depositPct}% advance deposit confirms booking and secures workshop manufacturing schedule.
+                        </p>
+                        <p className="font-medium text-slate-600">
+                          • Remaining {remainingPct}% balance payable upon physical delivery & quality inspection.
+                        </p>
+                      </>
+                    )}
                   </div>
                   <div className="text-center sm:text-right shrink-0">
                     <div className="h-9 border-b border-dashed border-slate-300 w-44 flex items-end justify-center pb-0.5">

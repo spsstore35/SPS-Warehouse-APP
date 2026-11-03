@@ -61,6 +61,10 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 
   // Active booking for details modal (keeps updated if status changes)
   const activeBooking = bookings.find((b) => b.id === selectedBookingId) || null;
+  const activeDepositPct = activeBooking
+    ? (activeBooking.depositPercentage ?? (activeBooking.depositRate ? Math.round(activeBooking.depositRate * 100) : 50))
+    : 50;
+  const activeRemainingPct = Math.max(0, 100 - activeDepositPct);
 
   // Count by status
   const pendingCount = bookings.filter((b) => b.status === 'pending').length;
@@ -81,7 +85,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
               Client Bookings & Quotations
             </h1>
             <p className="text-xs text-slate-500 font-medium">
-              Bulk orders, 50% deposit policy workflows & workshop sheets
+              Bulk orders, advance deposit workflows & workshop sheets
             </p>
           </div>
         </div>
@@ -209,6 +213,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         <div className="space-y-3">
           {filteredBookings.map((b) => {
             const totalUnits = b.items.reduce((acc, it) => acc + it.quantity, 0);
+            const bDepositPct = b.depositPercentage ?? (b.depositRate ? Math.round(b.depositRate * 100) : 50);
 
             return (
               <div
@@ -275,7 +280,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                         {b.status === 'done' && <CheckCircle2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-600" />}
                         <span>
                           {b.status === 'pending'
-                            ? 'AWAITING 50% DEPOSIT'
+                            ? (bDepositPct === 100 ? 'AWAITING FULL PAYMENT' : `AWAITING ${bDepositPct}% DEPOSIT`)
                             : b.status === 'preparing'
                             ? 'IN PREPARATION'
                             : b.status === 'delivered'
@@ -291,7 +296,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                             : 'bg-rose-50 text-rose-800 border-rose-200'
                         }`}
                       >
-                        {b.depositPaid ? '50% Deposit Paid' : 'Deposit Unpaid'}
+                        {b.depositPaid ? (bDepositPct === 100 ? '✓ 100% Paid' : `✓ ${bDepositPct}% Paid`) : 'Deposit Unpaid'}
                       </span>
                     </div>
 
@@ -376,7 +381,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                       {activeBooking.status === 'done' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                       <span>
                         {activeBooking.status === 'pending'
-                          ? 'Awaiting 50% Deposit'
+                          ? (activeDepositPct === 100 ? 'Awaiting Full Payment (100%)' : `Awaiting ${activeDepositPct}% Deposit`)
                           : activeBooking.status === 'preparing'
                           ? 'In Preparation (Stock Reserved)'
                           : activeBooking.status === 'delivered'
@@ -392,7 +397,9 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                           : 'bg-rose-50 text-rose-800 border-rose-200'
                       }`}
                     >
-                      {activeBooking.depositPaid ? '✓ 50% Paid' : 'Deposit Unpaid'}
+                      {activeBooking.depositPaid
+                        ? (activeDepositPct === 100 ? '✓ 100% Paid' : `✓ ${activeDepositPct}% Paid`)
+                        : 'Deposit Unpaid'}
                     </span>
                   </div>
                 </div>
@@ -429,7 +436,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/20 uppercase font-mono font-bold">1 Page</span>
                         </div>
                         <div className="text-[11px] text-blue-100 mt-0.5">
-                          Client invoice & 50% deposit breakdown
+                          Client invoice & {activeDepositPct === 100 ? 'full payment' : `${activeDepositPct}% deposit`} breakdown
                         </div>
                       </div>
                     </div>
@@ -467,7 +474,11 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                     className="w-full p-3.5 sm:p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-600/20 transition-all"
                   >
                     <Check className="w-5 h-5 stroke-[3]" />
-                    <span>Confirm 50% Deposit & Reserve Stock</span>
+                    <span>
+                      {activeDepositPct === 100
+                        ? 'Confirm Full Payment (100%) & Reserve Stock'
+                        : `Confirm ${activeDepositPct}% Deposit & Reserve Stock`}
+                    </span>
                   </button>
                 )}
 
@@ -478,7 +489,11 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                     className="w-full p-3.5 sm:p-4 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-purple-600/20 transition-all"
                   >
                     <Package className="w-5 h-5" />
-                    <span>Mark Order as Delivered (Awaiting Final 50%)</span>
+                    <span>
+                      {activeDepositPct === 100
+                        ? 'Mark Order as Delivered & Completed'
+                        : `Mark Order as Delivered (Awaiting Final ${activeRemainingPct}%)`}
+                    </span>
                   </button>
                 )}
 
@@ -489,7 +504,11 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                     className="w-full p-3.5 sm:p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-600/20 transition-all"
                   >
                     <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
-                    <span>Receive Final 50% Balance & Complete Order</span>
+                    <span>
+                      {activeDepositPct === 100
+                        ? 'Complete Order'
+                        : `Receive Final ${activeRemainingPct}% Balance & Complete Order`}
+                    </span>
                   </button>
                 )}
               </div>
@@ -593,21 +612,27 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 
                 <div className="pt-2.5 border-t border-dashed border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200">
-                    <div className="text-xs font-bold text-amber-900">50% Advance Deposit Required</div>
+                    <div className="text-xs font-bold text-amber-900">
+                      {activeDepositPct === 100 ? '100% Full Payment Required' : `${activeDepositPct}% Advance Deposit Required`}
+                    </div>
                     <div className="text-base font-black font-mono text-amber-950 mt-0.5">
                       {activeBooking.depositRequired.toFixed(2)} EGP
                     </div>
                     <div className="text-[11px] font-bold text-amber-800 mt-1">
-                      Status: {activeBooking.depositPaid ? '✓ RECEIVED & CONFIRMED' : '⏳ PENDING 50% PAYMENT'}
+                      Status: {activeBooking.depositPaid ? '✓ RECEIVED & CONFIRMED' : (activeDepositPct === 100 ? '⏳ PENDING FULL PAYMENT' : `⏳ PENDING ${activeDepositPct}% PAYMENT`)}
                     </div>
                   </div>
 
                   <div className="p-3 bg-slate-100/90 rounded-xl border border-slate-200">
-                    <div className="text-xs font-bold text-slate-700">50% Balance (Due on Handover)</div>
-                    <div className="text-base font-black font-mono text-slate-900 mt-0.5">
-                      {(activeBooking.total - activeBooking.depositRequired).toFixed(2)} EGP
+                    <div className="text-xs font-bold text-slate-700">
+                      {activeDepositPct === 100 ? 'Remaining Balance' : `${activeRemainingPct}% Balance (Due on Handover)`}
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-1">Payable on physical receipt</div>
+                    <div className="text-base font-black font-mono text-slate-900 mt-0.5">
+                      {Math.max(0, activeBooking.total - activeBooking.depositRequired).toFixed(2)} EGP
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      {activeDepositPct === 100 ? 'Fully settled upfront' : 'Payable on physical receipt'}
+                    </div>
                   </div>
                 </div>
               </div>

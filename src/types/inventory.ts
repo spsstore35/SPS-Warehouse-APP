@@ -179,8 +179,9 @@ export interface Booking {
   subtotal: number;
   discount: number;
   total: number;
-  depositRate: number; // 0.5 (50%)
-  depositRequired: number; // total * 0.5
+  depositRate: number; // e.g. 0.5 (50%), 0.7 (70%), 1.0 (100%)
+  depositPercentage?: number; // 50, 70, 100, or custom
+  depositRequired: number; // total * depositRate
   depositPaid: boolean;
   depositPaidAmount: number;
   depositPaidAt?: string;

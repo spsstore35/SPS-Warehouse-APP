@@ -833,6 +833,7 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
         discount: Number(b.discount) || 0,
         total: Number(b.total) || 0,
         depositRate: Number(b.deposit_rate) || 0.5,
+        depositPercentage: b.deposit_percentage ? Number(b.deposit_percentage) : (b.deposit_rate ? Math.round(Number(b.deposit_rate) * 100) : 50),
         depositRequired: Number(b.deposit_required) || 0,
         depositPaid: Boolean(b.deposit_paid),
         depositPaidAmount: Number(b.deposit_paid_amount) || 0,
@@ -931,6 +932,8 @@ export async function updateBookingInDb(
 
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
+    if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
+    if (updates.depositRequired !== undefined) payload.deposit_required = updates.depositRequired;
     if (updates.depositPaid !== undefined) payload.deposit_paid = updates.depositPaid;
     if (updates.depositPaidAmount !== undefined) payload.deposit_paid_amount = updates.depositPaidAmount;
     if (updates.depositPaidAt !== undefined) payload.deposit_paid_at = updates.depositPaidAt;
