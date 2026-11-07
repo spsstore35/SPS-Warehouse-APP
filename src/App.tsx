@@ -21,6 +21,7 @@ import {
   getStoredUser,
   saveStoredUser,
   getStoredUsers,
+  saveStoredUsers,
   approveUserAccount,
   rejectUserAccount,
   resetAllToDemo,
@@ -31,7 +32,7 @@ import {
   saveStoredBookings,
 } from './utils/storage';
 import { isUserAdmin } from './utils/security';
-import { INITIAL_USERS, SEED_CATALOG_DATA } from './data/initialData';
+import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
 import {
   checkSupabaseConnection,
   fetchProductsFromDb,
@@ -39,6 +40,7 @@ import {
   deleteProductFromDb,
   deleteProductVariantFromDb,
   deleteUserFromDb,
+  updateUserRoleInDb,
   updateVariantQuantityInDb,
   fetchAdjustmentRequestsFromDb,
   createAdjustmentRequestInDb,
@@ -58,6 +60,7 @@ import {
   CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
+import { supabase } from './services/supabaseClient';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { AuthScreens } from './components/AuthScreens';
@@ -382,7 +385,62 @@ export default function App() {
     showToast(`User account for "${targetUser?.name || 'staff'}" deleted.`);
   };
 
-  // Load live data from Supabase
+  // Admin changes staff / user account role (Worker <-> Admin)
+  const handleUpdateUserRole = async (userId: string, newRole: Role) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admin can modify user account roles.');
+      return;
+    }
+
+    const targetUser = users.find((u) => u.id === userId);
+    const oldRole = targetUser?.role || 'worker';
+
+    const nextUsers = users.map((u) => {
+      if (u.id !== userId) return u;
+      return {
+        ...u,
+        role: newRole,
+        requestedRole: newRole,
+        avatarColor: newRole === 'admin' ? '#d97706' : '#0284c7',
+      };
+    });
+
+    setUsers(nextUsers);
+    saveStoredUsers(nextUsers);
+
+    // If current logged-in user changed their own role, update currentUser state
+    if (currentUser && currentUser.id === userId) {
+      const updatedCurrent = {
+        ...currentUser,
+        role: newRole,
+        requestedRole: newRole,
+      };
+      setCurrentUser(updatedCurrent);
+      saveStoredUser(updatedCurrent);
+    }
+
+    try {
+      await updateUserRoleInDb(userId, newRole);
+    } catch (err: any) {
+      console.warn('Supabase user role update notice:', err?.message);
+    }
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'role_changed' as any,
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      summary: `Changed role of "${targetUser?.name || 'User'}" to ${newRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}`,
+      details: `User (${targetUser?.email}) role changed from ${oldRole.toUpperCase()} to ${newRole.toUpperCase()} by Admin.`,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Role for "${targetUser?.name || 'User'}" updated to ${newRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}.`, newLog);
+  };
+
+  // Load live data from Supabase - Strict single source of truth across all devices
   const refreshFromSupabase = async (notify = false) => {
     setIsDbLoading(true);
     try {
@@ -401,21 +459,29 @@ export default function App() {
 
         if (dbProducts.status === 'fulfilled') {
           setProducts(dbProducts.value);
+          saveStoredProducts(dbProducts.value);
         }
         if (dbRequests.status === 'fulfilled') {
           setRequests(dbRequests.value);
+          saveStoredRequests(dbRequests.value);
         }
-        if (dbUsers.status === 'fulfilled' && dbUsers.value.length > 0) {
+        if (dbUsers.status === 'fulfilled') {
           setUsers(dbUsers.value);
+          saveStoredUsers(dbUsers.value);
         }
-        if (dbCategories.status === 'fulfilled' && dbCategories.value.length > 0) {
-          setCategories(dbCategories.value);
+        if (dbCategories.status === 'fulfilled') {
+          const cats = dbCategories.value.length > 0 ? dbCategories.value : INITIAL_CATEGORIES;
+          setCategories(cats);
+          saveStoredCategories(cats);
         }
-        if (dbLogs.status === 'fulfilled' && dbLogs.value.length > 0) {
+        // Unconditionally sync logs from Supabase so deleted mock logs are never resurrected
+        if (dbLogs.status === 'fulfilled') {
           setAuditLogs(dbLogs.value);
+          saveStoredAuditLogs(dbLogs.value);
         }
-        if (dbBookings.status === 'fulfilled' && dbBookings.value.length > 0) {
+        if (dbBookings.status === 'fulfilled') {
           setBookings(dbBookings.value);
+          saveStoredBookings(dbBookings.value);
         }
 
         if (notify) {
@@ -434,8 +500,44 @@ export default function App() {
     }
   };
 
+  // Multi-Device Realtime Cloud Synchronization & Polling
   useEffect(() => {
+    // 1. Initial fetch
     refreshFromSupabase(false);
+
+    // 2. Realtime Postgres Changes Subscription
+    const channel = supabase
+      .channel('schema-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        refreshFromSupabase(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_variants' }, () => {
+        refreshFromSupabase(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        refreshFromSupabase(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+        refreshFromSupabase(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'adjustment_requests' }, () => {
+        refreshFromSupabase(false);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_audit_logs' }, () => {
+        refreshFromSupabase(false);
+      })
+      .subscribe();
+
+    // 3. Periodic Background Sync (every 8 seconds) so changes made anywhere (Supabase dashboard, other phones, laptops)
+    // sync seamlessly without requiring manual page reload!
+    const syncInterval = setInterval(() => {
+      refreshFromSupabase(false);
+    }, 8000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(syncInterval);
+    };
   }, []);
 
   // Auth Handlers
@@ -1323,13 +1425,14 @@ export default function App() {
     refreshFromSupabase(true);
   };
 
-  // Pending count for alerts (includes pending staff registrations and pending items for admin)
+  // Pending count for alerts (includes pending staff registrations, pending items, and staff booking deposit requests)
   const pendingRequestsCount = requests.filter((r) => r.status === 'pending').length;
   const pendingUsersCount = users.filter((u) => u.status === 'pending').length;
   const pendingProducts = products.filter((p) => p.status === 'pending');
   const pendingProductsCount = pendingProducts.length;
+  const pendingStaffBookingRequestsCount = bookings.filter((b) => Boolean(b.pendingDepositPercentage)).length;
   const pendingCount = isUserAdmin(currentUser) 
-    ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount) 
+    ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount + pendingStaffBookingRequestsCount) 
     : pendingRequestsCount;
 
   // Navigation handler supporting direct routing to Account Approvals & Stock Approvals
@@ -1427,7 +1530,7 @@ export default function App() {
         pendingCount={pendingCount}
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
-        pendingBookingsCount={bookings.filter((b) => b.status === 'pending').length}
+        pendingBookingsCount={bookings.filter((b) => b.status === 'pending' || Boolean(b.pendingDepositPercentage)).length}
         approvalsTab={approvalsTab}
       />
 
@@ -1686,6 +1789,7 @@ export default function App() {
             onApproveUser={handleApproveUser}
             onRejectUser={handleRejectUser}
             onDeleteUser={handleDeleteUser}
+            onUpdateUserRole={handleUpdateUserRole}
             onCreateUserDirectly={handleCreateUserDirectly}
             onApproveProduct={handleApproveProduct}
             onRejectProduct={handleRejectProduct}
@@ -1731,6 +1835,11 @@ export default function App() {
             onAdvanceStatus={handleAdvanceBookingStatus}
             onDeleteBooking={handleDeleteBooking}
             onUpdateBooking={handleUpdateBooking}
+            onLogActivity={(log) => {
+              setAuditLogs((prev) => [log, ...prev]);
+              insertAuditLogInDb(log).catch(() => {});
+            }}
+            onShowToast={showToast}
             initialSelectedBookingId={selectedBookingForDetails}
             onClearSelectedBookingId={() => setSelectedBookingForDetails(null)}
           />

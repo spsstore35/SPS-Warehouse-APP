@@ -22,6 +22,8 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  Edit3,
+  ShieldAlert,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -37,6 +39,7 @@ interface ApprovalsViewProps {
   onApproveUser: (userId: string) => void;
   onRejectUser: (userId: string) => void;
   onDeleteUser?: (userId: string) => void;
+  onUpdateUserRole?: (userId: string, newRole: Role) => Promise<void> | void;
   onCreateUserDirectly?: (data: {
     name: string;
     email: string;
@@ -59,6 +62,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onApproveUser,
   onRejectUser,
   onDeleteUser,
+  onUpdateUserRole,
   onCreateUserDirectly,
   onApproveProduct,
   onRejectProduct,
@@ -86,6 +90,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [createError, setCreateError] = useState('');
   const [isSubmittingNewUser, setIsSubmittingNewUser] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [userToEditRole, setUserToEditRole] = useState<User | null>(null);
+  const [newSelectedRole, setNewSelectedRole] = useState<Role>('worker');
+  const [isUpdatingRole, setIsUpdatingRole] = useState(false);
 
   const handleConfirmDeleteUser = () => {
     if (!userToDelete || !onDeleteUser) return;
@@ -1010,6 +1017,19 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                             <Check className="w-3.5 h-3.5 text-emerald-600" />
                             <span>Active & Approved</span>
                           </span>
+                          {onUpdateUserRole && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUserToEditRole(user);
+                                setNewSelectedRole(user.role);
+                              }}
+                              className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
+                              title="Change Account Role (Floor Staff / Admin Authority)"
+                            >
+                              <Edit3 className="w-4 h-4 text-amber-600" />
+                            </button>
+                          )}
                           {onDeleteUser && (
                             <button
                               onClick={() => setUserToDelete(user)}
@@ -1026,6 +1046,19 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                             <X className="w-3.5 h-3.5 text-rose-600" />
                             <span>Declined</span>
                           </span>
+                          {onUpdateUserRole && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUserToEditRole(user);
+                                setNewSelectedRole(user.role);
+                              }}
+                              className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
+                              title="Change Account Role (Floor Staff / Admin Authority)"
+                            >
+                              <Edit3 className="w-4 h-4 text-amber-600" />
+                            </button>
+                          )}
                           {onDeleteUser && (
                             <button
                               onClick={() => setUserToDelete(user)}
@@ -1411,6 +1444,105 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         onCancel={() => setUserToDelete(null)}
       />
 
+      {/* Yellow Edit Modal: Change User Account Role (Staff <-> Admin) */}
+      {userToEditRole && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Change Account Role</h3>
+                  <p className="text-xs text-slate-500 font-medium truncate max-w-[260px]">
+                    {userToEditRole.name} • {userToEditRole.email}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUserToEditRole(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                Assign System Role & Permissions:
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNewSelectedRole('worker')}
+                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                    newSelectedRole === 'worker'
+                      ? 'border-sky-500 bg-sky-50/70 text-sky-950 ring-2 ring-sky-500/20'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <div className="font-bold text-xs flex items-center gap-1.5">
+                    <UserIcon className="w-3.5 h-3.5 text-sky-600" />
+                    <span>Floor Staff</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Worker role: Request stock adjustments, view inventory & orders.
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setNewSelectedRole('admin')}
+                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                    newSelectedRole === 'admin'
+                      ? 'border-amber-500 bg-amber-50/70 text-amber-950 ring-2 ring-amber-500/20'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <div className="font-bold text-xs flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Admin Authority</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Admin role: Full authority to approve, delete, and publish directly.
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setUserToEditRole(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[40px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isUpdatingRole}
+                onClick={async () => {
+                  if (!userToEditRole || !onUpdateUserRole) return;
+                  setIsUpdatingRole(true);
+                  try {
+                    await onUpdateUserRole(userToEditRole.id, newSelectedRole);
+                    setUserToEditRole(null);
+                  } finally {
+                    setIsUpdatingRole(false);
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs flex items-center gap-1.5 min-h-[40px] transition-all"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>{isUpdatingRole ? 'Saving...' : 'Save New Role'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -470,7 +470,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       )}
 
       <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-        <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="w-full max-w-lg md:max-w-xl lg:max-w-3xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
           {/* Mobile handle */}
           <div className="sm:hidden w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-3" />
 
@@ -515,10 +515,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
           {/* Form Content */}
           <form onSubmit={handleSubmit} className="p-5 overflow-y-auto flex-1 space-y-6">
-            {/* Section 1: Mobile Photo Upload & Basic Details */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+            {/* Section 1: Mobile & Tablet Photo Upload & Basic Details */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               {/* Photo Upload Area (Supports Multiple Photos + Cropping) */}
-              <div className="md:col-span-5 space-y-2">
+              <div className="lg:col-span-5 space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Item Photos ({images.length})
@@ -532,7 +532,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
                 {images.length > 0 && images[activeImageIdx] ? (
                   <div className="space-y-2">
-                    <div className="relative aspect-[4/3] rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden shadow-inner group">
+                    <div className="relative aspect-[16/9] sm:aspect-[4/3] max-h-56 sm:max-h-64 lg:max-h-none rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden shadow-inner group">
                       <img
                         src={images[activeImageIdx]}
                         alt="Product Preview"
@@ -635,7 +635,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="relative aspect-[4/3] rounded-2xl bg-slate-50 border-2 border-dashed border-slate-300 overflow-hidden flex flex-col items-center justify-center p-4 text-center shadow-inner group hover:bg-slate-100/70 transition-colors">
+                  <div className="relative aspect-[16/9] sm:aspect-[4/3] max-h-56 sm:max-h-64 lg:max-h-none rounded-2xl bg-slate-50 border-2 border-dashed border-slate-300 overflow-hidden flex flex-col items-center justify-center p-4 text-center shadow-inner group hover:bg-slate-100/70 transition-colors">
                     <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 text-slate-400 flex items-center justify-center mb-2 shadow-sm">
                       <Camera className="w-6 h-6 stroke-[1.5]" />
                     </div>
@@ -687,7 +687,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               </div>
 
               {/* Product Meta Details */}
-              <div className="md:col-span-7 space-y-3.5">
+              <div className="lg:col-span-7 space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
                   Item Name *

@@ -32,6 +32,8 @@ interface BookingsViewProps {
   onAdvanceStatus: (bookingId: string, nextStatus: BookingStatus) => void;
   onDeleteBooking: (bookingId: string) => void;
   onUpdateBooking?: (booking: Booking) => void;
+  onLogActivity?: (log: any) => void;
+  onShowToast?: (message: string, log?: any) => void;
   initialSelectedBookingId?: string | null;
   onClearSelectedBookingId?: () => void;
 }
@@ -44,6 +46,8 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onAdvanceStatus,
   onDeleteBooking,
   onUpdateBooking,
+  onLogActivity,
+  onShowToast,
   initialSelectedBookingId,
   onClearSelectedBookingId,
 }) => {
@@ -61,7 +65,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [pendingPctChange, setPendingPctChange] = useState<number | null>(null);
   const [showConfirmDepositModal, setShowConfirmDepositModal] = useState<boolean>(false);
 
-  // Helper to format clean WhatsApp URL with localized message
+  // Helper to format clean WhatsApp URL with localized message & quotation details
   const formatPhoneForWhatsApp = (rawPhone: string): string => {
     let digits = rawPhone.replace(/\D/g, '');
     if (!digits) return '';
@@ -78,11 +82,59 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     return digits;
   };
 
-  const getWhatsAppUrl = (phone: string, clientName: string, lang: 'en' | 'ar') => {
+  const getWhatsAppUrl = (
+    phone: string,
+    clientName: string,
+    lang: 'en' | 'ar',
+    booking?: Booking | null
+  ) => {
     const cleanPhone = formatPhoneForWhatsApp(phone);
     if (!cleanPhone) return '#';
-    const textEn = `Hello ${clientName}, this is SPS Warehouse Store. We will send you the quotation PDF with all your requested items and prices. This is our official store number where we can stay in touch until your order is delivered.`;
-    const textAr = `أهلاً ${clientName}، ده رقم ستور كشافة القديس بولس الكشفية. هنبعت لحضرتك ملف (Quotation PDF) بكل الأصناف والأسعار المطلوبة، وده الرقم الرسمي للتواصل ومتابعة طلبك حتى الاستلام.`;
+
+    let itemsSummary = '';
+    if (booking && booking.items && booking.items.length > 0) {
+      itemsSummary = booking.items
+        .map(
+          (it, idx) =>
+            `${idx + 1}. ${it.productName} (${it.size} / ${it.colorName}) - ${it.quantity} pcs @ ${it.unitPrice.toFixed(0)} EGP = ${it.totalPrice.toFixed(0)} EGP`
+        )
+        .join('\n');
+    }
+
+    const depositPct = booking
+      ? (booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50))
+      : 50;
+    const depositAmount = booking
+      ? Math.round((booking.total * depositPct) / 100)
+      : 0;
+    const remainingAmount = booking
+      ? Math.max(0, booking.total - depositAmount)
+      : 0;
+
+    const textEn = `Hello ${clientName}, this is SPS Warehouse Store (Saint Paul Scouts).
+We have prepared your official Quotation for Order #${booking?.bookingNumber || ''}:
+
+📋 ORDER SPECIFICATIONS:
+${itemsSummary || 'Standard apparel booking.'}
+
+💰 Total Order Value: ${booking?.total.toFixed(2) || '0.00'} EGP
+💵 Advance Deposit (${depositPct}%): ${depositAmount.toFixed(2)} EGP
+📦 Remaining Balance on Delivery: ${remainingAmount.toFixed(2)} EGP
+
+We are sending you the formal 1-page Quotation PDF attached. This is our official store number to stay in touch until your order is delivered.`;
+
+    const textAr = `أهلاً ${clientName}، ده رقم ستور كشافة القديس بولس الكشفية.
+تم تجهيز عرض الأسعار الرسمي (Quotation) لطلبك #${booking?.bookingNumber || ''}:
+
+📋 تفاصيل الأصناف والكميات:
+${itemsSummary || 'طلب ملابس كشفية.'}
+
+💰 إجمالي الطلب: ${booking?.total.toFixed(2) || '0.00'} جنيه
+💵 المقدم المطلوب (${depositPct}%): ${depositAmount.toFixed(2)} جنيه
+📦 المتبقي عند الاستلام: ${remainingAmount.toFixed(2)} جنيه
+
+مرفق مع حضرتك ملف الـ (Quotation PDF) الرسمي للتأكيد، وده الرقم الرسمي للتواصل ومتابعة طلبك حتى الاستلام.`;
+
     const message = lang === 'ar' ? textAr : textEn;
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
   };
@@ -132,6 +184,21 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       if (onUpdateBooking) {
         onUpdateBooking(updated);
       }
+      const adminLog = {
+        id: `log_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        action: 'booking_updated',
+        actorName: currentUser.name || 'Admin',
+        actorRole: 'admin',
+        bookingId: activeBooking.id,
+        bookingNumber: activeBooking.bookingNumber,
+        bookingItems: activeBooking.items,
+        reason: `Deposit Terms Updated - Order #${activeBooking.bookingNumber}`,
+        summary: `Admin updated upfront deposit terms to ${pct}% for Order #${activeBooking.bookingNumber}`,
+        details: `Updated required deposit to ${pct}% (${depositRequired} EGP) for "${activeBooking.clientName}".`,
+      };
+      if (onLogActivity) onLogActivity(adminLog);
+      if (onShowToast) onShowToast(`Deposit terms updated to ${pct}% for Order #${activeBooking.bookingNumber}.`, adminLog);
     } else {
       // Staff request submitted for admin approval
       const updated: Booking = {
@@ -144,6 +211,21 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       if (onUpdateBooking) {
         onUpdateBooking(updated);
       }
+      const staffReqLog = {
+        id: `log_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        action: 'booking_updated',
+        actorName: currentUser.name || 'Floor Staff',
+        actorRole: currentUser.role,
+        bookingId: activeBooking.id,
+        bookingNumber: activeBooking.bookingNumber,
+        bookingItems: activeBooking.items,
+        reason: `Staff Request: Change Deposit - Order #${activeBooking.bookingNumber}`,
+        summary: `Staff (${currentUser.name}) requested changing deposit terms to ${pct}% for Order #${activeBooking.bookingNumber}`,
+        details: `Order #${activeBooking.bookingNumber} (${activeBooking.clientName}): Staff requested changing upfront deposit from ${activeDepositPct}% to ${pct}% (${Math.round((activeBooking.total * pct) / 100)} EGP). Awaiting Admin Approval.`,
+      };
+      if (onLogActivity) onLogActivity(staffReqLog);
+      if (onShowToast) onShowToast(`Staff deposit change request submitted for Order #${activeBooking.bookingNumber}. Awaiting Admin Approval.`, staffReqLog);
     }
   };
 
@@ -164,10 +246,26 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     if (onUpdateBooking) {
       onUpdateBooking(updated);
     }
+    const approveLog = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_updated',
+      actorName: currentUser.name || 'Admin',
+      actorRole: 'admin',
+      bookingId: activeBooking.id,
+      bookingNumber: activeBooking.bookingNumber,
+      bookingItems: activeBooking.items,
+      reason: `Admin Approved Deposit Terms - Order #${activeBooking.bookingNumber}`,
+      summary: `Admin approved staff deposit terms request: ${pct}% for Order #${activeBooking.bookingNumber}`,
+      details: `Admin confirmed deposit change to ${pct}% (${depositRequired} EGP) requested by ${activeBooking.pendingDepositPercentageBy || 'Staff'}.`,
+    };
+    if (onLogActivity) onLogActivity(approveLog);
+    if (onShowToast) onShowToast(`Approved deposit terms: ${pct}% for Order #${activeBooking.bookingNumber}.`, approveLog);
   };
 
   const handleRejectPendingDepositPct = () => {
     if (!activeBooking || !isAdmin) return;
+    const prevPendingPct = activeBooking.pendingDepositPercentage;
     const updated: Booking = {
       ...activeBooking,
       pendingDepositPercentage: undefined,
@@ -178,6 +276,21 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     if (onUpdateBooking) {
       onUpdateBooking(updated);
     }
+    const declineLog = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_updated',
+      actorName: currentUser.name || 'Admin',
+      actorRole: 'admin',
+      bookingId: activeBooking.id,
+      bookingNumber: activeBooking.bookingNumber,
+      bookingItems: activeBooking.items,
+      reason: `Admin Declined Deposit Terms Request - Order #${activeBooking.bookingNumber}`,
+      summary: `Admin declined staff deposit terms request (${prevPendingPct}%) for Order #${activeBooking.bookingNumber}`,
+      details: `Admin declined request to change deposit to ${prevPendingPct}%. Terms maintained at current rate.`,
+    };
+    if (onLogActivity) onLogActivity(declineLog);
+    if (onShowToast) onShowToast(`Declined deposit change request for Order #${activeBooking.bookingNumber}.`, declineLog);
   };
 
   return (
@@ -561,17 +674,25 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                       </button>
                     </div>
 
-                    {/* WhatsApp Action Button */}
-                    <a
-                      href={getWhatsAppUrl(activeBooking.clientPhone, activeBooking.clientName, waLanguage)}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    {/* WhatsApp Action Button with Quotation Details & auto-open PDF */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = getWhatsAppUrl(
+                          activeBooking.clientPhone,
+                          activeBooking.clientName,
+                          waLanguage,
+                          activeBooking
+                        );
+                        window.open(url, '_blank', 'noopener,noreferrer');
+                        onOpenPrintModal(activeBooking, 'quotation');
+                      }}
                       className="px-4 py-2 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
-                      title={`Send ${waLanguage === 'ar' ? 'Arabic' : 'English'} quotation message on WhatsApp to ${activeBooking.clientPhone}`}
+                      title={`Send ${waLanguage === 'ar' ? 'Arabic' : 'English'} quotation message on WhatsApp & open PDF to attach`}
                     >
                       <MessageCircle className="w-4 h-4" />
-                      <span>WhatsApp {activeBooking.clientPhone}</span>
-                    </a>
+                      <span>WhatsApp & Open Quotation PDF</span>
+                    </button>
                   </div>
                 )}
               </div>

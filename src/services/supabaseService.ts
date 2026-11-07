@@ -693,6 +693,25 @@ export async function updateUserStatusInDb(
   if (error) throw error;
 }
 
+export async function updateUserRoleInDb(
+  userId: string,
+  newRole: Role,
+  _adminUser?: User
+): Promise<void> {
+  const updatePayload: Record<string, any> = {
+    role: newRole,
+    requested_role: newRole,
+    avatar_color: newRole === 'admin' ? '#d97706' : '#0284c7',
+  };
+
+  const { error } = await supabase
+    .from('profiles')
+    .update(updatePayload)
+    .eq('id', userId);
+
+  if (error) throw error;
+}
+
 /**
  * AUDIT LOGS
  */
