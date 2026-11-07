@@ -834,6 +834,9 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
         total: Number(b.total) || 0,
         depositRate: Number(b.deposit_rate) || 0.5,
         depositPercentage: b.deposit_percentage ? Number(b.deposit_percentage) : (b.deposit_rate ? Math.round(Number(b.deposit_rate) * 100) : 50),
+        pendingDepositPercentage: b.pending_deposit_percentage ? Number(b.pending_deposit_percentage) : undefined,
+        pendingDepositPercentageBy: b.pending_deposit_percentage_by || undefined,
+        pendingDepositPercentageAt: b.pending_deposit_percentage_at || undefined,
         depositRequired: Number(b.deposit_required) || 0,
         depositPaid: Boolean(b.deposit_paid),
         depositPaidAmount: Number(b.deposit_paid_amount) || 0,
@@ -868,6 +871,9 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       total: booking.total,
       deposit_rate: booking.depositRate,
       deposit_percentage: booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50),
+      pending_deposit_percentage: booking.pendingDepositPercentage || null,
+      pending_deposit_percentage_by: booking.pendingDepositPercentageBy || null,
+      pending_deposit_percentage_at: booking.pendingDepositPercentageAt || null,
       deposit_required: booking.depositRequired,
       deposit_paid: booking.depositPaid,
       deposit_paid_amount: booking.depositPaidAmount || 0,
@@ -935,6 +941,9 @@ export async function updateBookingInDb(
     if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
     if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
     if (updates.depositPercentage !== undefined) payload.deposit_percentage = updates.depositPercentage;
+    if (updates.pendingDepositPercentage !== undefined) payload.pending_deposit_percentage = updates.pendingDepositPercentage;
+    if (updates.pendingDepositPercentageBy !== undefined) payload.pending_deposit_percentage_by = updates.pendingDepositPercentageBy;
+    if (updates.pendingDepositPercentageAt !== undefined) payload.pending_deposit_percentage_at = updates.pendingDepositPercentageAt;
     if (updates.depositRequired !== undefined) payload.deposit_required = updates.depositRequired;
     if (updates.depositPaid !== undefined) payload.deposit_paid = updates.depositPaid;
     if (updates.depositPaidAmount !== undefined) payload.deposit_paid_amount = updates.depositPaidAmount;

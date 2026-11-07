@@ -447,12 +447,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
         {/* Modal Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-          <div className="text-xs text-slate-500">
-            {isAdmin ? (
-              <span>Admin: changes immediately reflect in Supabase database</span>
-            ) : (
-              <span>Floor Staff: adjustments submit to Admin for verification</span>
-            )}
+          <div className="text-xs text-slate-500 font-mono">
+            {product.sku}
           </div>
           <button
             onClick={onClose}

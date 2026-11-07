@@ -126,6 +126,9 @@ CREATE TABLE public.bookings (
     total NUMERIC(12, 2) NOT NULL DEFAULT 0,
     deposit_rate NUMERIC(5, 2) NOT NULL DEFAULT 0.50,
     deposit_percentage INTEGER NOT NULL DEFAULT 50, -- 50%, 70%, 100% upfront
+    pending_deposit_percentage INTEGER, -- staff requested percentage awaiting admin approval
+    pending_deposit_percentage_by TEXT,
+    pending_deposit_percentage_at TIMESTAMPTZ,
     deposit_required NUMERIC(12, 2) NOT NULL DEFAULT 0,
     deposit_paid BOOLEAN NOT NULL DEFAULT FALSE,
     deposit_paid_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,

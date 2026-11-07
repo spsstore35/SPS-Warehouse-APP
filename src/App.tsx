@@ -1124,8 +1124,12 @@ export default function App() {
       action: 'booking_created',
       actorName: currentUser?.name || 'Staff',
       actorRole: currentUser?.role || 'worker',
+      bookingId: newBooking.id,
+      bookingNumber: newBooking.bookingNumber,
+      bookingItems: newBooking.items,
+      reason: `Client Booking - Order #${newBooking.bookingNumber}`,
       summary: `Created Booking #${newBooking.bookingNumber} for "${newBooking.clientName}"`,
-      details: `Booking created with ${newBooking.items.length} garments (${newBooking.items.reduce((acc, it) => acc + it.quantity, 0)} units total, ${newBooking.total.toFixed(2)} EGP). Status: ${newBooking.status.toUpperCase()}. Deposit required: ${newBooking.depositRequired.toFixed(2)} EGP. ${autoAdvanceToPreparing ? 'Stock reserved and deducted.' : 'Inventory stock untouched while pending 50% deposit.'}`,
+      details: `Booking created with ${newBooking.items.length} garments (${newBooking.items.reduce((acc, it) => acc + it.quantity, 0)} units total, ${newBooking.total.toFixed(2)} EGP). Status: ${newBooking.status.toUpperCase()}. Deposit required: ${newBooking.depositRequired.toFixed(2)} EGP. ${autoAdvanceToPreparing ? 'Stock reserved and deducted.' : `Inventory stock untouched while pending ${newBooking.depositPercentage || 50}% deposit.`}`,
     };
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
@@ -1188,15 +1192,16 @@ export default function App() {
         inventoryDeducted = true;
       }
 
+      const isDone = nextStatus === 'done';
       const updatedB: Booking = {
         ...b,
         status: nextStatus,
         inventoryDeducted,
         depositPaid: nextStatus !== 'pending' ? true : b.depositPaid,
-        depositPaidAmount: nextStatus !== 'pending' ? b.depositRequired : b.depositPaidAmount,
+        depositPaidAmount: isDone ? b.total : (nextStatus !== 'pending' ? b.depositRequired : b.depositPaidAmount),
         depositPaidAt: nextStatus === 'preparing' && !b.depositPaidAt ? new Date().toISOString() : b.depositPaidAt,
-        finalPaidAmount: nextStatus === 'done' ? (b.total - b.depositRequired) : b.finalPaidAmount,
-        finalPaidAt: nextStatus === 'done' ? new Date().toISOString() : b.finalPaidAt,
+        finalPaidAmount: isDone ? (b.total - b.depositRequired) : b.finalPaidAmount,
+        finalPaidAt: isDone ? new Date().toISOString() : b.finalPaidAt,
         updatedAt: new Date().toISOString(),
       };
 
@@ -1213,12 +1218,20 @@ export default function App() {
       setBookings(updatedBookings);
       saveStoredBookings(updatedBookings);
 
-      const actionText =
-        nextStatus === 'preparing'
-          ? '50% Deposit Confirmed & Stock Deducted'
-          : nextStatus === 'delivered'
-          ? 'Delivered to Client'
-          : 'Fully Paid & Order Closed';
+      const pct = affectedBooking.depositPercentage || (affectedBooking.depositRate ? Math.round(affectedBooking.depositRate * 100) : 50);
+      let actionText = '';
+      let reasonText = '';
+
+      if (nextStatus === 'preparing') {
+        actionText = `${pct}% Deposit Confirmed & Stock Deducted`;
+        reasonText = `Stock Reservation - Order #${affectedBooking.bookingNumber}`;
+      } else if (nextStatus === 'delivered') {
+        actionText = 'Delivered to Client';
+        reasonText = `Shipment Handover - Order #${affectedBooking.bookingNumber}`;
+      } else {
+        actionText = 'Fully Paid & Order Closed';
+        reasonText = `Order Completed - Final Balance Settled (${affectedBooking.bookingNumber})`;
+      }
 
       const newLog: AuditLogEntry = {
         id: `log_${Date.now()}`,
@@ -1226,8 +1239,12 @@ export default function App() {
         action: 'booking_status_changed',
         actorName: currentUser?.name || 'Admin',
         actorRole: currentUser?.role || 'admin',
+        bookingId: affectedBooking.id,
+        bookingNumber: affectedBooking.bookingNumber,
+        bookingItems: affectedBooking.items,
+        reason: reasonText,
         summary: `Booking #${affectedBooking.bookingNumber} moved to ${nextStatus.toUpperCase()}`,
-        details: `${actionText} for client "${affectedBooking.clientName}".`,
+        details: `${actionText} for client "${affectedBooking.clientName}". ${affectedBooking.items.reduce((s, it) => s + it.quantity, 0)} units total.`,
       };
       setAuditLogs([newLog, ...auditLogs]);
       insertAuditLogInDb(newLog).catch(() => {});

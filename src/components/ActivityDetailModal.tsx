@@ -154,11 +154,18 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Detailed Narrative Explanation Section (Shar7 Tafseely) */}
+          {/* Detailed Narrative Explanation Section */}
           <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/90 space-y-2">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5 text-amber-700" />
-              <span>Detailed Inventory Breakdown (شرح تفصيلي)</span>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-amber-900 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-amber-700" />
+                <span>Detailed Inventory Breakdown</span>
+              </span>
+              {log.bookingNumber && (
+                <span className="font-mono text-[10px] bg-amber-200/80 text-amber-950 font-black px-2 py-0.5 rounded-md">
+                  {log.bookingNumber}
+                </span>
+              )}
             </div>
             <p className="text-xs sm:text-sm text-slate-800 font-medium leading-relaxed">
               {log.variantSize ? (
@@ -208,6 +215,52 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               )}
             </p>
           </div>
+
+          {/* Shipment Items Breakdown (When activity is tied to an order / shipment) */}
+          {log.bookingItems && log.bookingItems.length > 0 && (
+            <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200/90 space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-black text-blue-950">
+                <span className="flex items-center gap-1.5">
+                  <Package className="w-4 h-4 text-blue-600" />
+                  <span>Shipment Order Items ({log.bookingItems.length})</span>
+                </span>
+                {log.bookingNumber && (
+                  <span className="font-mono text-[11px] font-bold text-blue-700">
+                    Ref: {log.bookingNumber}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {log.bookingItems.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="p-2.5 rounded-xl bg-white border border-blue-100 flex items-center justify-between gap-2 text-xs shadow-2xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-900 truncate">{item.productName}</div>
+                      <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
+                        <span className="text-amber-800 font-bold">{item.productSku}</span>
+                        <span>•</span>
+                        <span>{item.colorName}</span>
+                        <span>•</span>
+                        <span className="font-bold text-slate-700">Size: {item.size}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span className="font-mono font-black text-xs text-blue-900 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200">
+                        {item.quantity} pcs
+                      </span>
+                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                        @{item.unitPrice.toFixed(0)} EGP
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Visual Stock Metrics Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -263,7 +316,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
             <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs col-span-2 sm:col-span-1">
               <div className="text-[10px] uppercase font-bold text-slate-400">Reason / Type</div>
               <div className="text-xs font-bold text-slate-800 mt-1 line-clamp-2">
-                {log.reason || 'Direct Physical Adjustment'}
+                {log.reason || (log.bookingNumber ? `Shipment Handover - Order ${log.bookingNumber}` : 'Direct Physical Adjustment')}
               </div>
               {log.note && (
                 <div className="text-[11px] text-slate-500 mt-1 italic line-clamp-1">

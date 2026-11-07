@@ -146,6 +146,9 @@ export interface AuditLogEntry {
   totalQuantityAfter?: number;
   reason?: string;
   note?: string;
+  bookingId?: string;
+  bookingNumber?: string;
+  bookingItems?: BookingItem[];
 }
 
 export type BookingStatus = 'pending' | 'preparing' | 'delivered' | 'done';
@@ -181,6 +184,9 @@ export interface Booking {
   total: number;
   depositRate: number; // e.g. 0.5 (50%), 0.7 (70%), 1.0 (100%)
   depositPercentage?: number; // 50, 70, 100, or custom
+  pendingDepositPercentage?: number; // Staff requested deposit percentage awaiting admin approval
+  pendingDepositPercentageBy?: string; // Name of staff who requested change
+  pendingDepositPercentageAt?: string; // Request timestamp
   depositRequired: number; // total * depositRate
   depositPaid: boolean;
   depositPaidAmount: number;
