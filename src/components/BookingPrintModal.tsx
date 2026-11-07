@@ -31,11 +31,40 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   const [includeNotes, setIncludeNotes] = useState<boolean>(
     Boolean(booking?.notes && booking.notes.trim().length > 0)
   );
+  const [isDownloading, setIsDownloading] = useState(false);
 
   if (!isOpen || !booking) return null;
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadPdf = async () => {
+    const element = document.getElementById('printable-a4-area');
+    if (!element) {
+      window.print();
+      return;
+    }
+    setIsDownloading(true);
+    try {
+      const html2pdfModule = await import('html2pdf.js');
+      const html2pdf = html2pdfModule.default || html2pdfModule;
+
+      const opt = {
+        margin: [4, 6, 4, 6] as [number, number, number, number],
+        filename: `${docType === 'quotation' ? 'Quotation' : 'Workshop_Sheet'}_${booking.bookingNumber}.pdf`,
+        image: { type: 'jpeg' as const, quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
+      };
+
+      await html2pdf().set(opt).from(element).save();
+    } catch (err) {
+      console.warn('Direct PDF export error, falling back to print dialog:', err);
+      window.print();
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const totalUnits = booking.items.reduce((acc, it) => acc + it.quantity, 0);
@@ -135,12 +164,17 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
             {/* Download PDF Action */}
             <button
               type="button"
-              onClick={handlePrint}
-              className="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-              title="Save or Download as PDF"
+              disabled={isDownloading}
+              onClick={handleDownloadPdf}
+              className="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              title="Download PDF Document File"
             >
-              <Download className="w-4 h-4 stroke-[2.5]" />
-              <span>Download PDF</span>
+              {isDownloading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Download className="w-4 h-4 stroke-[2.5]" />
+              )}
+              <span>{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
             </button>
 
             {/* Primary Print Action */}

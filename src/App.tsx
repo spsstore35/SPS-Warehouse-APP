@@ -428,10 +428,11 @@ export default function App() {
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
-      action: 'role_changed' as any,
+      action: 'account_updated' as any,
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
-      summary: `Changed role of "${targetUser?.name || 'User'}" to ${newRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}`,
+      reason: `Staff Role Changed: ${oldRole.toUpperCase()} → ${newRole.toUpperCase()}`,
+      summary: `Staff Role Changed: "${targetUser?.name || targetUser?.email || 'User'}" to ${newRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}`,
       details: `User (${targetUser?.email}) role changed from ${oldRole.toUpperCase()} to ${newRole.toUpperCase()} by Admin.`,
     };
     setAuditLogs((prev) => [newLog, ...prev]);

@@ -123,6 +123,8 @@ export interface AuditLogEntry {
     | 'product_deleted'
     | 'variant_deleted'
     | 'account_deleted'
+    | 'account_updated'
+    | 'role_changed'
     | 'request_approved'
     | 'request_rejected'
     | 'staff_approved'

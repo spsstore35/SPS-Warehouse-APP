@@ -8,6 +8,7 @@ import {
   ArrowRight,
   TrendingUp,
   Package,
+  ShoppingBag,
   Layers,
   FileText,
   ExternalLink,
@@ -88,21 +89,24 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
     matchedBooking?.id ||
     effectiveBookingNumber;
 
+  const isAccountActivity =
+    log.action === 'account_deleted' ||
+    log.action === 'account_updated' ||
+    /role|permission|worker to admin|admin to worker|user account/i.test(`${log.summary || ''} ${log.details || ''}`);
+
   const isOrderOrBooking =
     Boolean(effectiveBookingNumber) ||
     Boolean(effectiveBookingId) ||
     Boolean(log.bookingItems && log.bookingItems.length > 0) ||
     Boolean(matchedBooking?.items && matchedBooking.items.length > 0) ||
     log.action?.includes('booking') ||
-    (log.summary && /booking|order/i.test(log.summary)) ||
-    (log.details && /booking|order/i.test(log.details));
+    /booking|order/i.test(`${log.summary || ''} ${log.details || ''}`);
 
-  const effectiveItems =
-    log.bookingItems && log.bookingItems.length > 0
-      ? log.bookingItems
-      : matchedBooking?.items && matchedBooking.items.length > 0
-      ? matchedBooking.items
-      : undefined;
+  const hasGenuineProduct = Boolean(
+    !isOrderOrBooking &&
+    !isAccountActivity &&
+    (product || log.productId || (log.productName && log.productName !== 'Warehouse Garment') || log.variantSize)
+  );
 
   const isAdmin = log.actorRole === 'admin';
   const effectiveImage = log.productImage || product?.image || product?.images?.[0];
@@ -116,6 +120,9 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
       return effectiveBookingNumber
         ? `Order #${effectiveBookingNumber} Record`
         : 'Client Order Activity';
+    }
+    if (isAccountActivity) {
+      return 'Staff Access & Permission Change';
     }
     switch (log.action) {
       case 'stock_adjusted':
@@ -134,6 +141,47 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
         return 'User Account Deleted';
       default:
         return 'Inventory Activity Record';
+    }
+  };
+
+  const getSensibleReason = (): string => {
+    if (isOrderOrBooking) {
+      return effectiveBookingNumber
+        ? `Making Order #${effectiveBookingNumber}`
+        : 'Making Order';
+    }
+
+    if (isAccountActivity) {
+      const combined = `${log.summary || ''} ${log.details || ''}`.toLowerCase();
+      if (combined.includes('worker to admin')) return 'Role Changed: Worker → Admin';
+      if (combined.includes('admin to worker')) return 'Role Changed: Admin → Worker';
+      if (combined.includes('role changed') || combined.includes('role')) return 'User Role & Permissions Update';
+      if (log.action === 'account_deleted' || combined.includes('deleted')) return 'User Account Removed';
+      return 'Staff Access Control';
+    }
+
+    if (log.reason && log.reason !== 'Direct Physical Adjustment') {
+      return log.reason;
+    }
+
+    switch (log.action) {
+      case 'product_created':
+        return 'New Item Added to Catalog';
+      case 'product_updated':
+        return 'Product Details Updated';
+      case 'product_deleted':
+        return 'Product Removed from Catalog';
+      case 'variant_deleted':
+        return 'Size Variant Removed';
+      case 'request_approved':
+        return 'Staff Stock Request Approved';
+      case 'stock_adjusted':
+        return log.variantSize ? `Physical Count: Size ${log.variantSize}` : 'Physical Inventory Adjustment';
+      default:
+        if (log.summary && !/inventory activity/i.test(log.summary)) {
+          return log.summary;
+        }
+        return 'Physical Inventory Adjustment';
     }
   };
 
@@ -179,58 +227,113 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 sm:p-6 space-y-5 overflow-y-auto max-h-[80vh]">
-          {/* Product Banner Card with Image */}
-          <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200/90 flex items-center gap-4">
-            <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-slate-200/80 border border-slate-300 shrink-0 shadow-sm flex items-center justify-center">
-              {effectiveImage ? (
-                <img
-                  src={effectiveImage}
-                  alt={log.productName || 'Product'}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center text-slate-400">
-                  <ImageIcon className="w-6 h-6 mb-0.5" />
-                  <span className="text-[9px]">No photo</span>
+        <div className="p-5 sm:p-6 space-y-4 overflow-y-auto max-h-[80vh]">
+          {/* Case 1: Order Activity Banner */}
+          {isOrderOrBooking && (
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-blue-50/80 border border-blue-200 flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <ShoppingBag className="w-6 h-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap text-xs font-bold text-blue-700">
+                  <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full text-[10px]">
+                    Client Order Purchase
+                  </span>
+                  {effectiveBookingNumber && (
+                    <span className="font-mono text-blue-900 font-black">#{effectiveBookingNumber}</span>
+                  )}
                 </div>
-              )}
+                <h4 className="text-base font-black text-slate-900 mt-0.5 truncate">
+                  {matchedBooking?.clientName ? `Order for ${matchedBooking.clientName}` : `Client Order #${effectiveBookingNumber || ''}`}
+                </h4>
+                <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-600">
+                  <span className="font-bold text-slate-800">{log.actorName}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                    {isAdmin ? 'Admin Authority' : 'Floor Staff'}
+                  </span>
+                </div>
+              </div>
             </div>
+          )}
 
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 font-medium">
-                {product?.sku && (
-                  <span className="font-mono text-amber-700 font-bold">{product.sku}</span>
-                )}
-                {product?.category && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span>{product.category}</span>
-                  </>
-                )}
-                {product?.targetAudience && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-bold text-slate-800 bg-white px-2 py-0.5 rounded-full border border-slate-200 text-[10px]">
-                      {product.targetAudience}
-                    </span>
-                  </>
+          {/* Case 2: User Access & Role Change Banner */}
+          {isAccountActivity && (
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-purple-50/80 border border-purple-200 flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <UserCheck className="w-6 h-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap text-xs font-bold text-purple-700">
+                  <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full text-[10px]">
+                    User Security & Access
+                  </span>
+                </div>
+                <h4 className="text-base font-black text-slate-900 mt-0.5 truncate">
+                  Staff Role & Permissions Update
+                </h4>
+                <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-600">
+                  <span className="font-bold text-slate-800">{log.actorName}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                    {isAdmin ? 'Admin Authority' : 'Floor Staff'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Case 3: Genuine Product Banner Card with Image */}
+          {hasGenuineProduct && (
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200/90 flex items-center gap-4">
+              <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-slate-200/80 border border-slate-300 shrink-0 shadow-sm flex items-center justify-center">
+                {effectiveImage ? (
+                  <img
+                    src={effectiveImage}
+                    alt={log.productName || 'Product'}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center text-slate-400">
+                    <ImageIcon className="w-6 h-6 mb-0.5" />
+                    <span className="text-[9px]">No photo</span>
+                  </div>
                 )}
               </div>
 
-              <h4 className="text-base sm:text-lg font-black text-slate-900 mt-1 truncate">
-                {log.productName || product?.name || 'Warehouse Garment'}
-              </h4>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500 font-medium">
+                  {product?.sku && (
+                    <span className="font-mono text-amber-700 font-bold">{product.sku}</span>
+                  )}
+                  {product?.category && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>{product.category}</span>
+                    </>
+                  )}
+                  {product?.targetAudience && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-bold text-slate-800 bg-white px-2 py-0.5 rounded-full border border-slate-200 text-[10px]">
+                        {product.targetAudience}
+                      </span>
+                    </>
+                  )}
+                </div>
 
-              {/* Actor attribution badge */}
-              <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-600">
-                <span className="font-bold text-slate-800">{log.actorName}</span>
-                <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                  {log.actorRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}
-                </span>
+                <h4 className="text-base sm:text-lg font-black text-slate-900 mt-1 truncate">
+                  {log.productName || product?.name || 'Catalog Item'}
+                </h4>
+
+                {/* Actor attribution badge */}
+                <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-600">
+                  <span className="font-bold text-slate-800">{log.actorName}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                    {isAdmin ? 'Admin Authority' : 'Floor Staff'}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Detailed Narrative Explanation Section */}
           <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/90 space-y-2">
@@ -294,15 +397,15 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
             </p>
           </div>
 
-          {/* Prominent Direct Button to Order Details Page */}
+          {/* Prominent Direct Button to Order Details Page (Styled in Blue as requested) */}
           {isOrderOrBooking && (effectiveBookingId || effectiveBookingNumber) && onViewBooking && (
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-transparent border border-amber-300 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xs">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-xs font-black">
-                  <Package className="w-5 h-5" />
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-blue-50/80 border border-blue-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs font-black">
+                  <ShoppingBag className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                  <div className="text-xs sm:text-sm font-black text-slate-900 flex items-center gap-1.5">
                     <span>Order #{effectiveBookingNumber || 'Details'}</span>
                     {matchedBooking?.clientName && (
                       <span className="font-bold text-slate-600">· {matchedBooking.clientName}</span>
@@ -321,74 +424,11 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   onClose();
                   onViewBooking(target);
                 }}
-                className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
               >
                 <span>Open Order Details</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
-            </div>
-          )}
-
-          {/* Shipment Items Breakdown (When activity is tied to an order / shipment) */}
-          {effectiveItems && effectiveItems.length > 0 && (
-            <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200/90 space-y-2.5">
-              <div className="flex items-center justify-between text-xs font-black text-blue-950">
-                <span className="flex items-center gap-1.5">
-                  <Package className="w-4 h-4 text-blue-600" />
-                  <span>Shipment Order Items ({effectiveItems.length})</span>
-                </span>
-                {effectiveBookingNumber && (
-                  <span className="font-mono text-[11px] font-bold text-blue-700">
-                    Ref: {effectiveBookingNumber}
-                  </span>
-                )}
-              </div>
-
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {effectiveItems.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2.5 rounded-xl bg-white border border-blue-100 flex items-center justify-between gap-2 text-xs shadow-2xs"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-bold text-slate-900 truncate">{item.productName}</div>
-                      <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
-                        <span className="text-amber-800 font-bold">{item.productSku}</span>
-                        <span>•</span>
-                        <span>{item.colorName}</span>
-                        <span>•</span>
-                        <span className="font-bold text-slate-700">Size: {item.size}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-right shrink-0">
-                      <span className="font-mono font-black text-xs text-blue-900 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200">
-                        {item.quantity} pcs
-                      </span>
-                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        @{item.unitPrice.toFixed(0)} EGP
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Direct Navigation Button to Booking Record */}
-              {(effectiveBookingId || effectiveBookingNumber) && onViewBooking && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const idOrNumber = effectiveBookingId || effectiveBookingNumber || '';
-                    onClose();
-                    onViewBooking(idOrNumber);
-                  }}
-                  className="w-full mt-2.5 py-2.5 px-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
-                >
-                  <Package className="w-4 h-4" />
-                  <span>Open Booking Record ({effectiveBookingNumber || 'Details'})</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
           )}
 
@@ -442,13 +482,11 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               </div>
             )}
 
-            {/* Box 3: Reason / Classification */}
+            {/* Box 3: Reason / Classification (Smart dynamic classification) */}
             <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs col-span-2 sm:col-span-1">
               <div className="text-[10px] uppercase font-bold text-slate-400">Reason / Type</div>
               <div className="text-xs font-bold text-slate-800 mt-1 line-clamp-2">
-                {isOrderOrBooking
-                  ? (effectiveBookingNumber ? `Making Order #${effectiveBookingNumber}` : (log.reason || 'Making Order'))
-                  : (log.reason || 'Direct Physical Adjustment')}
+                {getSensibleReason()}
               </div>
               {log.note && (
                 <div className="text-[11px] text-slate-500 mt-1 italic line-clamp-1">
@@ -459,10 +497,10 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Footer */}
+        {/* Modal Footer: Cleaned up without redundant order button */}
         <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-wrap">
-            {product && onViewProduct && (
+            {product && onViewProduct && hasGenuineProduct && (
               <button
                 type="button"
                 onClick={() => {
@@ -476,22 +514,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               </button>
             )}
 
-            {(effectiveBookingNumber || effectiveBookingId) && onViewBooking && (
-              <button
-                type="button"
-                onClick={() => {
-                  const idOrNumber = effectiveBookingId || effectiveBookingNumber || '';
-                  onClose();
-                  onViewBooking(idOrNumber);
-                }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-              >
-                <Package className="w-3.5 h-3.5" />
-                <span>Open Order Details</span>
-              </button>
-            )}
-
-            {!product && !effectiveBookingNumber && !effectiveBookingId && (
+            {!hasGenuineProduct && !isOrderOrBooking && (
               <div className="text-xs text-slate-400">Audit record is secured in database log</div>
             )}
           </div>

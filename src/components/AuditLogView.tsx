@@ -4,6 +4,9 @@ import {
   History,
   ShieldCheck,
   UserCheck,
+  User,
+  ShoppingBag,
+  Package,
   ChevronRight,
   ChevronLeft,
   Calendar,
@@ -405,6 +408,21 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
             );
             const itemImage = log.productImage || matchedProduct?.image || matchedProduct?.images?.[0];
 
+            const isOrder =
+              Boolean(log.bookingNumber) ||
+              Boolean(log.bookingId) ||
+              log.action?.includes('booking') ||
+              /booking|order|sps-/i.test(`${log.summary || ''} ${log.details || ''}`);
+
+            const isAccount =
+              log.action === 'account_deleted' ||
+              log.action === 'account_updated' ||
+              /role|permission|user|account|worker to admin|admin to worker/i.test(
+                `${log.summary || ''} ${log.details || ''}`
+              );
+
+            const hasProductImage = !isOrder && !isAccount && Boolean(itemImage);
+
             return (
               <div
                 key={log.id}
@@ -412,8 +430,16 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
                 className="p-4 sm:p-5 flex items-start gap-3.5 hover:bg-amber-50/40 cursor-pointer transition-all group"
                 title="Click to view detailed breakdown"
               >
-                {/* Product thumbnail or role icon */}
-                {itemImage ? (
+                {/* Product thumbnail or specialized action icon */}
+                {isOrder ? (
+                  <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
+                    <ShoppingBag className="w-5 h-5 text-blue-600" />
+                  </div>
+                ) : isAccount ? (
+                  <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-700 border border-purple-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
+                    <UserCheck className="w-5 h-5 text-purple-600" />
+                  </div>
+                ) : hasProductImage ? (
                   <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
                     <img
                       src={itemImage}
@@ -423,13 +449,13 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
                   </div>
                 ) : (
                   <div
-                    className={`p-2.5 rounded-xl shrink-0 mt-0.5 ${
+                    className={`w-12 h-12 rounded-xl shrink-0 flex items-center justify-center mt-0.5 ${
                       isAdmin
                         ? 'bg-amber-50 text-amber-800 border border-amber-200'
                         : 'bg-sky-50 text-sky-800 border border-sky-200'
                     }`}
                   >
-                    {isAdmin ? <ShieldCheck className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                    {isAdmin ? <ShieldCheck className="w-5 h-5" /> : <UserCheck className="w-5 h-5" />}
                   </div>
                 )}
 
