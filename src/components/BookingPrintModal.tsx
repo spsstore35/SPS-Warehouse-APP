@@ -301,7 +301,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                             ? 'IN PREPARATION / STOCK RESERVED'
                             : booking.status === 'delivered'
                             ? 'DELIVERED (AWAITING BALANCE)'
-                            : 'ORDER COMPLETED'}
+                            : '✓ 100% FULLY PAID & SETTLED'}
                         </span>
                       </div>
                     </div>
@@ -376,35 +376,62 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     </div>
 
                     {/* Deposit Breakdown */}
-                    <div className="pt-2 border-t border-dashed border-slate-300 space-y-1.5 text-xs">
-                      <div className="flex justify-between font-bold text-amber-900 text-xs">
-                        <span>{depositPct === 100 ? '100% Full Payment Required:' : `${depositPct}% Required Advance Deposit:`}</span>
-                        <span className="font-mono text-amber-950 font-black">{booking.depositRequired.toFixed(2)} EGP</span>
-                      </div>
+                    {booking.status === 'done' ? (
+                      <div className="pt-2 border-t border-dashed border-slate-300 space-y-1.5 text-xs">
+                        <div className="flex justify-between font-bold text-emerald-900 text-xs">
+                          <span>Total Amount Paid:</span>
+                          <span className="font-mono text-emerald-950 font-black">{booking.total.toFixed(2)} EGP (100% Settled)</span>
+                        </div>
 
-                      <div className="flex justify-between text-xs text-slate-600">
-                        <span>Deposit Payment Status:</span>
-                        <span className={`font-mono font-black ${booking.depositPaid ? 'text-emerald-700' : 'text-amber-800'}`}>
-                          {booking.depositPaid
-                            ? 'RECEIVED & CONFIRMED'
-                            : (depositPct === 100 ? 'PENDING FULL PAYMENT' : `PENDING ${depositPct}% PAYMENT`)}
-                        </span>
-                      </div>
+                        <div className="flex justify-between text-xs text-slate-600">
+                          <span>Payment Status:</span>
+                          <span className="font-mono font-black text-emerald-700">
+                            ✓ 100% FULLY PAID & SETTLED
+                          </span>
+                        </div>
 
-                      <div className="flex justify-between font-bold text-slate-800 pt-1.5 border-t border-slate-200">
-                        <span>{depositPct === 100 ? 'Remaining Balance:' : `${remainingPct}% Balance (Due on Handover):`}</span>
-                        <span className="font-mono font-black">
-                          {Math.max(0, booking.total - booking.depositRequired).toFixed(2)} EGP
-                        </span>
+                        <div className="flex justify-between font-bold text-slate-800 pt-1.5 border-t border-slate-200">
+                          <span>Remaining Balance:</span>
+                          <span className="font-mono font-black text-emerald-700">
+                            0.00 EGP
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="pt-2 border-t border-dashed border-slate-300 space-y-1.5 text-xs">
+                        <div className="flex justify-between font-bold text-amber-900 text-xs">
+                          <span>{depositPct === 100 ? '100% Full Payment Required:' : `${depositPct}% Required Advance Deposit:`}</span>
+                          <span className="font-mono text-amber-950 font-black">{booking.depositRequired.toFixed(2)} EGP</span>
+                        </div>
+
+                        <div className="flex justify-between text-xs text-slate-600">
+                          <span>Deposit Payment Status:</span>
+                          <span className={`font-mono font-black ${booking.depositPaid ? 'text-emerald-700' : 'text-amber-800'}`}>
+                            {booking.depositPaid
+                              ? 'RECEIVED & CONFIRMED'
+                              : (depositPct === 100 ? 'PENDING FULL PAYMENT' : `PENDING ${depositPct}% PAYMENT`)}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between font-bold text-slate-800 pt-1.5 border-t border-slate-200">
+                          <span>{depositPct === 100 ? 'Remaining Balance:' : `${remainingPct}% Balance (Due on Handover):`}</span>
+                          <span className="font-mono font-black">
+                            {Math.max(0, booking.total - booking.depositRequired).toFixed(2)} EGP
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Terms & Official Sign-off Footer: Fits cleanly inside 1-page A4 */}
                 <div className="sheet-card pt-2 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-[10px] text-slate-500">
                   <div className="text-center sm:text-left">
-                    {depositPct === 100 ? (
+                    {booking.status === 'done' ? (
+                      <p className="font-semibold text-emerald-800">
+                        • Order completed & delivered. Full payment of {booking.total.toFixed(2)} EGP received and settled in full.
+                      </p>
+                    ) : depositPct === 100 ? (
                       <p className="font-medium text-slate-600">
                         • Full 100% payment required to confirm booking and commence workshop production schedule.
                       </p>

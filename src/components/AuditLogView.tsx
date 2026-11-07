@@ -18,6 +18,7 @@ interface AuditLogViewProps {
   logs: AuditLogEntry[];
   products?: Product[];
   onViewProduct?: (productId: string) => void;
+  onViewBooking?: (bookingNumberOrId: string) => void;
   onClearLogs?: () => void;
 }
 
@@ -85,6 +86,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
   logs,
   products = [],
   onViewProduct,
+  onViewBooking,
 }) => {
   const [filter, setFilter] = useState<string>('all');
   const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null);
@@ -486,6 +488,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
           product={selectedProduct}
           onClose={() => setSelectedLog(null)}
           onViewProduct={onViewProduct}
+          onViewBooking={onViewBooking}
         />
       )}
     </div>

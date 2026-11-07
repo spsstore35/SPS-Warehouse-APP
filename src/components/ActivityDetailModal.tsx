@@ -21,6 +21,7 @@ interface ActivityDetailModalProps {
   product?: Product;
   onClose: () => void;
   onViewProduct?: (productId: string) => void;
+  onViewBooking?: (bookingNumberOrId: string) => void;
 }
 
 export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
@@ -28,6 +29,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
   product,
   onClose,
   onViewProduct,
+  onViewBooking,
 }) => {
   if (!log) return null;
 
@@ -259,6 +261,23 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   </div>
                 ))}
               </div>
+
+              {/* Direct Navigation Button to Booking Record */}
+              {(log.bookingNumber || log.bookingId) && onViewBooking && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idOrNumber = log.bookingId || log.bookingNumber || '';
+                    onClose();
+                    onViewBooking(idOrNumber);
+                  }}
+                  className="w-full mt-2.5 py-2.5 px-3.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
+                >
+                  <Package className="w-4 h-4" />
+                  <span>Open Booking Record ({log.bookingNumber})</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           )}
 
@@ -328,22 +347,41 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between gap-3">
-          {product && onViewProduct ? (
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onViewProduct(product.id);
-              }}
-              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>View "{product.name}" in Catalog</span>
-            </button>
-          ) : (
-            <div className="text-xs text-slate-400">Audit record is secured in database log</div>
-          )}
+        <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {product && onViewProduct && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onViewProduct(product.id);
+                }}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>View "{product.name}" in Catalog</span>
+              </button>
+            )}
+
+            {(log.bookingNumber || log.bookingId) && onViewBooking && (
+              <button
+                type="button"
+                onClick={() => {
+                  const idOrNumber = log.bookingId || log.bookingNumber || '';
+                  onClose();
+                  onViewBooking(idOrNumber);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>Open Order Details</span>
+              </button>
+            )}
+
+            {!product && !log.bookingNumber && (
+              <div className="text-xs text-slate-400">Audit record is secured in database log</div>
+            )}
+          </div>
 
           <button
             type="button"

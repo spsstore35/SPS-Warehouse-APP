@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Booking, BookingStatus, User } from '../types/inventory';
 import {
   CalendarCheck,
@@ -32,6 +32,8 @@ interface BookingsViewProps {
   onAdvanceStatus: (bookingId: string, nextStatus: BookingStatus) => void;
   onDeleteBooking: (bookingId: string) => void;
   onUpdateBooking?: (booking: Booking) => void;
+  initialSelectedBookingId?: string | null;
+  onClearSelectedBookingId?: () => void;
 }
 
 export const BookingsView: React.FC<BookingsViewProps> = ({
@@ -42,11 +44,19 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onAdvanceStatus,
   onDeleteBooking,
   onUpdateBooking,
+  initialSelectedBookingId,
+  onClearSelectedBookingId,
 }) => {
   const isAdmin = currentUser.role === 'admin';
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
-  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialSelectedBookingId || null);
+
+  useEffect(() => {
+    if (initialSelectedBookingId) {
+      setSelectedBookingId(initialSelectedBookingId);
+    }
+  }, [initialSelectedBookingId]);
   const [waLanguage, setWaLanguage] = useState<'en' | 'ar'>('en');
   const [pendingPctChange, setPendingPctChange] = useState<number | null>(null);
   const [showConfirmDepositModal, setShowConfirmDepositModal] = useState<boolean>(false);
@@ -617,91 +627,93 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                   </button>
                 </div>
 
-                {/* Selectable Upfront Advance Payment Buttons (50%, 70%, 100%) - Editable with Admin Approval Workflow */}
-                <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span className="flex items-center gap-1.5">
-                      <DollarSign className="w-4 h-4 text-emerald-600" />
-                      <span>Upfront Advance Payment Terms:</span>
-                    </span>
-                    <span className="font-mono text-[11px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
-                      {activeDepositPct === 100 ? '100% Full Payment' : `${activeDepositPct}% Deposit`}
-                    </span>
-                  </div>
-
-                  {/* Admin Approval Card for Pending Staff Request */}
-                  {activeBooking.pendingDepositPercentage && (
-                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 animate-in fade-in">
-                      <div className="min-w-0">
-                        <div className="font-black text-amber-950 flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span>Staff Request: Change Deposit to {activeBooking.pendingDepositPercentage}%</span>
-                        </div>
-                        <div className="text-[11px] text-amber-800 mt-0.5">
-                          Requested by <strong>{activeBooking.pendingDepositPercentageBy || 'Floor Staff'}</strong> • Current terms: {activeDepositPct}%
-                        </div>
-                      </div>
-
-                      {isAdmin ? (
-                        <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
-                          <button
-                            type="button"
-                            onClick={handleApprovePendingDepositPct}
-                            className="flex-1 sm:flex-none px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs rounded-lg shadow-xs flex items-center justify-center gap-1"
-                          >
-                            <Check className="w-3.5 h-3.5 stroke-[3]" />
-                            <span>Approve {activeBooking.pendingDepositPercentage}%</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleRejectPendingDepositPct}
-                            className="flex-1 sm:flex-none px-3 py-1.5 bg-slate-200 hover:bg-slate-300 active:scale-95 text-slate-700 font-bold text-xs rounded-lg transition-colors"
-                          >
-                            Decline
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2.5 py-1 rounded-lg border border-amber-300 shrink-0">
-                          ⏳ Awaiting Admin Approval
-                        </span>
-                      )}
+                {/* Selectable Upfront Advance Payment Buttons (50%, 70%, 100%) - Hidden in Delivery and Completed states as requested */}
+                {activeBooking.status !== 'delivered' && activeBooking.status !== 'done' && (
+                  <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                      <span className="flex items-center gap-1.5">
+                        <DollarSign className="w-4 h-4 text-emerald-600" />
+                        <span>Upfront Advance Payment Terms:</span>
+                      </span>
+                      <span className="font-mono text-[11px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                        {activeDepositPct === 100 ? '100% Full Payment' : `${activeDepositPct}% Deposit`}
+                      </span>
                     </div>
-                  )}
 
-                  <div className="grid grid-cols-3 gap-2">
-                    {[50, 70, 100].map((pct) => {
-                      const isPendingThis = activeBooking.pendingDepositPercentage === pct;
-                      return (
-                        <button
-                          key={pct}
-                          type="button"
-                          onClick={() => {
-                            if (pct !== activeDepositPct) {
-                              setPendingPctChange(pct);
-                            }
-                          }}
-                          className={`py-2 px-2.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center border active:scale-95 ${
-                            activeDepositPct === pct
-                              ? 'bg-slate-900 text-amber-400 border-slate-900 shadow-sm ring-2 ring-slate-900/20'
-                              : isPendingThis
-                              ? 'bg-amber-50 text-amber-900 border-amber-400 ring-2 ring-amber-300'
-                              : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
-                          }`}
-                        >
-                          <span>{pct === 100 ? '100% Full' : `${pct}% Deposit`}</span>
-                          <span className="text-[10px] font-mono font-medium opacity-85 mt-0.5">
-                            {((activeBooking.total * pct) / 100).toFixed(0)} EGP
+                    {/* Admin Approval Card for Pending Staff Request */}
+                    {activeBooking.pendingDepositPercentage && (
+                      <div className="p-3 bg-amber-50 rounded-xl border border-amber-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 animate-in fade-in">
+                        <div className="min-w-0">
+                          <div className="font-black text-amber-950 flex items-center gap-1.5">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>Staff Request: Change Deposit to {activeBooking.pendingDepositPercentage}%</span>
+                          </div>
+                          <div className="text-[11px] text-amber-800 mt-0.5">
+                            Requested by <strong>{activeBooking.pendingDepositPercentageBy || 'Floor Staff'}</strong> • Current terms: {activeDepositPct}%
+                          </div>
+                        </div>
+
+                        {isAdmin ? (
+                          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+                            <button
+                              type="button"
+                              onClick={handleApprovePendingDepositPct}
+                              className="flex-1 sm:flex-none px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs rounded-lg shadow-xs flex items-center justify-center gap-1"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              <span>Approve {activeBooking.pendingDepositPercentage}%</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleRejectPendingDepositPct}
+                              className="flex-1 sm:flex-none px-3 py-1.5 bg-slate-200 hover:bg-slate-300 active:scale-95 text-slate-700 font-bold text-xs rounded-lg transition-colors"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2.5 py-1 rounded-lg border border-amber-300 shrink-0">
+                            ⏳ Awaiting Admin Approval
                           </span>
-                          {isPendingThis && (
-                            <span className="text-[9px] font-bold text-amber-700 mt-0.5 uppercase tracking-wide">
-                              Pending Admin
+                        )}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {[50, 70, 100].map((pct) => {
+                        const isPendingThis = activeBooking.pendingDepositPercentage === pct;
+                        return (
+                          <button
+                            key={pct}
+                            type="button"
+                            onClick={() => {
+                              if (pct !== activeDepositPct) {
+                                setPendingPctChange(pct);
+                              }
+                            }}
+                            className={`py-2 px-2.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center border active:scale-95 ${
+                              activeDepositPct === pct
+                                ? 'bg-slate-900 text-amber-400 border-slate-900 shadow-sm ring-2 ring-slate-900/20'
+                                : isPendingThis
+                                ? 'bg-amber-50 text-amber-900 border-amber-400 ring-2 ring-amber-300'
+                                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                            }`}
+                          >
+                            <span>{pct === 100 ? '100% Full' : `${pct}% Deposit`}</span>
+                            <span className="text-[10px] font-mono font-medium opacity-85 mt-0.5">
+                              {((activeBooking.total * pct) / 100).toFixed(0)} EGP
                             </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                            {isPendingThis && (
+                              <span className="text-[9px] font-bold text-amber-700 mt-0.5 uppercase tracking-wide">
+                                Pending Admin
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Status Workflow Action Button */}
                 {activeBooking.status === 'pending' && (

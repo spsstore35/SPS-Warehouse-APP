@@ -142,6 +142,25 @@ export default function App() {
   const [printBooking, setPrintBooking] = useState<Booking | null>(null);
   const [printDocType, setPrintDocType] = useState<'quotation' | 'production'>('quotation');
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [selectedBookingForDetails, setSelectedBookingForDetails] = useState<string | null>(null);
+
+  const handleOpenBookingDetails = (bookingNumberOrId: string) => {
+    const cleanQuery = bookingNumberOrId.trim().toLowerCase();
+    const match = bookings.find(
+      (b) =>
+        b.id.toLowerCase() === cleanQuery ||
+        b.bookingNumber.toLowerCase() === cleanQuery ||
+        cleanQuery.includes(b.bookingNumber.toLowerCase()) ||
+        b.bookingNumber.toLowerCase().includes(cleanQuery)
+    );
+    if (match) {
+      setSelectedBookingForDetails(match.id);
+    } else {
+      setSelectedBookingForDetails(bookingNumberOrId);
+    }
+    setActiveView('bookings');
+    setSelectedActivityLog(null);
+  };
 
   // Sync to localStorage as offline cache
   useEffect(() => {
@@ -1691,6 +1710,7 @@ export default function App() {
               const p = products.find((prod) => prod.id === pId);
               if (p) setDetailProduct(p);
             }}
+            onViewBooking={handleOpenBookingDetails}
           />
         )}
 
@@ -1711,6 +1731,8 @@ export default function App() {
             onAdvanceStatus={handleAdvanceBookingStatus}
             onDeleteBooking={handleDeleteBooking}
             onUpdateBooking={handleUpdateBooking}
+            initialSelectedBookingId={selectedBookingForDetails}
+            onClearSelectedBookingId={() => setSelectedBookingForDetails(null)}
           />
         )}
 
@@ -1834,6 +1856,7 @@ export default function App() {
               setActiveView('inventory');
             }
           }}
+          onViewBooking={handleOpenBookingDetails}
         />
       )}
 
