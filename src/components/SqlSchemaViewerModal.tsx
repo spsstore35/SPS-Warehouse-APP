@@ -114,6 +114,55 @@ CREATE TABLE public.stock_audit_logs (
     product_name TEXT
 );
 
+-- 6. CLIENT BOOKINGS (BULK ORDERS & ADVANCE PAYMENT WORKFLOW)
+CREATE TABLE public.bookings (
+    id TEXT PRIMARY KEY,
+    booking_number TEXT UNIQUE NOT NULL,
+    client_name TEXT NOT NULL,
+    client_phone TEXT NOT NULL DEFAULT 'N/A',
+    notes TEXT,
+    subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    discount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    total NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    deposit_rate NUMERIC(5, 2) NOT NULL DEFAULT 0.50,
+    deposit_percentage INTEGER NOT NULL DEFAULT 50, -- 50%, 70%, 100% upfront
+    deposit_required NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    deposit_paid BOOLEAN NOT NULL DEFAULT FALSE,
+    deposit_paid_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    deposit_paid_at TIMESTAMPTZ,
+    final_paid_amount NUMERIC(12, 2) DEFAULT 0,
+    final_paid_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'preparing', 'delivered', 'done')),
+    inventory_deducted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by_id TEXT NOT NULL,
+    created_by_name TEXT NOT NULL,
+    created_by_role TEXT NOT NULL DEFAULT 'worker',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 7. BOOKING ITEMS (LINE ITEMS WITH DEFICIT & QUOTA)
+CREATE TABLE public.booking_items (
+    id TEXT PRIMARY KEY,
+    booking_id TEXT NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+    product_id TEXT NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
+    product_name TEXT NOT NULL,
+    product_sku TEXT NOT NULL,
+    product_image TEXT,
+    variant_id TEXT NOT NULL,
+    size TEXT NOT NULL,
+    color_name TEXT NOT NULL,
+    color_hex TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(10, 2) NOT NULL,
+    total_price NUMERIC(12, 2) NOT NULL,
+    available_stock INTEGER NOT NULL DEFAULT 0,
+    deficit_quantity INTEGER NOT NULL DEFAULT 0,
+    min_threshold INTEGER NOT NULL DEFAULT 5,
+    recommended_production INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ENABLE ROW LEVEL SECURITY
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -121,6 +170,8 @@ ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_variants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.adjustment_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.booking_items ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all access on categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
@@ -128,6 +179,8 @@ CREATE POLICY "Allow public all access on products" ON public.products FOR ALL U
 CREATE POLICY "Allow public all access on product_variants" ON public.product_variants FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on adjustment_requests" ON public.adjustment_requests FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on stock_audit_logs" ON public.stock_audit_logs FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on bookings" ON public.bookings FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on booking_items" ON public.booking_items FOR ALL USING (true) WITH CHECK (true);
 
 -- SEED DATA (ADMIN, WORKERS, CLOTHING ITEMS & VARIANTS)
 INSERT INTO public.profiles (email, password_hash, full_name, role, status, requested_role, employee_id)

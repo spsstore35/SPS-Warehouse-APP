@@ -165,12 +165,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         )}
 
-        {/* Prominent Unit Price Tag on Image */}
-        <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-lg bg-slate-950/85 backdrop-blur-md border border-white/20 text-white font-mono font-black text-xs shadow-md flex items-center gap-1">
-          <span className="text-amber-400 font-sans font-bold text-[10px] uppercase">Price:</span>
-          <span>{displayPrice} EGP</span>
-        </div>
-
         {/* Hover overlay to view details */}
         <button
           onClick={() => onOpenDetails(product)}
@@ -194,7 +188,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <span className="font-bold text-slate-800">{product.targetAudience || 'Unisex'}</span>
           </div>
 
-          {/* Item Title & Price Tag */}
+          {/* Item Title */}
           <div className="flex items-start justify-between gap-2">
             <h3
               onClick={() => onOpenDetails(product)}
@@ -202,9 +196,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             >
               {product.name}
             </h3>
-            <span className="shrink-0 font-mono font-black text-xs text-emerald-800 bg-emerald-50 border border-emerald-200/90 px-2 py-0.5 rounded-lg shadow-2xs">
-              {displayPrice} EGP
-            </span>
           </div>
 
           {/* Product Description */}

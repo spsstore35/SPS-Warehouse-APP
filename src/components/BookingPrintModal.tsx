@@ -114,8 +114,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               </button>
             </div>
 
-            {/* Notes Toggle (if notes available) */}
-            {booking.notes && (
+            {/* Notes Toggle (Only for Client Quotation sheet, not Workshop Deficit) */}
+            {docType === 'quotation' && booking.notes && (
               <button
                 type="button"
                 onClick={() => setIncludeNotes(!includeNotes)}
@@ -143,8 +143,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
           </div>
         </div>
 
-        {/* Preview Scrollable Viewport */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 sm:p-6 bg-slate-100/90 print:bg-white print:p-0 print:overflow-visible flex flex-col items-center">
+        {/* Preview Scrollable Viewport - Smooth Scrolling on Mobile */}
+        <div className="flex-1 overflow-y-auto overflow-x-auto p-2 sm:p-6 bg-slate-100/90 print:bg-white print:p-0 print:overflow-visible flex flex-col items-center">
           {/* Embedded Print Stylesheet for Guaranteed Strict 1-Page A4 Output */}
           <style dangerouslySetInnerHTML={{
             __html: `
@@ -205,7 +205,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
             style={{
               zoom: previewScale === '0.75' ? 0.75 : 1.0,
             }}
-            className="w-full max-w-[210mm] mx-auto bg-white border border-slate-200/90 shadow-xl rounded-xl sm:rounded-2xl p-4 sm:p-7 font-sans text-slate-900 print:border-none print:shadow-none print:rounded-none print:p-0 print:m-0 print:w-full print:max-w-none text-xs leading-relaxed transition-all"
+            className="w-full max-w-[210mm] mx-auto bg-white border border-slate-200/90 shadow-xl rounded-xl sm:rounded-2xl p-3.5 sm:p-7 font-sans text-slate-900 print:border-none print:shadow-none print:rounded-none print:p-0 print:m-0 print:w-full print:max-w-none text-xs leading-relaxed transition-all"
           >
             {/* ============================================================== */}
             {/* DOCUMENT 1: OFFICIAL CLIENT QUOTATION (STRICT 1-PAGE A4)       */}
@@ -214,8 +214,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               <div className="space-y-3.5 sm:space-y-4">
                 {/* Header: Company Name, Phone, Email & Quotation Tag */}
                 <div className="sheet-card flex flex-col sm:flex-row sm:items-start justify-between gap-3 border-b-2 border-slate-900 pb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white border border-slate-200/90 shadow-2xs p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                  <div className="flex items-center gap-2.5 sm:gap-3">
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl sm:rounded-2xl bg-white border border-slate-200/90 shadow-2xs p-1 flex items-center justify-center shrink-0 overflow-hidden">
                       <img
                         src="/sps-logo.png"
                         alt="Saint Paul Scouts"
@@ -223,10 +223,10 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                       />
                     </div>
                     <div>
-                      <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-950 uppercase leading-tight">
+                      <h1 className="text-lg sm:text-2xl font-black tracking-tight text-slate-950 uppercase leading-tight">
                         SAINT PAUL SCOUTS WAREHOUSE
                       </h1>
-                      <div className="text-xs text-slate-600 flex flex-wrap items-center gap-3 sm:gap-4 mt-1 font-medium">
+                      <div className="text-[11px] sm:text-xs text-slate-600 flex flex-wrap items-center gap-2.5 sm:gap-4 mt-1 font-medium">
                         <span className="flex items-center gap-1.5 font-bold text-slate-800">
                           <Phone className="w-3.5 h-3.5 text-slate-500" />
                           <span>01212101148</span>

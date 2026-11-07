@@ -21,6 +21,7 @@ import {
   Trash2,
   X,
   Printer,
+  MessageCircle,
 } from 'lucide-react';
 
 interface BookingsViewProps {
@@ -30,6 +31,7 @@ interface BookingsViewProps {
   onOpenPrintModal: (booking: Booking, docType: 'quotation' | 'production') => void;
   onAdvanceStatus: (bookingId: string, nextStatus: BookingStatus) => void;
   onDeleteBooking: (bookingId: string) => void;
+  onUpdateBooking?: (booking: Booking) => void;
 }
 
 export const BookingsView: React.FC<BookingsViewProps> = ({
@@ -39,11 +41,41 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onOpenPrintModal,
   onAdvanceStatus,
   onDeleteBooking,
+  onUpdateBooking,
 }) => {
   const isAdmin = currentUser.role === 'admin';
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [waLanguage, setWaLanguage] = useState<'en' | 'ar'>('en');
+  const [pendingPctChange, setPendingPctChange] = useState<number | null>(null);
+  const [showConfirmDepositModal, setShowConfirmDepositModal] = useState<boolean>(false);
+
+  // Helper to format clean WhatsApp URL with localized message
+  const formatPhoneForWhatsApp = (rawPhone: string): string => {
+    let digits = rawPhone.replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('0020')) {
+      digits = digits.slice(2);
+    } else if (digits.startsWith('20')) {
+      // standard international format
+    } else if (digits.startsWith('01')) {
+      // Egyptian mobile with leading 0
+      digits = '20' + digits.slice(1);
+    } else if (digits.length === 10 && digits.startsWith('1')) {
+      digits = '20' + digits;
+    }
+    return digits;
+  };
+
+  const getWhatsAppUrl = (phone: string, clientName: string, lang: 'en' | 'ar') => {
+    const cleanPhone = formatPhoneForWhatsApp(phone);
+    if (!cleanPhone) return '#';
+    const textEn = `Hello ${clientName}, this is SPS Warehouse Store. We will send you the quotation PDF with all your requested items and prices. This is our official store number where we can stay in touch until your order is delivered.`;
+    const textAr = `أهلاً ${clientName}، ده رقم ستور القديس بولس الكشفي (SPS Warehouse). هنبعت لحضرتك ملف عرض الأسعار (Quotation PDF) بكل الأصناف والأسعار المطلوبة، وده الرقم الرسمي للتواصل ومتابعة طلبك حتى الاستلام.`;
+    const message = lang === 'ar' ? textAr : textEn;
+    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+  };
 
   // Filter bookings
   const filteredBookings = bookings.filter((b) => {
@@ -71,6 +103,21 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const preparingCount = bookings.filter((b) => b.status === 'preparing').length;
   const deliveredCount = bookings.filter((b) => b.status === 'delivered').length;
   const doneCount = bookings.filter((b) => b.status === 'done').length;
+
+  const handleUpdateDepositPct = (pct: number) => {
+    if (!activeBooking) return;
+    const depositRequired = Math.round((activeBooking.total * pct) / 100);
+    const updated: Booking = {
+      ...activeBooking,
+      depositPercentage: pct,
+      depositRate: pct / 100,
+      depositRequired,
+      updatedAt: new Date().toISOString(),
+    };
+    if (onUpdateBooking) {
+      onUpdateBooking(updated);
+    }
+  };
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -237,10 +284,16 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                           {b.clientPhone && b.clientPhone !== 'N/A' && (
                             <span
                               onClick={(e) => e.stopPropagation()}
-                              className="text-[11px] sm:text-xs font-semibold text-blue-600 flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200/60"
+                              className="text-[11px] sm:text-xs font-semibold text-emerald-700 flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-lg border border-emerald-200 transition-colors"
                             >
-                              <Phone className="w-3 h-3 text-blue-500" />
-                              <a href={`tel:${b.clientPhone}`} className="hover:underline">
+                              <MessageCircle className="w-3 h-3 text-emerald-600" />
+                              <a
+                                href={getWhatsAppUrl(b.clientPhone, b.clientName, waLanguage)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hover:underline font-bold"
+                                title="Chat with client on WhatsApp"
+                              >
                                 {b.clientPhone}
                               </a>
                             </span>
@@ -405,13 +458,47 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                 </div>
 
                 {activeBooking.clientPhone && activeBooking.clientPhone !== 'N/A' && (
-                  <a
-                    href={`tel:${activeBooking.clientPhone}`}
-                    className="w-full sm:w-auto px-4 py-2 sm:py-2.5 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-all"
-                  >
-                    <Phone className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Call {activeBooking.clientPhone}</span>
-                  </a>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    {/* Language Switcher for WhatsApp message template */}
+                    <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setWaLanguage('en')}
+                        className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+                          waLanguage === 'en'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-900'
+                        }`}
+                        title="Use English template"
+                      >
+                        English
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWaLanguage('ar')}
+                        className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+                          waLanguage === 'ar'
+                            ? 'bg-white text-emerald-800 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-900'
+                        }`}
+                        title="Use Arabic template"
+                      >
+                        عربي
+                      </button>
+                    </div>
+
+                    {/* WhatsApp Action Button */}
+                    <a
+                      href={getWhatsAppUrl(activeBooking.clientPhone, activeBooking.clientName, waLanguage)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
+                      title={`Send ${waLanguage === 'ar' ? 'Arabic' : 'English'} quotation message on WhatsApp to ${activeBooking.clientPhone}`}
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>WhatsApp {activeBooking.clientPhone}</span>
+                    </a>
+                  </div>
                 )}
               </div>
 
@@ -466,11 +553,48 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                   </button>
                 </div>
 
+                {/* Selectable Upfront Advance Payment Buttons (50%, 70%, 100%) - Editable by Admin & Staff */}
+                <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <DollarSign className="w-4 h-4 text-emerald-600" />
+                      <span>Upfront Advance Payment Terms:</span>
+                    </span>
+                    <span className="font-mono text-[11px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                      {activeDepositPct === 100 ? '100% Full Payment' : `${activeDepositPct}% Deposit`}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {[50, 70, 100].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => {
+                          if (pct !== activeDepositPct) {
+                            setPendingPctChange(pct);
+                          }
+                        }}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-black transition-all flex flex-col items-center justify-center border active:scale-95 ${
+                          activeDepositPct === pct
+                            ? 'bg-slate-900 text-amber-400 border-slate-900 shadow-sm ring-2 ring-slate-900/20'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        <span>{pct === 100 ? '100% Full' : `${pct}% Deposit`}</span>
+                        <span className="text-[10px] font-mono font-medium opacity-85 mt-0.5">
+                          {((activeBooking.total * pct) / 100).toFixed(0)} EGP
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Status Workflow Action Button */}
                 {activeBooking.status === 'pending' && (
                   <button
                     type="button"
-                    onClick={() => onAdvanceStatus(activeBooking.id, 'preparing')}
+                    onClick={() => setShowConfirmDepositModal(true)}
                     className="w-full p-3.5 sm:p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-600/20 transition-all"
                   >
                     <Check className="w-5 h-5 stroke-[3]" />
@@ -682,6 +806,136 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
                 className="flex-1 sm:flex-none sm:ml-auto px-6 py-2.5 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-colors text-center shadow-xs"
               >
                 Close Details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: CONFIRM CHANGING ADVANCE DEPOSIT PERCENTAGE (50% <-> 70% <-> 100%) */}
+      {pendingPctChange !== null && activeBooking && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+              <DollarSign className="w-6 h-6 stroke-[2.5]" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base sm:text-lg font-black text-slate-900">
+                Change Deposit to {pendingPctChange === 100 ? '100% Full Payment' : `${pendingPctChange}% Advance Deposit`}?
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Are you sure you want to change the upfront advance deposit for booking{' '}
+                <strong className="text-slate-900 font-mono">{activeBooking.bookingNumber}</strong> from{' '}
+                <span className="font-bold text-amber-700">{activeDepositPct}%</span> to{' '}
+                <span className="font-bold text-blue-700">{pendingPctChange}%</span>?
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 text-xs space-y-2">
+              <div className="flex justify-between text-slate-600">
+                <span>Total Order Value:</span>
+                <span className="font-mono font-bold text-slate-900">{activeBooking.total.toFixed(2)} EGP</span>
+              </div>
+              <div className="flex justify-between text-blue-900 font-bold">
+                <span>New {pendingPctChange === 100 ? 'Payment Required' : 'Deposit Required'}:</span>
+                <span className="font-mono text-sm">{((activeBooking.total * pendingPctChange) / 100).toFixed(2)} EGP</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Remaining Balance (on delivery):</span>
+                <span className="font-mono font-bold text-slate-900">
+                  {Math.max(0, activeBooking.total - (activeBooking.total * pendingPctChange) / 100).toFixed(2)} EGP
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingPctChange(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleUpdateDepositPct(pendingPctChange);
+                  setPendingPctChange(null);
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs shadow-md transition-all"
+              >
+                Yes, Update to {pendingPctChange}%
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: CONFIRM CLIENT PAYMENT RECEIVED (PREVENTS ACCIDENTAL CLICKS) */}
+      {showConfirmDepositModal && activeBooking && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center mx-auto">
+              <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base sm:text-lg font-black text-slate-900">
+                Confirm Client Payment Received?
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Are you sure that the client has paid the money and you want to click this button?
+              </p>
+            </div>
+
+            <div className="bg-emerald-50/80 rounded-2xl p-3.5 border border-emerald-200 text-xs space-y-2 text-emerald-950">
+              <div className="flex justify-between">
+                <span className="text-emerald-800 font-semibold">Client Name:</span>
+                <span className="font-bold">{activeBooking.clientName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-emerald-800 font-semibold">Total Order:</span>
+                <span className="font-mono font-bold">{activeBooking.total.toFixed(2)} EGP</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-emerald-800 font-semibold">
+                  Amount Received ({activeDepositPct}%):
+                </span>
+                <span className="font-mono font-black text-sm text-emerald-900">
+                  {activeBooking.depositRequired.toFixed(2)} EGP
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-emerald-800 font-semibold">Remaining Balance:</span>
+                <span className="font-mono font-bold">
+                  {Math.max(0, activeBooking.total - activeBooking.depositRequired).toFixed(2)} EGP
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500 text-center leading-relaxed">
+              Confirming will transition this order to <strong>In Preparation</strong> and lock warehouse stock for this booking.
+            </p>
+
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowConfirmDepositModal(false)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowConfirmDepositModal(false);
+                  onAdvanceStatus(activeBooking.id, 'preparing');
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Yes, Confirm Payment Received</span>
               </button>
             </div>
           </div>

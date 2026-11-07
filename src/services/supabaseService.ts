@@ -867,6 +867,7 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       discount: booking.discount,
       total: booking.total,
       deposit_rate: booking.depositRate,
+      deposit_percentage: booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50),
       deposit_required: booking.depositRequired,
       deposit_paid: booking.depositPaid,
       deposit_paid_amount: booking.depositPaidAmount || 0,
@@ -933,6 +934,7 @@ export async function updateBookingInDb(
     if (updates.status !== undefined) payload.status = updates.status;
     if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
     if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
+    if (updates.depositPercentage !== undefined) payload.deposit_percentage = updates.depositPercentage;
     if (updates.depositRequired !== undefined) payload.deposit_required = updates.depositRequired;
     if (updates.depositPaid !== undefined) payload.deposit_paid = updates.depositPaid;
     if (updates.depositPaidAmount !== undefined) payload.deposit_paid_amount = updates.depositPaidAmount;

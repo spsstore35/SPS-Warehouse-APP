@@ -1137,6 +1137,14 @@ export default function App() {
       newLog
     );
   };
+  const handleUpdateBooking = (updatedBooking: Booking) => {
+    const nextBookings = bookings.map((b) => (b.id === updatedBooking.id ? updatedBooking : b));
+    setBookings(nextBookings);
+    saveStoredBookings(nextBookings);
+    insertBookingInDb(updatedBooking).catch((err) => {
+      console.warn('Notice saving updated booking to Supabase:', err?.message);
+    });
+  };
 
   const handleAdvanceBookingStatus = (bookingId: string, nextStatus: BookingStatus) => {
     let nextProducts = [...products];
@@ -1685,6 +1693,7 @@ export default function App() {
             }}
             onAdvanceStatus={handleAdvanceBookingStatus}
             onDeleteBooking={handleDeleteBooking}
+            onUpdateBooking={handleUpdateBooking}
           />
         )}
 
