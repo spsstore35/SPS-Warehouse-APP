@@ -691,7 +691,7 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                       title={`Send ${waLanguage === 'ar' ? 'Arabic' : 'English'} quotation message on WhatsApp & open PDF to attach`}
                     >
                       <MessageCircle className="w-4 h-4" />
-                      <span>WhatsApp & Open Quotation PDF</span>
+                      <span>WhatsApp</span>
                     </button>
                   </div>
                 )}

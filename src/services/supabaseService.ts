@@ -725,17 +725,27 @@ export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
   if (error) throw error;
   if (!data) return [];
 
-  return data.map((l: any) => ({
-    id: l.id,
-    timestamp: l.timestamp,
-    action: l.action,
-    actorName: l.actor_name,
-    actorRole: l.actor_role as Role,
-    summary: l.summary,
-    details: l.details || undefined,
-    productId: l.product_id || undefined,
-    productName: l.product_name || undefined,
-  }));
+  return data.map((l: any) => {
+    const combined = `${l.summary || ''} ${l.details || ''} ${l.reason || ''}`;
+    const numMatch = combined.match(/SPS-[A-Za-z0-9-]+/i);
+    const bookingNum = l.booking_number || (numMatch ? numMatch[0].toUpperCase() : undefined);
+    const isOrder = Boolean(bookingNum) || l.action?.includes('booking') || combined.toLowerCase().includes('booking');
+
+    return {
+      id: l.id,
+      timestamp: l.timestamp,
+      action: l.action,
+      actorName: l.actor_name,
+      actorRole: l.actor_role as Role,
+      summary: l.summary,
+      details: l.details || undefined,
+      productId: l.product_id || undefined,
+      productName: l.product_name || undefined,
+      bookingNumber: bookingNum,
+      bookingId: l.booking_id || undefined,
+      reason: l.reason || (isOrder && bookingNum ? `Making Order #${bookingNum}` : isOrder ? 'Making Order' : undefined),
+    };
+  });
 }
 
 export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {

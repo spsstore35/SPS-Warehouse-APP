@@ -1248,9 +1248,9 @@ export default function App() {
       bookingId: newBooking.id,
       bookingNumber: newBooking.bookingNumber,
       bookingItems: newBooking.items,
-      reason: `Client Booking - Order #${newBooking.bookingNumber}`,
-      summary: `Created Booking #${newBooking.bookingNumber} for "${newBooking.clientName}"`,
-      details: `Booking created with ${newBooking.items.length} garments (${newBooking.items.reduce((acc, it) => acc + it.quantity, 0)} units total, ${newBooking.total.toFixed(2)} EGP). Status: ${newBooking.status.toUpperCase()}. Deposit required: ${newBooking.depositRequired.toFixed(2)} EGP. ${autoAdvanceToPreparing ? 'Stock reserved and deducted.' : `Inventory stock untouched while pending ${newBooking.depositPercentage || 50}% deposit.`}`,
+      reason: `Making Order #${newBooking.bookingNumber}`,
+      summary: `Making Order #${newBooking.bookingNumber} for "${newBooking.clientName}"`,
+      details: `Making Order #${newBooking.bookingNumber}: Booking created with ${newBooking.items.length} garments (${newBooking.items.reduce((acc, it) => acc + it.quantity, 0)} units total, ${newBooking.total.toFixed(2)} EGP). Status: ${newBooking.status.toUpperCase()}. Deposit required: ${newBooking.depositRequired.toFixed(2)} EGP. ${autoAdvanceToPreparing ? 'Stock reserved and deducted.' : `Inventory stock untouched while pending ${newBooking.depositPercentage || 50}% deposit.`}`,
     };
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
@@ -1810,6 +1810,7 @@ export default function App() {
           <AuditLogView
             logs={auditLogs}
             products={products}
+            bookings={bookings}
             onViewProduct={(pId) => {
               const p = products.find((prod) => prod.id === pId);
               if (p) setDetailProduct(p);
@@ -1957,6 +1958,7 @@ export default function App() {
               p.id === selectedActivityLog.productId ||
               p.name === selectedActivityLog.productName
           )}
+          bookings={bookings}
           onClose={() => setSelectedActivityLog(null)}
           onViewProduct={(pId) => {
             const p = products.find((prod) => prod.id === pId);

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Booking } from '../types/inventory';
 import {
   Printer,
+  Download,
   X,
   FileText,
   Factory,
@@ -131,11 +132,22 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               </button>
             )}
 
+            {/* Download PDF Action */}
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+              title="Save or Download as PDF"
+            >
+              <Download className="w-4 h-4 stroke-[2.5]" />
+              <span>Download PDF</span>
+            </button>
+
             {/* Primary Print Action */}
             <button
               type="button"
               onClick={handlePrint}
-              className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+              className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               <Printer className="w-4 h-4 stroke-[2.5]" />
               <span>Print</span>

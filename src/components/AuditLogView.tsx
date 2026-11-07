@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { AuditLogEntry, Product } from '../types/inventory';
+import { AuditLogEntry, Product, Booking } from '../types/inventory';
 import {
   History,
   ShieldCheck,
@@ -17,6 +17,7 @@ import { ActivityDetailModal } from './ActivityDetailModal';
 interface AuditLogViewProps {
   logs: AuditLogEntry[];
   products?: Product[];
+  bookings?: Booking[];
   onViewProduct?: (productId: string) => void;
   onViewBooking?: (bookingNumberOrId: string) => void;
   onClearLogs?: () => void;
@@ -85,6 +86,7 @@ const shiftDate = (dateKey: string, deltaDays: number): string => {
 export const AuditLogView: React.FC<AuditLogViewProps> = ({
   logs,
   products = [],
+  bookings = [],
   onViewProduct,
   onViewBooking,
 }) => {
@@ -486,6 +488,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
         <ActivityDetailModal
           log={selectedLog}
           product={selectedProduct}
+          bookings={bookings}
           onClose={() => setSelectedLog(null)}
           onViewProduct={onViewProduct}
           onViewBooking={onViewBooking}
