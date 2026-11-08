@@ -12,6 +12,7 @@ interface HeaderProps {
   pendingStockCount?: number;
   pendingAccountsCount?: number;
   pendingBookingsCount?: number;
+  pendingAuditNotificationsCount?: number;
   approvalsTab?: 'stock' | 'staff';
   onSwitchRole?: () => void;
 }
@@ -25,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   pendingStockCount = 0,
   pendingAccountsCount = 0,
   pendingBookingsCount = 0,
+  pendingAuditNotificationsCount = 0,
   approvalsTab = 'stock',
 }) => {
   const isAdmin = isUserAdmin(currentUser);
@@ -190,11 +192,16 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => onNavigate('audit-log')}
-              className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+              className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                 activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
               }`}
             >
-              Stock Audit Log
+              <span>Stock Audit Log</span>
+              {pendingAuditNotificationsCount > 0 && (
+                <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                  {pendingAuditNotificationsCount}
+                </span>
+              )}
             </button>
           </nav>
 
@@ -335,6 +342,11 @@ export const Header: React.FC<HeaderProps> = ({
                         <History className="w-3.5 h-3.5 text-slate-500" />
                         <span>Stock Audit Log</span>
                       </span>
+                      {pendingAuditNotificationsCount > 0 && (
+                        <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                          {pendingAuditNotificationsCount}
+                        </span>
+                      )}
                     </button>
                   </div>
 

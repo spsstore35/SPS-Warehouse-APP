@@ -46,23 +46,55 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
       return;
     }
     setIsDownloading(true);
+
+    // Create a pristine cloned copy without zoom or scale artifacts
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.style.zoom = '1';
+    clone.style.transform = 'none';
+    clone.style.width = '794px'; // Exactly standard A4 width at 96 DPI
+    clone.style.maxWidth = '794px';
+    clone.style.margin = '0 auto';
+    clone.style.padding = '24px';
+    clone.style.boxSizing = 'border-box';
+    clone.style.backgroundColor = '#ffffff';
+
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.style.width = '794px';
+    container.style.zIndex = '-9999';
+    container.style.backgroundColor = '#ffffff';
+    container.appendChild(clone);
+    document.body.appendChild(container);
+
     try {
       const html2pdfModule = await import('html2pdf.js');
-      const html2pdf = html2pdfModule.default || html2pdfModule;
+      const html2pdf = (html2pdfModule as any).default || html2pdfModule;
 
       const opt = {
-        margin: [4, 6, 4, 6] as [number, number, number, number],
+        margin: [6, 8, 6, 8] as [number, number, number, number],
         filename: `${docType === 'quotation' ? 'Quotation' : 'Workshop_Sheet'}_${booking.bookingNumber}.pdf`,
         image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          scrollY: 0,
+          scrollX: 0,
+          backgroundColor: '#ffffff',
+        },
         jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
       };
 
-      await html2pdf().set(opt).from(element).save();
+      await html2pdf().set(opt).from(clone).save();
     } catch (err) {
       console.warn('Direct PDF export error, falling back to print dialog:', err);
       window.print();
     } finally {
+      if (document.body.contains(container)) {
+        document.body.removeChild(container);
+      }
       setIsDownloading(false);
     }
   };
@@ -197,7 +229,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               @media print {
                 @page {
                   size: A4 portrait;
-                  margin: 8mm 10mm;
+                  margin: 7mm 8mm;
                 }
                 *, *::before, *::after {
                   -webkit-print-color-adjust: exact !important;
@@ -211,6 +243,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   width: 100% !important;
                   height: auto !important;
                   overflow: visible !important;
+                  font-size: 13.5px !important;
                 }
                 .no-print,
                 .print\\:hidden,
@@ -232,10 +265,20 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   width: 100% !important;
                   max-width: 100% !important;
                   background: #ffffff !important;
+                  font-size: 13.5px !important;
+                  line-height: 1.5 !important;
                   page-break-after: avoid !important;
                   page-break-inside: avoid !important;
                   break-after: avoid !important;
                   break-inside: avoid !important;
+                }
+                #printable-a4-area table {
+                  font-size: 13.5px !important;
+                }
+                #printable-a4-area th, #printable-a4-area td {
+                  font-size: 13.5px !important;
+                  padding-top: 6px !important;
+                  padding-bottom: 6px !important;
                 }
                 .sheet-card {
                   page-break-inside: avoid !important;
@@ -470,9 +513,9 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   </div>
                 </div>
 
-                {/* Terms & Official Sign-off Footer: Fits cleanly inside 1-page A4 */}
-                <div className="sheet-card pt-2 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-[10px] text-slate-500">
-                  <div className="text-center sm:text-left">
+                {/* Terms Footer: Full width clean layout without signature block */}
+                <div className="sheet-card pt-2.5 border-t border-slate-200 text-[11px] text-slate-600">
+                  <div className="text-left w-full space-y-1">
                     {booking.status === 'done' ? (
                       <p className="font-semibold text-emerald-800">
                         • Order completed & delivered. Full payment of {booking.total.toFixed(2)} EGP received and settled in full.
@@ -491,12 +534,6 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                         </p>
                       </>
                     )}
-                  </div>
-                  <div className="text-center sm:text-right shrink-0">
-                    <div className="h-9 border-b border-dashed border-slate-300 w-44 flex items-end justify-center pb-0.5">
-                      <span className="text-[10px] font-bold text-slate-700">Saint Paul Scouts Warehouse</span>
-                    </div>
-                    <div className="text-[9px] text-slate-400 mt-0.5">Authorized Officer Signature</div>
                   </div>
                 </div>
               </div>

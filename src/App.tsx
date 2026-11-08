@@ -1532,6 +1532,7 @@ export default function App() {
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
         pendingBookingsCount={bookings.filter((b) => b.status === 'pending' || Boolean(b.pendingDepositPercentage)).length}
+        pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         approvalsTab={approvalsTab}
       />
 
@@ -1812,6 +1813,7 @@ export default function App() {
             logs={auditLogs}
             products={products}
             bookings={bookings}
+            pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
             onViewProduct={(pId) => {
               const p = products.find((prod) => prod.id === pId);
               if (p) setDetailProduct(p);
@@ -1862,6 +1864,7 @@ export default function App() {
         pendingCount={pendingCount}
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
+        pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         approvalsTab={approvalsTab}
         onOpenAddProduct={() => {
           setProductToEdit(undefined);

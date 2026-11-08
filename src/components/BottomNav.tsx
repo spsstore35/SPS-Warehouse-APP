@@ -11,6 +11,7 @@ interface BottomNavProps {
   pendingCount: number;
   pendingStockCount?: number;
   pendingAccountsCount?: number;
+  pendingAuditNotificationsCount?: number;
   approvalsTab?: 'stock' | 'staff';
   onSwitchRole?: () => void;
   onOpenAddProduct?: () => void;
@@ -25,6 +26,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   pendingCount,
   pendingStockCount = 0,
   pendingAccountsCount = 0,
+  pendingAuditNotificationsCount = 0,
   approvalsTab = 'stock',
   onOpenAddProduct,
   onOpenNewBooking,
@@ -120,11 +122,18 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         ) : (
           <button
             onClick={() => onNavigate('audit-log')}
-            className={`flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
+            className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
               activeView === 'audit-log' ? 'text-sky-700 font-bold' : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            <History className="w-5 h-5 mb-1" />
+            <div className="relative">
+              <History className="w-5 h-5 mb-1" />
+              {pendingAuditNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-rose-600 text-white font-black text-[9px] rounded-full animate-pulse">
+                  {pendingAuditNotificationsCount}
+                </span>
+              )}
+            </div>
             <span className="text-[10px] tracking-tight">Audit Log</span>
           </button>
         )}
@@ -132,13 +141,20 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {/* Tab 5: Account Profile & Menu */}
         <button
           onClick={() => setShowAccountSheet(true)}
-          className="flex flex-col items-center justify-center min-h-[44px] py-1 text-slate-500 hover:text-slate-800 transition-colors"
+          className="relative flex flex-col items-center justify-center min-h-[44px] py-1 text-slate-500 hover:text-slate-800 transition-colors"
         >
-          <div
-            className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-black text-white mb-0.5 shadow-xs"
-            style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : '#0284c7') }}
-          >
-            {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
+          <div className="relative">
+            <div
+              className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-black text-white mb-0.5 shadow-xs"
+              style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : '#0284c7') }}
+            >
+              {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
+            </div>
+            {isAdmin && pendingAuditNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1.5 w-3.5 h-3.5 flex items-center justify-center bg-rose-600 text-white font-black text-[8px] rounded-full animate-pulse">
+                {pendingAuditNotificationsCount}
+              </span>
+            )}
           </div>
           <span className="text-[10px] tracking-tight font-medium">Menu</span>
         </button>
@@ -268,6 +284,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   <History className="w-4 h-4 text-slate-500" />
                   <span>Stock Audit Log</span>
                 </span>
+                {pendingAuditNotificationsCount > 0 && (
+                  <span className="px-2 py-0.5 bg-rose-600 text-white font-black text-[11px] rounded-full animate-pulse">
+                    {pendingAuditNotificationsCount} pending approval
+                  </span>
+                )}
               </button>
             </div>
 

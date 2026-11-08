@@ -21,6 +21,7 @@ interface AuditLogViewProps {
   logs: AuditLogEntry[];
   products?: Product[];
   bookings?: Booking[];
+  pendingAuditNotificationsCount?: number;
   onViewProduct?: (productId: string) => void;
   onViewBooking?: (bookingNumberOrId: string) => void;
   onClearLogs?: () => void;
@@ -90,6 +91,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
   logs,
   products = [],
   bookings = [],
+  pendingAuditNotificationsCount = 0,
   onViewProduct,
   onViewBooking,
 }) => {
@@ -187,6 +189,40 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
           </p>
         </div>
       </div>
+
+      {/* Pending Approval Alert Banner: Staff Requested Deposit Percentage Change */}
+      {pendingAuditNotificationsCount > 0 && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-rose-500/10 to-amber-500/15 border-2 border-amber-400 text-slate-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-start sm:items-center gap-3">
+            <span className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center text-sm font-black shrink-0 animate-pulse shadow-xs">
+              {pendingAuditNotificationsCount}
+            </span>
+            <div>
+              <div className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
+                <span>Action Requires Admin Approval</span>
+                <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-black uppercase tracking-wider">
+                  {pendingAuditNotificationsCount} Pending
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
+                Staff member requested changing the upfront deposit percentage on a client order. Review and approve or decline in Bookings.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const pendingBooking = bookings.find((b) => Boolean(b.pendingDepositPercentage));
+              if (pendingBooking && onViewBooking) {
+                onViewBooking(pendingBooking.bookingNumber || pendingBooking.id);
+              }
+            }}
+            className="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-colors shrink-0 text-center cursor-pointer"
+          >
+            Review in Bookings &rarr;
+          </button>
+        </div>
+      )}
 
       {/* Day-by-Day Date Navigation Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
