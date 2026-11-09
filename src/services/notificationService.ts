@@ -169,8 +169,8 @@ export const sendSystemNotification = async (
 
 // Send an immediate test notification to verify mobile notifications
 export const sendTestNotification = async (): Promise<boolean> => {
-  return sendSystemNotification('🔔 SPS Warehouse: Mobile Notifications Active!', {
-    body: 'Great! Your device is now receiving live inventory, order approvals, and stock alerts.',
+  return sendSystemNotification('Staff Request 70% Deposit', {
+    body: 'Order #SPS-09112601 (Tony Mohab): Staff requested changing upfront deposit from 50% to 70% (2275 EGP).',
     tag: 'test-notification-' + Date.now(),
     data: { view: 'audit-log' },
   });

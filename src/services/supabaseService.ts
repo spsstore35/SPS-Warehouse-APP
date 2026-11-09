@@ -656,6 +656,22 @@ export async function registerUserInDb(data: {
   });
 
   if (error) throw error;
+
+  try {
+    await insertAuditLogInDb({
+      id: `audit-reg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: new Date().toISOString(),
+      action: 'account_updated',
+      actorName: newUser.name,
+      actorRole: newUser.requestedRole || 'worker',
+      summary: `New account registration: "${newUser.name}" (${newUser.email}).`,
+      details: `New staff member "${newUser.name}" (${newUser.email}) registered and requires administrator approval.`,
+      reason: 'New Account Registration',
+    });
+  } catch {
+    // Non-fatal if audit log logging fails
+  }
+
   return newUser;
 }
 

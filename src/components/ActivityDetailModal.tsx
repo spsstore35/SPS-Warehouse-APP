@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { AuditLogEntry, Product, Booking } from '../types/inventory';
+import { formatAuditLogReason } from '../utils/auditReason';
 import {
   X,
   ShieldCheck,
@@ -145,96 +146,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
   };
 
   const getSensibleReason = (): string => {
-    const combined = `${log.summary || ''} ${log.details || ''} ${log.reason || ''}`.toLowerCase();
-
-    // 1. Staff Deposit Change Request
-    if (
-      combined.includes('staff requested changing') ||
-      combined.includes('staff request: change deposit') ||
-      combined.includes('awaiting admin approval')
-    ) {
-      const match = combined.match(/to (\d+)%/i) || combined.match(/(\d+)%/);
-      const pct = match ? match[1] : undefined;
-      return pct
-        ? `Staff Request: ${pct}% Deposit (Pending Approval)`
-        : 'Staff Deposit Request (Pending Approval)';
-    }
-
-    // 2. Deposit Terms Updated
-    if (
-      combined.includes('updated required deposit') ||
-      combined.includes('deposit terms updated') ||
-      combined.includes('confirmed deposit change')
-    ) {
-      const match = combined.match(/to (\d+)%/i) || combined.match(/(\d+)%/);
-      const pct = match ? match[1] : undefined;
-      return pct ? `Deposit Terms Updated (${pct}%)` : 'Deposit Terms Updated';
-    }
-
-    // 3. User account / role / permissions
-    if (isAccountActivity) {
-      if (combined.includes('worker to admin')) return 'Role Changed: Worker → Admin';
-      if (combined.includes('admin to worker')) return 'Role Changed: Admin → Worker';
-      if (combined.includes('role changed') || combined.includes('role'))
-        return 'User Role & Permissions Update';
-      if (log.action === 'account_deleted' || combined.includes('deleted'))
-        return 'User Account Removed';
-      return 'Staff Access Control';
-    }
-
-    // 4. Order Creation
-    if (
-      log.action === 'booking_created' ||
-      combined.includes('booking created') ||
-      combined.includes('created booking')
-    ) {
-      return effectiveBookingNumber ? `Making Order #${effectiveBookingNumber}` : 'Making Order';
-    }
-
-    // 5. Booking status change (handover, delivered, preparing)
-    if (
-      log.action === 'booking_status_changed' ||
-      combined.includes('delivered') ||
-      combined.includes('preparing') ||
-      combined.includes('handover')
-    ) {
-      return effectiveBookingNumber
-        ? `Shipment Status #${effectiveBookingNumber}`
-        : 'Shipment Status Update';
-    }
-
-    // 6. Explicit reason on log if present and not generic
-    if (log.reason && log.reason !== 'Direct Physical Adjustment') {
-      return log.reason;
-    }
-
-    // 7. Generic order activity
-    if (isOrderOrBooking) {
-      return effectiveBookingNumber ? `Order #${effectiveBookingNumber} Record` : 'Order Activity';
-    }
-
-    // 8. Product catalog actions
-    switch (log.action) {
-      case 'product_created':
-        return 'New Item Added to Catalog';
-      case 'product_updated':
-        return 'Product Details Updated';
-      case 'product_deleted':
-        return 'Product Removed from Catalog';
-      case 'variant_deleted':
-        return 'Size Variant Removed';
-      case 'request_approved':
-        return 'Staff Stock Request Approved';
-      case 'stock_adjusted':
-        return log.variantSize
-          ? `Physical Count: Size ${log.variantSize}`
-          : 'Physical Inventory Adjustment';
-      default:
-        if (log.summary && !/inventory activity/i.test(log.summary)) {
-          return log.summary;
-        }
-        return 'Physical Inventory Adjustment';
-    }
+    return formatAuditLogReason(log);
   };
 
   return (

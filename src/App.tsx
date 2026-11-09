@@ -86,6 +86,7 @@ import {
   sendTestNotification,
   NotificationPermissionState,
 } from './services/notificationService';
+import { formatAuditLogReason } from './utils/auditReason';
 import {
   Search,
   Plus,
@@ -149,6 +150,7 @@ export default function App() {
   const prevStaffBookingPendingRef = useRef<number | null>(null);
   const prevPendingRequestsRef = useRef<number | null>(null);
   const prevPendingAccountsRef = useRef<number | null>(null);
+  const seenAuditLogIdsRef = useRef<Set<string> | null>(null);
 
   const showToast = (msg: string, log?: AuditLogEntry) => {
     setToastNotification({ message: msg, log });
@@ -1473,15 +1475,49 @@ export default function App() {
   const pendingUsersCount = users.filter((u) => u.status === 'pending').length;
   const pendingProducts = products.filter((p) => p.status === 'pending');
   const pendingProductsCount = pendingProducts.length;
-  const pendingStaffBookingRequestsCount = bookings.filter((b) => Boolean(b.pendingDepositPercentage)).length;
   const pendingCount = isUserAdmin(currentUser) 
-    ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount + pendingStaffBookingRequestsCount) 
+    ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount) 
     : pendingRequestsCount;
+  const pendingStaffBookingRequestsCount = bookings.filter((b) => Boolean(b.pendingDepositPercentage)).length;
 
-  // Real-Time System Notification Triggers for Mobile Status Bar & Lock Screen
+  // Real-Time System Notification Triggers for EVERY Stock Audit Log Entry
+  useEffect(() => {
+    if (!auditLogs || auditLogs.length === 0) return;
+
+    // First load: initialize known log IDs so we don't spam notifications for old history on startup
+    if (seenAuditLogIdsRef.current === null) {
+      seenAuditLogIdsRef.current = new Set(auditLogs.map((l) => l.id));
+      return;
+    }
+
+    // Subsequent updates: detect any fresh logs not previously in the set
+    const freshLogs = auditLogs.filter((l) => !seenAuditLogIdsRef.current!.has(l.id));
+
+    if (freshLogs.length > 0) {
+      freshLogs.forEach((newLog) => {
+        const reasonTitle = formatAuditLogReason(newLog);
+        const description = newLog.summary || newLog.details || 'New warehouse inventory activity recorded.';
+
+        sendSystemNotification(reasonTitle, {
+          body: description,
+          tag: `sps-audit-log-${newLog.id}`,
+          data: {
+            view: 'audit-log',
+            logId: newLog.id,
+            bookingId: newLog.bookingNumber || newLog.bookingId,
+          },
+        });
+      });
+
+      // Update the known set
+      freshLogs.forEach((l) => seenAuditLogIdsRef.current!.add(l.id));
+    }
+  }, [auditLogs]);
+
+  // Real-Time System Notification Triggers for Pending Approval Actions
   useEffect(() => {
     if (prevStaffBookingPendingRef.current !== null && pendingStaffBookingRequestsCount > prevStaffBookingPendingRef.current) {
-      sendSystemNotification('Action Requires Admin Approval', {
+      sendSystemNotification('Staff Request: Deposit Terms Approval', {
         body: 'Staff member requested changing the upfront deposit percentage on a client order.',
         tag: 'sps-deposit-req-' + Date.now(),
         data: { view: 'audit-log' },
@@ -1503,14 +1539,18 @@ export default function App() {
 
   useEffect(() => {
     if (prevPendingAccountsRef.current !== null && pendingUsersCount > prevPendingAccountsRef.current) {
-      sendSystemNotification('New Staff Account Pending', {
-        body: 'A new user registered and awaits administrator approval.',
+      const pendingUsers = users.filter((u) => u.status === 'pending');
+      const latestUser = pendingUsers[0];
+      const accountLabel = latestUser ? `"${latestUser.name}" (${latestUser.email})` : 'A new staff member';
+
+      sendSystemNotification('New Account Registration', {
+        body: `${accountLabel} registered and requires administrator approval. Tap to review.`,
         tag: 'sps-staff-req-' + Date.now(),
         data: { view: 'account-approvals' },
       });
     }
     prevPendingAccountsRef.current = pendingUsersCount;
-  }, [pendingUsersCount]);
+  }, [pendingUsersCount, users]);
 
   // Navigation handler supporting direct routing to Account Approvals & Stock Approvals
   const handleNavigate = (view: string) => {
@@ -1614,13 +1654,6 @@ export default function App() {
 
       {/* Main View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-7 flex-1 w-full">
-        {/* Mobile & Desktop System Notification Banner */}
-        <MobileNotificationBanner
-          permission={notificationPermission}
-          onPermissionChange={setNotificationPermission}
-          onShowToast={showToast}
-        />
-
         {/* VIEW 1: CATALOG & INVENTORY */}
         {activeView === 'inventory' && (
           <div className="space-y-6">
@@ -1647,28 +1680,32 @@ export default function App() {
                 <div className="text-[11px] text-slate-500 mt-0.5">Sum of all size/colors</div>
               </div>
 
-              {/* Pending Approvals KPI */}
+              {/* Account Approvals KPI Card */}
               <div
-                onClick={() => setActiveView(isAdmin ? 'approvals' : 'worker-requests')}
+                onClick={() => handleNavigate(isAdmin ? 'account-approvals' : 'worker-requests')}
                 className={`p-4 rounded-2xl border shadow-sm cursor-pointer transition-all ${
-                  pendingCount > 0
+                  (isAdmin ? pendingUsersCount : pendingRequestsCount) > 0
                     ? 'bg-amber-50 border-amber-300 hover:border-amber-400'
                     : 'bg-white border-slate-200/90 hover:border-slate-300'
                 }`}
               >
                 <div className="text-[10px] font-bold text-amber-800 uppercase tracking-wider flex items-center justify-between">
-                  <span>{isAdmin ? 'Pending Approvals' : 'Pending Requests'}</span>
-                  {pendingCount > 0 && (
+                  <span>{isAdmin ? 'Account Approvals' : 'My Requests'}</span>
+                  {(isAdmin ? pendingUsersCount : pendingRequestsCount) > 0 && (
                     <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                   )}
                 </div>
                 <div className="text-2xl font-black font-mono tabular-nums text-amber-900 mt-1">
-                  {pendingCount}
+                  {isAdmin ? pendingUsersCount : pendingRequestsCount}
                 </div>
                 <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
                   {isAdmin
-                    ? `${pendingRequestsCount} stock • ${pendingUsersCount} staff`
-                    : 'Awaiting admin review'}
+                    ? pendingUsersCount > 0
+                      ? `${pendingUsersCount} staff account${pendingUsersCount > 1 ? 's' : ''} awaiting approval`
+                      : 'All accounts active • 0 pending'
+                    : pendingRequestsCount > 0
+                    ? `${pendingRequestsCount} awaiting review`
+                    : 'All requests processed'}
                 </div>
               </div>
 
@@ -1892,17 +1929,24 @@ export default function App() {
 
         {/* VIEW 4: AUDIT LOG */}
         {activeView === 'audit-log' && (
-          <AuditLogView
-            logs={auditLogs}
-            products={products}
-            bookings={bookings}
-            pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
-            onViewProduct={(pId) => {
-              const p = products.find((prod) => prod.id === pId);
-              if (p) setDetailProduct(p);
-            }}
-            onViewBooking={handleOpenBookingDetails}
-          />
+          <div className="space-y-6">
+            <MobileNotificationBanner
+              permission={notificationPermission}
+              onPermissionChange={setNotificationPermission}
+              onShowToast={showToast}
+            />
+            <AuditLogView
+              logs={auditLogs}
+              products={products}
+              bookings={bookings}
+              pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
+              onViewProduct={(pId) => {
+                const p = products.find((prod) => prod.id === pId);
+                if (p) setDetailProduct(p);
+              }}
+              onViewBooking={handleOpenBookingDetails}
+            />
+          </div>
         )}
 
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
