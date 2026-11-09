@@ -14,8 +14,14 @@ import {
   Sparkles,
   Eye,
   CalendarDays,
+  Bell,
 } from 'lucide-react';
 import { ActivityDetailModal } from './ActivityDetailModal';
+import {
+  getNotificationPermissionState,
+  requestNotificationPermission,
+  sendTestNotification,
+} from '../services/notificationService';
 
 interface AuditLogViewProps {
   logs: AuditLogEntry[];
@@ -209,18 +215,39 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              const pendingBooking = bookings.find((b) => Boolean(b.pendingDepositPercentage));
-              if (pendingBooking && onViewBooking) {
-                onViewBooking(pendingBooking.bookingNumber || pendingBooking.id);
-              }
-            }}
-            className="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow-xs transition-colors shrink-0 text-center cursor-pointer"
-          >
-            Review in Bookings &rarr;
-          </button>
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">
+            <button
+              type="button"
+              onClick={async () => {
+                const perm = getNotificationPermissionState();
+                if (perm !== 'granted') {
+                  const res = await requestNotificationPermission();
+                  if (res === 'granted') {
+                    await sendTestNotification();
+                  }
+                } else {
+                  await sendTestNotification();
+                }
+              }}
+              className="flex-1 sm:flex-none px-3 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              title="Test notification alert on your phone"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-600" />
+              <span>Test Phone Alert</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const pendingBooking = bookings.find((b) => Boolean(b.pendingDepositPercentage));
+                if (pendingBooking && onViewBooking) {
+                  onViewBooking(pendingBooking.bookingNumber || pendingBooking.id);
+                }
+              }}
+              className="flex-1 sm:flex-none px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors text-center cursor-pointer"
+            >
+              Review in Bookings &rarr;
+            </button>
+          </div>
         </div>
       )}
 

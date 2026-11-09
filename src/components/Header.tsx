@@ -1,7 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BellRing } from 'lucide-react';
 import { isUserAdmin } from '../utils/security';
+import {
+  getNotificationPermissionState,
+  requestNotificationPermission,
+  sendTestNotification,
+} from '../services/notificationService';
 
 interface HeaderProps {
   currentUser: User;
@@ -347,6 +352,31 @@ export const Header: React.FC<HeaderProps> = ({
                           {pendingAuditNotificationsCount}
                         </span>
                       )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const perm = getNotificationPermissionState();
+                        if (perm !== 'granted') {
+                          const res = await requestNotificationPermission();
+                          if (res === 'granted') {
+                            await sendTestNotification();
+                          }
+                        } else {
+                          await sendTestNotification();
+                        }
+                      }}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-900 bg-amber-50/60 hover:bg-amber-100/60 transition-colors"
+                      title="Send a live test alert to your phone"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Bell className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Phone Alerts & Test</span>
+                      </span>
+                      <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
+                        Test Alert
+                      </span>
                     </button>
                   </div>
 

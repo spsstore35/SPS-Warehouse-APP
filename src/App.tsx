@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Product,
   AdjustmentRequest,
@@ -77,6 +77,15 @@ import { ActivityDetailModal } from './components/ActivityDetailModal';
 import { BookingsView } from './components/BookingsView';
 import { BookingModal } from './components/BookingModal';
 import { BookingPrintModal } from './components/BookingPrintModal';
+import { MobileNotificationBanner } from './components/MobileNotificationBanner';
+import {
+  registerServiceWorker,
+  getNotificationPermissionState,
+  requestNotificationPermission,
+  sendSystemNotification,
+  sendTestNotification,
+  NotificationPermissionState,
+} from './services/notificationService';
 import {
   Search,
   Plus,
@@ -130,6 +139,16 @@ export default function App() {
     log?: AuditLogEntry;
   } | null>(null);
   const [selectedActivityLog, setSelectedActivityLog] = useState<AuditLogEntry | null>(null);
+
+  // Mobile & System Notifications State
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionState>(() =>
+    getNotificationPermissionState()
+  );
+
+  // Notification count trackers to detect new incoming requests across devices
+  const prevStaffBookingPendingRef = useRef<number | null>(null);
+  const prevPendingRequestsRef = useRef<number | null>(null);
+  const prevPendingAccountsRef = useRef<number | null>(null);
 
   const showToast = (msg: string, log?: AuditLogEntry) => {
     setToastNotification({ message: msg, log });
@@ -539,6 +558,29 @@ export default function App() {
       supabase.removeChannel(channel);
       clearInterval(syncInterval);
     };
+  }, []);
+
+  // Register Service Worker for Mobile Notifications & Handle Notification Clicks
+  useEffect(() => {
+    registerServiceWorker();
+
+    if ('serviceWorker' in navigator) {
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'SPS_NAVIGATE') {
+          if (event.data.view) {
+            setActiveView(event.data.view);
+          }
+          if (event.data.bookingId) {
+            handleOpenBookingDetails(event.data.bookingId);
+          }
+        }
+      };
+
+      navigator.serviceWorker.addEventListener('message', handleMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleMessage);
+      };
+    }
   }, []);
 
   // Auth Handlers
@@ -1436,6 +1478,40 @@ export default function App() {
     ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount + pendingStaffBookingRequestsCount) 
     : pendingRequestsCount;
 
+  // Real-Time System Notification Triggers for Mobile Status Bar & Lock Screen
+  useEffect(() => {
+    if (prevStaffBookingPendingRef.current !== null && pendingStaffBookingRequestsCount > prevStaffBookingPendingRef.current) {
+      sendSystemNotification('Action Requires Admin Approval', {
+        body: 'Staff member requested changing the upfront deposit percentage on a client order.',
+        tag: 'sps-deposit-req-' + Date.now(),
+        data: { view: 'audit-log' },
+      });
+    }
+    prevStaffBookingPendingRef.current = pendingStaffBookingRequestsCount;
+  }, [pendingStaffBookingRequestsCount]);
+
+  useEffect(() => {
+    if (prevPendingRequestsRef.current !== null && pendingRequestsCount > prevPendingRequestsRef.current) {
+      sendSystemNotification('Stock Adjustment Request', {
+        body: 'A warehouse staff member submitted a stock adjustment request awaiting review.',
+        tag: 'sps-stock-req-' + Date.now(),
+        data: { view: 'stock-approvals' },
+      });
+    }
+    prevPendingRequestsRef.current = pendingRequestsCount;
+  }, [pendingRequestsCount]);
+
+  useEffect(() => {
+    if (prevPendingAccountsRef.current !== null && pendingUsersCount > prevPendingAccountsRef.current) {
+      sendSystemNotification('New Staff Account Pending', {
+        body: 'A new user registered and awaits administrator approval.',
+        tag: 'sps-staff-req-' + Date.now(),
+        data: { view: 'account-approvals' },
+      });
+    }
+    prevPendingAccountsRef.current = pendingUsersCount;
+  }, [pendingUsersCount]);
+
   // Navigation handler supporting direct routing to Account Approvals & Stock Approvals
   const handleNavigate = (view: string) => {
     if (view === 'add-product') {
@@ -1538,6 +1614,13 @@ export default function App() {
 
       {/* Main View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-7 flex-1 w-full">
+        {/* Mobile & Desktop System Notification Banner */}
+        <MobileNotificationBanner
+          permission={notificationPermission}
+          onPermissionChange={setNotificationPermission}
+          onShowToast={showToast}
+        />
+
         {/* VIEW 1: CATALOG & INVENTORY */}
         {activeView === 'inventory' && (
           <div className="space-y-6">

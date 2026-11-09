@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Plus, Sparkles } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Plus, Sparkles, Bell, Send } from 'lucide-react';
 import { isUserAdmin } from '../utils/security';
+import {
+  getNotificationPermissionState,
+  requestNotificationPermission,
+  sendTestNotification,
+} from '../services/notificationService';
 
 interface BottomNavProps {
   currentUser: User;
@@ -289,6 +294,31 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     {pendingAuditNotificationsCount} pending approval
                   </span>
                 )}
+              </button>
+
+              {/* Mobile System Notifications Trigger */}
+              <button
+                type="button"
+                onClick={async () => {
+                  const perm = getNotificationPermissionState();
+                  if (perm !== 'granted') {
+                    const res = await requestNotificationPermission();
+                    if (res === 'granted') {
+                      await sendTestNotification();
+                    }
+                  } else {
+                    await sendTestNotification();
+                  }
+                }}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-500/10 border border-amber-300 text-amber-950 font-bold text-xs hover:bg-amber-500/20 transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Bell className="w-4 h-4 text-amber-600" />
+                  <span>Phone Notifications & Test Alert</span>
+                </span>
+                <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded-md">
+                  Send Test
+                </span>
               </button>
             </div>
 
