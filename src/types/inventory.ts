@@ -84,7 +84,8 @@ export type AdjustmentReason =
   | 'Customer Return Processing'
   | 'Sample / Marketing Pull'
   | 'Wrong Tag Correction'
-  | 'Other Correction';
+  | 'Other Correction'
+  | (string & {});
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 

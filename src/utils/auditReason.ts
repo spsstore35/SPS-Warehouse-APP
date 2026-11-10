@@ -83,13 +83,15 @@ export function formatAuditLogReason(log: AuditLogEntry): string {
     return bookingNum ? `Order #${bookingNum} Status Update` : 'Order Status Update';
   }
 
-  // 6. Stock adjustments (with delta and product name)
-  if (log.action === 'stock_adjusted' || log.delta !== undefined) {
-    const prodName = log.productName || 'Stock';
-    if (log.delta !== undefined && log.delta !== 0) {
-      const sign = log.delta > 0 ? '+' : '';
-      const sizeColor = log.variantSize ? ` [${log.variantSize}]` : '';
-      return `${prodName}${sizeColor} (${sign}${log.delta} pcs)`;
+  // 6. Stock adjustments (uses user's specified reason or defaults to "Stock Adjustment: {Item Name}")
+  if (log.action === 'stock_adjusted' || log.action === 'request_approved' || log.delta !== undefined) {
+    const prodName = log.productName || 'Inventory';
+    if (
+      log.reason &&
+      log.reason.trim() !== '' &&
+      !log.reason.toLowerCase().includes('direct physical adjustment')
+    ) {
+      return log.reason.trim();
     }
     return `Stock Adjustment: ${prodName}`;
   }

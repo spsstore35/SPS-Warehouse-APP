@@ -30,14 +30,32 @@ interface AdjustmentModalProps {
   }) => void;
 }
 
-const REASONS: AdjustmentReason[] = [
+const DECREASE_REASONS = [
   'Physical Count Discrepancy',
   'Damaged / Defective Garment',
+  'Lost / Missing Stock',
+  'Customer Return Processing',
+  'Sample / Marketing Pull',
+  'Wrong Tag Correction',
+  'Other',
+];
+
+const INCREASE_REASONS = [
+  'Physical Count Discrepancy',
+  'New Inbound Shipment Batch',
+  'Customer Return Processing',
+  'Stock Recount Surplus',
+  'Wrong Tag Correction',
+  'Other',
+];
+
+const DEFAULT_REASONS = [
+  'Physical Count Discrepancy',
   'New Inbound Shipment Batch',
   'Customer Return Processing',
   'Sample / Marketing Pull',
   'Wrong Tag Correction',
-  'Other Correction',
+  'Other',
 ];
 
 export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
@@ -82,7 +100,9 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
   // Stepper delta accumulated
   const [stepperDelta, setStepperDelta] = useState<number>(0);
 
-  const [reason, setReason] = useState<AdjustmentReason>('Physical Count Discrepancy');
+  // Reason for adjustment: BLANK by default as requested
+  const [reason, setReason] = useState<string>('');
+  const [customReason, setCustomReason] = useState<string>('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
 
@@ -100,6 +120,16 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
       : Math.max(0, currentCount + stepperDelta);
 
   const delta = effectiveNewCount - currentCount;
+
+  // Dynamic available reasons: Damaged ONLY appears when stock decreases (delta < 0)
+  const availableReasons = delta < 0 ? DECREASE_REASONS : delta > 0 ? INCREASE_REASONS : DEFAULT_REASONS;
+
+  // If reason was 'Damaged / Defective Garment' or 'Lost / Missing Stock' and count goes up, reset reason
+  useEffect(() => {
+    if (delta >= 0 && (reason === 'Damaged / Defective Garment' || reason === 'Lost / Missing Stock')) {
+      setReason('');
+    }
+  }, [delta, reason]);
 
   const handleStepDelta = (change: number) => {
     if (exactCountInput.trim() !== '') {
@@ -127,12 +157,25 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
       return;
     }
 
+    // Resolve final reason:
+    // 1) If user chose "Other", use their typed reason (or "Other" if blank)
+    // 2) If user chose a dropdown reason, use it
+    // 3) If user left it blank, format as "Stock Adjustment: {productName}"
+    let resolvedReason = '';
+    if (reason === 'Other') {
+      resolvedReason = customReason.trim();
+    } else if (reason.trim() !== '') {
+      resolvedReason = reason.trim();
+    }
+
+    const finalReason = resolvedReason !== '' ? resolvedReason : `Stock Adjustment: ${product.name}`;
+
     if (isAdmin) {
       onAdminDirectAdjust({
         productId: product.id,
         variantId: activeVariant.id,
         newQuantity: effectiveNewCount,
-        reason,
+        reason: finalReason,
         note,
       });
     } else {
@@ -147,7 +190,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
         currentQuantity: currentCount,
         requestedQuantity: effectiveNewCount,
         delta,
-        reason,
+        reason: finalReason,
         workerNote: note,
       });
     }
@@ -356,20 +399,39 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
 
           {/* Reason Selection */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-              Reason for Adjustment:
+            <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider flex items-center justify-between">
+              <span>Reason for Adjustment:</span>
+              <span className="text-[10px] text-slate-400 font-normal">Optional</span>
             </label>
             <select
               value={reason}
-              onChange={(e) => setReason(e.target.value as AdjustmentReason)}
-              className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-amber-600"
+              onChange={(e) => setReason(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:border-amber-600 cursor-pointer"
             >
-              {REASONS.map((r) => (
+              <option value="">Select a reason (optional)...</option>
+              {availableReasons.map((r) => (
                 <option key={r} value={r}>
                   {r}
                 </option>
               ))}
             </select>
+
+            {/* Custom Reason Input when "Other" is chosen */}
+            {reason === 'Other' && (
+              <div className="mt-2.5">
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Specify Custom Reason:
+                </label>
+                <input
+                  type="text"
+                  value={customReason}
+                  onChange={(e) => setCustomReason(e.target.value)}
+                  placeholder="Type custom reason for adjusting inventory..."
+                  className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                  autoFocus
+                />
+              </div>
+            )}
           </div>
 
           {/* Notes */}

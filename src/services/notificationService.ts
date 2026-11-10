@@ -1,6 +1,18 @@
-// Service to handle Mobile & Desktop System Notifications for SPS Warehouse
+// Service to handle Mobile & Desktop System Notifications for SPS Warehouse with Web Push Protocol
 
 let swRegistration: ServiceWorkerRegistration | null = null;
+
+// Base64 helper for VAPID applicationServerKey
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 // Initialize and register service worker for mobile notifications
 export const registerServiceWorker = async (): Promise<ServiceWorkerRegistration | null> => {
@@ -11,6 +23,12 @@ export const registerServiceWorker = async (): Promise<ServiceWorkerRegistration
   try {
     const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     swRegistration = reg;
+
+    // Automatically check and subscribe to background Web Push if permission is granted
+    if (Notification.permission === 'granted') {
+      subscribeToPushNotifications().catch(() => {});
+    }
+
     return reg;
   } catch (error) {
     console.warn('Service worker registration failed:', error);
@@ -65,8 +83,58 @@ export const getNotificationPermissionState = (): NotificationPermissionState =>
   return Notification.permission;
 };
 
+// Subscribe device to Background Web Push (Google Cloud Messaging / FCM)
+export const subscribeToPushNotifications = async (userEmail?: string): Promise<boolean> => {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return false;
+  }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg) return false;
+
+    // Fetch server VAPID public key
+    let publicKey = 'BJMQAYWtCOp3egNjp-tbFtWvthIBCtRuDDH64erBwhqxkOecZMvkwt9ybmI2I9MXn2rnTq6ivNDd4w_bjB4338Q';
+    try {
+      const res = await fetch('/api/push/public-key');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.publicKey) publicKey = data.publicKey;
+      }
+    } catch {
+      // Use fallback key
+    }
+
+    // Check existing subscription or create new
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const convertedKey = urlBase64ToUint8Array(publicKey);
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: convertedKey.buffer as ArrayBuffer,
+      });
+    }
+
+    if (sub) {
+      // Register subscription with server
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          userEmail,
+        }),
+      });
+      return true;
+    }
+  } catch (err) {
+    console.warn('Push subscription failed (device may use local notifications):', err);
+  }
+  return false;
+};
+
 // Request notification permission from user and browser
-export const requestNotificationPermission = async (): Promise<NotificationPermissionState> => {
+export const requestNotificationPermission = async (userEmail?: string): Promise<NotificationPermissionState> => {
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return 'unsupported';
   }
@@ -74,8 +142,9 @@ export const requestNotificationPermission = async (): Promise<NotificationPermi
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      // Ensure service worker is registered
+      // Ensure service worker is registered & subscribe to background push
       await registerServiceWorker();
+      await subscribeToPushNotifications(userEmail);
     }
     return permission;
   } catch (err) {
@@ -169,6 +238,21 @@ export const sendSystemNotification = async (
 
 // Send an immediate test notification to verify mobile notifications
 export const sendTestNotification = async (): Promise<boolean> => {
+  // 1. Trigger via server Web Push (so it arrives from Google Cloud to Android lockscreen even if minimized)
+  try {
+    await fetch('/api/push/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Staff Request 70% Deposit',
+        body: 'Order #SPS-09112601 (Tony Mohab): Staff requested changing upfront deposit from 50% to 70% (2275 EGP).',
+      }),
+    });
+  } catch {
+    // If offline, fallback to local dispatch
+  }
+
+  // 2. Also dispatch locally via Service Worker as immediate feedback
   return sendSystemNotification('Staff Request 70% Deposit', {
     body: 'Order #SPS-09112601 (Tony Mohab): Staff requested changing upfront deposit from 50% to 70% (2275 EGP).',
     tag: 'test-notification-' + Date.now(),

@@ -204,7 +204,7 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
       const updated: Booking = {
         ...activeBooking,
         pendingDepositPercentage: pct,
-        pendingDepositPercentageBy: currentUser.name || 'Floor Staff',
+        pendingDepositPercentageBy: currentUser.name || 'Staff',
         pendingDepositPercentageAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -215,7 +215,7 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
         id: `log_${Date.now()}`,
         timestamp: new Date().toISOString(),
         action: 'booking_updated',
-        actorName: currentUser.name || 'Floor Staff',
+        actorName: currentUser.name || 'Staff',
         actorRole: currentUser.role,
         bookingId: activeBooking.id,
         bookingNumber: activeBooking.bookingNumber,
@@ -770,7 +770,7 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                             <span>Staff Request: Change Deposit to {activeBooking.pendingDepositPercentage}%</span>
                           </div>
                           <div className="text-[11px] text-amber-800 mt-0.5">
-                            Requested by <strong>{activeBooking.pendingDepositPercentageBy || 'Floor Staff'}</strong> • Current terms: {activeDepositPct}%
+                            Requested by <strong>{activeBooking.pendingDepositPercentageBy || 'Staff'}</strong> • Current terms: {activeDepositPct}%
                           </div>
                         </div>
 

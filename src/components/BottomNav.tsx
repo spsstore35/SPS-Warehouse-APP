@@ -54,46 +54,27 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           <span className="text-[10px] tracking-tight">Stock</span>
         </button>
 
-        {/* Tab 2: Stock Approvals (Admin) or Requests (Worker) */}
-        {isAdmin ? (
-          <button
-            onClick={() => onNavigate('stock-approvals')}
-            className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
-              activeView === 'approvals' && approvalsTab === 'stock'
-                ? 'text-amber-700 font-bold'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <div className="relative">
-              <CheckSquare className="w-5 h-5 mb-1" />
-              {pendingStockCount > 0 && (
-                <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-amber-500 text-slate-950 font-black text-[9px] rounded-full">
-                  {pendingStockCount}
-                </span>
-              )}
-            </div>
-            <span className="text-[10px] tracking-tight">Stock Appr</span>
-          </button>
-        ) : (
-          <button
-            onClick={() => onNavigate('worker-requests')}
-            className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
-              activeView === 'worker-requests' ? 'text-sky-700 font-bold' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <div className="relative">
-              <Clock className="w-5 h-5 mb-1" />
-              {pendingStockCount > 0 && (
-                <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-sky-500 text-white font-black text-[9px] rounded-full">
-                  {pendingStockCount}
-                </span>
-              )}
-            </div>
-            <span className="text-[10px] tracking-tight">Requests</span>
-          </button>
-        )}
+        {/* Tab 2: Accounts (Admin: Account Approvals & Staff List, Worker: Accounts) */}
+        <button
+          onClick={() => onNavigate(isAdmin ? 'account-approvals' : 'inventory')}
+          className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
+            activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')
+              ? 'text-amber-700 font-bold'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <div className="relative">
+            <Users className="w-5 h-5 mb-1" />
+            {isAdmin && pendingAccountsCount > 0 && (
+              <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-amber-500 text-slate-950 font-black text-[9px] rounded-full animate-pulse">
+                {pendingAccountsCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] tracking-tight">Accounts</span>
+        </button>
 
-        {/* Tab 3: Center Primary Action - Prompt choice: New Item vs New Booking */}
+        {/* Tab 3: Center Primary Action - Plus sign with 2 choices (New Item vs New Booking) */}
         <button
           onClick={() => setShowCreateChoiceSheet(true)}
           className="flex flex-col items-center justify-center min-h-[44px] py-1 text-amber-600 group"
@@ -104,44 +85,23 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </div>
         </button>
 
-        {/* Tab 4: Account Approvals (Admin) or Audit Log (Worker) */}
-        {isAdmin ? (
-          <button
-            onClick={() => onNavigate('account-approvals')}
-            className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
-              activeView === 'approvals' && approvalsTab === 'staff'
-                ? 'text-amber-700 font-bold'
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <div className="relative">
-              <Users className="w-5 h-5 mb-1" />
-              {pendingAccountsCount > 0 && (
-                <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-amber-500 text-slate-950 font-black text-[9px] rounded-full animate-pulse">
-                  {pendingAccountsCount}
-                </span>
-              )}
-            </div>
-            <span className="text-[10px] tracking-tight">Accounts</span>
-          </button>
-        ) : (
-          <button
-            onClick={() => onNavigate('audit-log')}
-            className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
-              activeView === 'audit-log' ? 'text-sky-700 font-bold' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <div className="relative">
-              <History className="w-5 h-5 mb-1" />
-              {pendingAuditNotificationsCount > 0 && (
-                <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-rose-600 text-white font-black text-[9px] rounded-full animate-pulse">
-                  {pendingAuditNotificationsCount}
-                </span>
-              )}
-            </div>
-            <span className="text-[10px] tracking-tight">Audit Log</span>
-          </button>
-        )}
+        {/* Tab 4: Stock Audit Log */}
+        <button
+          onClick={() => onNavigate('audit-log')}
+          className={`relative flex flex-col items-center justify-center min-h-[44px] py-1 transition-colors ${
+            activeView === 'audit-log' ? 'text-amber-700 font-bold' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <div className="relative">
+            <History className="w-5 h-5 mb-1" />
+            {pendingAuditNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-rose-600 text-white font-black text-[9px] rounded-full animate-pulse">
+                {pendingAuditNotificationsCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] tracking-tight">Stock Audit</span>
+        </button>
 
         {/* Tab 5: Account Profile & Menu */}
         <button
@@ -216,67 +176,38 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               </span>
             </div>
 
-            {/* Quick Navigation Shortcuts */}
+            {/* Quick Navigation Shortcuts in exact requested order:
+                1. accounts
+                2. stock audit
+                3. client bookings & quotations
+                4. stock adjustment approvals
+                5. phone notifications & test alert
+                6. log out
+            */}
             <div className="py-2 space-y-1.5">
+              {/* 1. Accounts */}
               {isAdmin && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowAccountSheet(false);
-                      onNavigate('account-approvals');
-                    }}
-                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-50/60 border border-amber-200 text-slate-900 font-bold text-xs hover:bg-amber-100/60 transition-colors"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <Users className="w-4 h-4 text-amber-700" />
-                      <span>Account Approvals & Staff List</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountSheet(false);
+                    onNavigate('account-approvals');
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-50/60 border border-amber-200 text-slate-900 font-bold text-xs hover:bg-amber-100/60 transition-colors"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Users className="w-4 h-4 text-amber-700" />
+                    <span>Account Approvals & Staff List</span>
+                  </span>
+                  {pendingAccountsCount > 0 && (
+                    <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full animate-pulse">
+                      {pendingAccountsCount} pending
                     </span>
-                    {pendingAccountsCount > 0 && (
-                      <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full animate-pulse">
-                        {pendingAccountsCount} pending
-                      </span>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowAccountSheet(false);
-                      onNavigate('stock-approvals');
-                    }}
-                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-bold text-xs hover:bg-slate-100 transition-colors"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <CheckSquare className="w-4 h-4 text-amber-600" />
-                      <span>Stock Adjustment Approvals</span>
-                    </span>
-                    {pendingStockCount > 0 && (
-                      <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full">
-                        {pendingStockCount}
-                      </span>
-                    )}
-                  </button>
-                </>
+                  )}
+                </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAccountSheet(false);
-                  onNavigate('bookings');
-                }}
-                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-blue-950 font-bold text-xs hover:bg-blue-100 transition-colors"
-              >
-                <span className="flex items-center gap-2.5">
-                  <Package className="w-4 h-4 text-blue-600" />
-                  <span>Client Bookings & Quotations</span>
-                </span>
-                <span className="text-[10px] bg-blue-600 text-white font-bold px-1.5 py-0.5 rounded">
-                  New
-                </span>
-              </button>
-
+              {/* 2. Stock Audit */}
               <button
                 type="button"
                 onClick={() => {
@@ -296,7 +227,66 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 )}
               </button>
 
-              {/* Mobile System Notifications Trigger */}
+              {/* 3. Client Bookings & Quotations */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountSheet(false);
+                  onNavigate('bookings');
+                }}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-blue-950 font-bold text-xs hover:bg-blue-100 transition-colors"
+              >
+                <span className="flex items-center gap-2.5">
+                  <Package className="w-4 h-4 text-blue-600" />
+                  <span>Client Bookings & Quotations</span>
+                </span>
+                <span className="text-[10px] bg-blue-600 text-white font-bold px-1.5 py-0.5 rounded">
+                  New
+                </span>
+              </button>
+
+              {/* 4. Stock Adjustment Approvals */}
+              {isAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountSheet(false);
+                    onNavigate('stock-approvals');
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-bold text-xs hover:bg-slate-100 transition-colors"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <CheckSquare className="w-4 h-4 text-amber-600" />
+                    <span>Stock Adjustment Approvals</span>
+                  </span>
+                  {pendingStockCount > 0 && (
+                    <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full">
+                      {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountSheet(false);
+                    onNavigate('worker-requests');
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 font-bold text-xs hover:bg-slate-100 transition-colors"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Clock className="w-4 h-4 text-sky-600" />
+                    <span>My Adjustment Requests</span>
+                  </span>
+                  {pendingStockCount > 0 && (
+                    <span className="px-2 py-0.5 bg-sky-500 text-white font-black text-[11px] rounded-full">
+                      {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {/* 5. Phone Notifications & Test Alert */}
               <button
                 type="button"
                 onClick={async () => {

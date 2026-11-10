@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'bg-sky-50 text-sky-900 border-sky-300'
               }`}
             >
-              {isAdmin ? 'Admin Portal' : 'Floor Staff'}
+              {isAdmin ? 'Admin Portal' : 'Staff'}
             </span>
           </div>
 
@@ -123,7 +123,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   onClick={() => onNavigate('stock-approvals')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'approvals' && approvalsTab === 'stock'
+                    activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')
                       ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
                       : ''
                   }`}
@@ -142,7 +142,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   onClick={() => onNavigate('account-approvals')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'approvals' && approvalsTab === 'staff'
+                    activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')
                       ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
                       : ''
                   }`}

@@ -28,6 +28,7 @@ import {
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface ApprovalsViewProps {
+  mode?: 'stock' | 'accounts' | 'both';
   requests: AdjustmentRequest[];
   users: User[];
   currentUser: User;
@@ -51,6 +52,7 @@ interface ApprovalsViewProps {
 }
 
 export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
+  mode = 'both',
   requests,
   users,
   currentUser,
@@ -67,19 +69,34 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onApproveProduct,
   onRejectProduct,
 }) => {
-  const [activeTab, setActiveTab] = useState<'stock' | 'staff' | 'items'>(initialTab);
+  const effectiveInitialTab =
+    mode === 'stock'
+      ? initialTab === 'staff'
+        ? 'stock'
+        : initialTab
+      : mode === 'accounts'
+      ? 'staff'
+      : initialTab;
+
+  const [activeTab, setActiveTab] = useState<'stock' | 'staff' | 'items'>(effectiveInitialTab);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [staffStatusFilter, setStaffStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
   const [staffRoleFilter, setStaffRoleFilter] = useState<'all' | 'worker' | 'admin'>('all');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
 
-  // Sync tab whenever initialTab changes from outside navigation
+  // Sync tab whenever initialTab or mode changes
   React.useEffect(() => {
     if (initialTab) {
-      setActiveTab(initialTab);
+      if (mode === 'stock') {
+        setActiveTab(initialTab === 'staff' ? 'stock' : initialTab);
+      } else if (mode === 'accounts') {
+        setActiveTab('staff');
+      } else {
+        setActiveTab(initialTab);
+      }
     }
-  }, [initialTab]);
+  }, [initialTab, mode]);
 
   // Direct Create Account Without Approval Modal State
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
@@ -246,76 +263,90 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Warehouse Admin Approvals
+              {mode === 'accounts' ? 'Staff Account Approvals' : 'Warehouse Stock Approvals'}
             </h1>
-            {(pendingRequests.length > 0 || pendingUsers.length > 0 || pendingProducts.length > 0) && (
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950">
-                {pendingRequests.length + pendingUsers.length + pendingProducts.length} Action Needed
-              </span>
+            {mode === 'accounts' ? (
+              pendingUsers.length > 0 && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950 animate-pulse">
+                  {pendingUsers.length} Action Required
+                </span>
+              )
+            ) : (
+              (pendingRequests.length > 0 || pendingProducts.length > 0) && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500 text-slate-950">
+                  {pendingRequests.length + pendingProducts.length} Action Needed
+                </span>
+              )
             )}
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-1 font-medium">
-            Review and authorize staff account registrations, new item catalog additions, and physical stock adjustments.
+            {mode === 'accounts'
+              ? 'Review and authorize staff account registrations, manage account status, and assign user roles.'
+              : 'Review and authorize physical stock adjustments and new item catalog additions.'}
           </p>
         </div>
       </div>
 
-      {/* Main Switcher: Stock Adjustments vs Staff Registrations vs New Item Submissions */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto scrollbar-none">
-        <button
-          onClick={() => setActiveTab('stock')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-            activeTab === 'stock'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <CheckSquare className="w-4 h-4 text-amber-500" />
-          <span>Stock Adjustments Queue</span>
-          {pendingRequests.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
-              {pendingRequests.length}
-            </span>
-          )}
-        </button>
+      {/* Main Switcher: Stock Adjustments vs New Item Submissions (Stock Approvals Page) */}
+      {mode !== 'accounts' && (
+        <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto scrollbar-none">
+          <button
+            onClick={() => setActiveTab('stock')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              activeTab === 'stock'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <CheckSquare className="w-4 h-4 text-amber-500" />
+            <span>Stock Adjustments Queue</span>
+            {pendingRequests.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
+                {pendingRequests.length}
+              </span>
+            )}
+          </button>
 
-        <button
-          onClick={() => setActiveTab('staff')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-            activeTab === 'staff'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <Users className="w-4 h-4 text-amber-500" />
-          <span>Staff Registrations & Account Approvals</span>
-          {pendingUsers.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black animate-pulse">
-              {pendingUsers.length} Pending
-            </span>
+          {mode === 'both' && (
+            <button
+              onClick={() => setActiveTab('staff')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                activeTab === 'staff'
+                  ? 'bg-slate-900 text-white shadow-sm'
+                  : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
+              }`}
+            >
+              <Users className="w-4 h-4 text-amber-500" />
+              <span>Staff Registrations & Account Approvals</span>
+              {pendingUsers.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black animate-pulse">
+                  {pendingUsers.length} Pending
+                </span>
+              )}
+            </button>
           )}
-        </button>
 
-        <button
-          onClick={() => setActiveTab('items')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-            activeTab === 'items'
-              ? 'bg-slate-900 text-white shadow-sm'
-              : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <Package className="w-4 h-4 text-amber-500" />
-          <span>New Item Submissions</span>
-          {pendingProducts.length > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black animate-pulse">
-              {pendingProducts.length} Pending
-            </span>
-          )}
-        </button>
-      </div>
+          <button
+            onClick={() => setActiveTab('items')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              activeTab === 'items'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <Package className="w-4 h-4 text-amber-500" />
+            <span>New Item Submissions</span>
+            {pendingProducts.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black animate-pulse">
+                {pendingProducts.length} Pending
+              </span>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* TAB 1: STOCK ADJUSTMENT REQUESTS */}
-      {activeTab === 'stock' && (
+      {mode !== 'accounts' && activeTab === 'stock' && (
         <div className="space-y-4">
           {/* Day-by-Day Date Navigation Bar ("agyeb el haga bel ayam") */}
           <div className="bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-4 shadow-xs">
@@ -674,7 +705,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       )}
 
       {/* TAB 2: STAFF & ADMIN ACCOUNT REGISTRATIONS */}
-      {activeTab === 'staff' && (
+      {(mode === 'accounts' || (mode === 'both' && activeTab === 'staff')) && (
         <div className="space-y-4">
           {/* Header Action Bar */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 bg-white border border-slate-200 rounded-2xl shadow-sm">
@@ -796,7 +827,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Floor Staff Access Filter Card */}
+              {/* Staff Access Filter Card */}
               <button
                 type="button"
                 onClick={() => setStaffRoleFilter((prev) => (prev === 'worker' ? 'all' : 'worker'))}
@@ -805,7 +836,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     ? 'bg-sky-50/90 border-2 border-sky-500 shadow-md ring-2 ring-sky-400/25'
                     : 'bg-white hover:bg-sky-50/50 border border-slate-200 hover:border-sky-300 shadow-xs'
                 }`}
-                title="Click to filter by Floor Staff"
+                title="Click to filter by Staff"
               >
                 <div
                   className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
@@ -819,7 +850,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-black text-sky-950 uppercase tracking-wider">
-                      Floor Staff Access
+                      Staff Access
                     </span>
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
@@ -897,7 +928,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <Users className="w-8 h-8 text-slate-300 mx-auto" />
                 <h4 className="text-sm font-bold text-slate-700">
                   {staffRoleFilter !== 'all'
-                    ? `No ${staffRoleFilter === 'worker' ? 'Floor Staff' : 'Admin Authority'} accounts match this selection`
+                    ? `No ${staffRoleFilter === 'worker' ? 'Staff' : 'Admin Authority'} accounts match this selection`
                     : staffStatusFilter === 'pending'
                     ? 'No pending account approvals'
                     : 'No staff accounts match this filter'}
@@ -975,7 +1006,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           >
                             {user.requestedRole === 'admin' || user.role === 'admin'
                               ? 'Admin Authority'
-                              : 'Floor Staff'}
+                              : 'Staff'}
                           </span>
                         </div>
                         <div className="text-xs text-slate-500 font-mono mt-0.5">{user.email}</div>
@@ -1025,7 +1056,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                                 setNewSelectedRole(user.role);
                               }}
                               className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
-                              title="Change Account Role (Floor Staff / Admin Authority)"
+                              title="Change Account Role (Staff / Admin Authority)"
                             >
                               <Edit3 className="w-4 h-4 text-amber-600" />
                             </button>
@@ -1054,7 +1085,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                                 setNewSelectedRole(user.role);
                               }}
                               className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
-                              title="Change Account Role (Floor Staff / Admin Authority)"
+                              title="Change Account Role (Staff / Admin Authority)"
                             >
                               <Edit3 className="w-4 h-4 text-amber-600" />
                             </button>
@@ -1080,7 +1111,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       )}
 
       {/* TAB 3: NEW ITEM SUBMISSIONS AWAITING ADMIN APPROVAL */}
-      {activeTab === 'items' && (
+      {mode !== 'accounts' && activeTab === 'items' && (
         <div className="space-y-4">
           {/* Header Policy Banner */}
           <div className="p-4 bg-amber-50/70 border border-amber-200/90 rounded-2xl flex items-start gap-3">
@@ -1090,7 +1121,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 Staff Item Submissions ({pendingProducts.length} Pending Review)
               </div>
               <p className="text-slate-600 leading-relaxed">
-                When floor staff add new apparel or products with sizes & initial quantities, they wait here. Review the sizes, quantities, and thresholds, then click <strong>Approve & Publish to Catalog</strong> to make the item active in the live inventory catalog.
+                When staff add new apparel or products with sizes & initial quantities, they wait here. Review the sizes, quantities, and thresholds, then click <strong>Approve & Publish to Catalog</strong> to make the item active in the live inventory catalog.
               </p>
             </div>
           </div>
@@ -1103,7 +1134,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 No items awaiting approval
               </h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                All staff product submissions have been reviewed and published. When floor staff add new items, they will appear here.
+                All staff product submissions have been reviewed and published. When staff add new items, they will appear here.
               </p>
             </div>
           ) : (
@@ -1154,7 +1185,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           <span>
                             Submitted by:{' '}
                             <strong className="text-slate-800">
-                              {prod.createdByName || 'Floor Staff'}
+                              {prod.createdByName || 'Staff'}
                             </strong>
                           </span>
                           <span>•</span>
@@ -1486,10 +1517,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 >
                   <div className="font-bold text-xs flex items-center gap-1.5">
                     <UserIcon className="w-3.5 h-3.5 text-sky-600" />
-                    <span>Floor Staff</span>
+                    <span>Staff</span>
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
-                    Worker role: Request stock adjustments, view inventory & orders.
+                    Staff role: Request stock adjustments, view inventory & orders.
                   </div>
                 </button>
 

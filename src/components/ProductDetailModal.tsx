@@ -178,7 +178,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     Item Awaiting Admin Approval
                   </h4>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    Submitted by <strong>{product.createdByName || 'Floor Staff'}</strong> on{' '}
+                    Submitted by <strong>{product.createdByName || 'Staff'}</strong> on{' '}
                     {new Date(product.createdAt).toLocaleDateString()}. Sizes, colors, and stock quantities are configured below.
                   </p>
                 </div>

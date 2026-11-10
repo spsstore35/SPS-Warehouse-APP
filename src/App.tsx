@@ -453,13 +453,13 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       reason: `Staff Role Changed: ${oldRole.toUpperCase()} → ${newRole.toUpperCase()}`,
-      summary: `Staff Role Changed: "${targetUser?.name || targetUser?.email || 'User'}" to ${newRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}`,
+      summary: `Staff Role Changed: "${targetUser?.name || targetUser?.email || 'User'}" to ${newRole === 'admin' ? 'Admin Authority' : 'Staff'}`,
       details: `User (${targetUser?.email}) role changed from ${oldRole.toUpperCase()} to ${newRole.toUpperCase()} by Admin.`,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
     insertAuditLogInDb(newLog).catch(() => {});
 
-    showToast(`Role for "${targetUser?.name || 'User'}" updated to ${newRole === 'admin' ? 'Admin Authority' : 'Floor Staff'}.`, newLog);
+    showToast(`Role for "${targetUser?.name || 'User'}" updated to ${newRole === 'admin' ? 'Admin Authority' : 'Staff'}.`, newLog);
   };
 
   // Load live data from Supabase - Strict single source of truth across all devices
@@ -589,7 +589,7 @@ export default function App() {
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     setActiveView('inventory');
-    showToast(`Signed in as ${user.name} (${user.role === 'admin' ? 'Admin' : 'Floor Staff'})`);
+    showToast(`Signed in as ${user.name} (${user.role === 'admin' ? 'Admin' : 'Staff'})`);
   };
 
   const handleLogout = () => {
@@ -602,13 +602,13 @@ export default function App() {
     if (currentUser.role === 'admin') {
       const worker = users.find((u) => u.role === 'worker' && u.status === 'active') || {
         id: 'user_worker_01',
-        name: 'Floor Staff Member',
+        name: 'Staff Member',
         role: 'worker',
         email: 'karim@wearhouse.com',
         status: 'active',
       };
       setCurrentUser(worker as User);
-      showToast(`Switched to Floor Worker: ${worker.name}`);
+      showToast(`Switched to Staff: ${worker.name}`);
     } else {
       const admin = users.find((u) => u.role === 'admin' && u.status === 'active') || {
         id: 'user_admin_01',
@@ -859,6 +859,11 @@ export default function App() {
     const delta = data.newQuantity - oldQty;
     const oldProductTotal = affectedProduct?.totalQuantity || 0;
     const newProductTotal = oldProductTotal + delta;
+    const effectiveReason =
+      data.reason && data.reason.trim() !== ''
+        ? data.reason.trim()
+        : `Stock Adjustment: ${affectedProduct?.name || 'Inventory'}`;
+
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -866,7 +871,7 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       summary: `Updated inventory for "${affectedProduct?.name || 'Item'}"`,
-      details: `Added to inventory: Size ${variantSize}${variantColor ? ` (${variantColor})` : ''} adjusted from ${oldQty} to ${data.newQuantity} units (${delta > 0 ? `+${delta}` : delta} units). Total units changed from ${oldProductTotal} to ${newProductTotal} units. Reason: ${data.reason}. ${data.note ? `Note: ${data.note}` : ''}`,
+      details: `Added to inventory: Size ${variantSize}${variantColor ? ` (${variantColor})` : ''} adjusted from ${oldQty} to ${data.newQuantity} units (${delta > 0 ? `+${delta}` : delta} units). Total units changed from ${oldProductTotal} to ${newProductTotal} units. Reason: ${effectiveReason}. ${data.note ? `Note: ${data.note}` : ''}`,
       productId: data.productId,
       productName: affectedProduct?.name,
       productImage: affectedProduct?.image || affectedProduct?.images?.[0],
@@ -877,7 +882,7 @@ export default function App() {
       delta,
       totalQuantityBefore: oldProductTotal,
       totalQuantityAfter: newProductTotal,
-      reason: data.reason,
+      reason: effectiveReason,
       note: data.note,
     };
     setAuditLogs([newLog, ...auditLogs]);
@@ -1211,7 +1216,7 @@ export default function App() {
         actorName: currentUser?.name || 'Admin',
         actorRole: 'admin',
         summary: `Created pre-approved account for "${newUser.name}"`,
-        details: `Account for ${newUser.email} (${newUser.role === 'admin' ? 'Warehouse Admin' : 'Floor Staff'}) created directly as Active without approval.`,
+        details: `Account for ${newUser.email} (${newUser.role === 'admin' ? 'Warehouse Admin' : 'Staff'}) created directly as Active without approval.`,
       };
       setAuditLogs((prev) => [newLog, ...prev]);
       insertAuditLogInDb(newLog).catch(() => {});
@@ -1559,10 +1564,10 @@ export default function App() {
       setShowAddModal(true);
     } else if (view === 'account-approvals') {
       setApprovalsTab('staff');
-      setActiveView('approvals');
+      setActiveView('account-approvals');
     } else if (view === 'stock-approvals') {
       setApprovalsTab('stock');
-      setActiveView('approvals');
+      setActiveView('stock-approvals');
     } else {
       setActiveView(view);
     }
@@ -1897,14 +1902,37 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: ADMIN APPROVALS QUEUE */}
-        {activeView === 'approvals' && (
+        {/* VIEW 2A: STOCK APPROVALS (Stock adjustments queue + New item submissions) */}
+        {(activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')) && (
           <ApprovalsView
+            mode="stock"
             requests={requests}
             users={users}
             currentUser={currentUser}
             pendingProducts={pendingProducts}
-            initialTab={approvalsTab}
+            initialTab={approvalsTab === 'staff' ? 'stock' : approvalsTab}
+            onRefreshFromDb={() => refreshFromSupabase(true)}
+            onApprove={handleApproveRequest}
+            onReject={handleRejectRequest}
+            onApproveUser={handleApproveUser}
+            onRejectUser={handleRejectUser}
+            onDeleteUser={handleDeleteUser}
+            onUpdateUserRole={handleUpdateUserRole}
+            onCreateUserDirectly={handleCreateUserDirectly}
+            onApproveProduct={handleApproveProduct}
+            onRejectProduct={handleRejectProduct}
+          />
+        )}
+
+        {/* VIEW 2B: ACCOUNT APPROVALS (Dedicated Staff Accounts & Registration Approvals) */}
+        {(activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')) && (
+          <ApprovalsView
+            mode="accounts"
+            requests={requests}
+            users={users}
+            currentUser={currentUser}
+            pendingProducts={pendingProducts}
+            initialTab="staff"
             onRefreshFromDb={() => refreshFromSupabase(true)}
             onApprove={handleApproveRequest}
             onReject={handleRejectRequest}

@@ -367,7 +367,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   Registration Received — Pending Approval
                 </h3>
                 <p className="text-xs text-amber-800 leading-relaxed font-medium">
-                  Welcome <strong>{signUpSuccess.name}</strong>! Your account request for <strong>{signUpSuccess.requestedRole === 'admin' ? 'Warehouse Admin' : 'Floor Staff'}</strong> has been submitted.
+                  Welcome <strong>{signUpSuccess.name}</strong>! Your account request for <strong>{signUpSuccess.requestedRole === 'admin' ? 'Warehouse Admin' : 'Staff'}</strong> has been submitted.
                 </p>
                 <div className="p-3 bg-white/80 rounded-xl border border-amber-200 text-left text-xs text-slate-700 space-y-1">
                   <div><strong>Email:</strong> {signUpSuccess.email}</div>

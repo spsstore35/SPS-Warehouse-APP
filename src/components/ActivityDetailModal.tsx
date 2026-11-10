@@ -213,7 +213,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                 <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-600">
                   <span className="font-bold text-slate-800">{log.actorName}</span>
                   <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                    {isAdmin ? 'Admin Authority' : 'Floor Staff'}
+                    {isAdmin ? 'Admin Authority' : 'Staff'}
                   </span>
                 </div>
               </div>
@@ -238,7 +238,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                 <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-600">
                   <span className="font-bold text-slate-800">{log.actorName}</span>
                   <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                    {isAdmin ? 'Admin Authority' : 'Floor Staff'}
+                    {isAdmin ? 'Admin Authority' : 'Staff'}
                   </span>
                 </div>
               </div>
@@ -292,7 +292,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                 <div className="flex items-center gap-1.5 mt-2 text-xs text-slate-600">
                   <span className="font-bold text-slate-800">{log.actorName}</span>
                   <span className="text-[10px] font-bold px-2 py-0.2 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
-                    {isAdmin ? 'Admin Authority' : 'Floor Staff'}
+                    {isAdmin ? 'Admin Authority' : 'Staff'}
                   </span>
                 </div>
               </div>
