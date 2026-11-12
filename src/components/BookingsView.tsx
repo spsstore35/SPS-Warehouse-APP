@@ -54,6 +54,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const isAdmin = currentUser.role === 'admin';
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
+  const [troopFilter, setTroopFilter] = useState<string>('All Troops');
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialSelectedBookingId || null);
 
   useEffect(() => {
@@ -150,7 +151,10 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
       b.items.some((it) => it.productName.toLowerCase().includes(q) || it.productSku.toLowerCase().includes(q));
 
     const matchesStatus = statusFilter === 'all' || b.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesTroop =
+      troopFilter === 'All Troops' ||
+      (b.troopGroup && b.troopGroup.toLowerCase() === troopFilter.toLowerCase());
+    return matchesSearch && matchesStatus && matchesTroop;
   });
 
   // Active booking for details modal (keeps updated if status changes)
@@ -390,6 +394,41 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
           </button>
         </div>
 
+        {/* Troop / Group Filter Bar */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1">
+            Troop:
+          </span>
+          {['All Troops', 'Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'].map((troop) => {
+            const isSelected = troopFilter === troop;
+            const count =
+              troop === 'All Troops'
+                ? bookings.length
+                : bookings.filter((b) => b.troopGroup?.toLowerCase() === troop.toLowerCase()).length;
+            return (
+              <button
+                key={troop}
+                type="button"
+                onClick={() => setTroopFilter(troop)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+              >
+                <span>{troop}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Search Bar with Instant Clear */}
         <div className="relative w-full">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -455,6 +494,11 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                           <h3 className="text-base sm:text-lg font-black text-slate-900 group-hover:text-blue-600 transition-colors truncate">
                             {b.clientName}
                           </h3>
+                          {b.troopGroup && (
+                            <span className="text-[11px] font-bold text-blue-800 bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-md">
+                              {b.troopGroup}
+                            </span>
+                          )}
                           {b.clientPhone && b.clientPhone !== 'N/A' && (
                             <span
                               onClick={(e) => e.stopPropagation()}
@@ -572,9 +616,16 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                   {activeBooking.bookingNumber}
                 </span>
                 <div className="min-w-0">
-                  <h2 className="text-base sm:text-xl font-black text-white truncate">
-                    {activeBooking.clientName}
-                  </h2>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base sm:text-xl font-black text-white truncate">
+                      {activeBooking.clientName}
+                    </h2>
+                    {activeBooking.troopGroup && (
+                      <span className="text-xs font-bold text-amber-300 bg-amber-950/80 border border-amber-500/40 px-2 py-0.5 rounded-md">
+                        {activeBooking.troopGroup}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[11px] sm:text-xs text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
                     <span>Created {new Date(activeBooking.createdAt).toLocaleDateString()}</span>
                     <span>•</span>

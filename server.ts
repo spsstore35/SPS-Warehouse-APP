@@ -141,40 +141,11 @@ async function setupServerBackgroundSync() {
     }
     isInitialized = true;
 
-    // 2. Real-Time Postgres Channel
-    supabase
-      .channel('server-db-monitor')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_audit_logs' }, (payload) => {
-        const newLog = payload.new;
-        if (newLog && !seenLogIds.has(newLog.id)) {
-          seenLogIds.add(newLog.id);
-          const title = formatReason(newLog);
-          const body = newLog.summary || newLog.details || 'New warehouse inventory activity recorded.';
-          broadcastPushNotification({
-            title,
-            body,
-            tag: `audit-${newLog.id}`,
-            data: { view: 'audit-log', bookingId: newLog.booking_number },
-          });
-        }
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, (payload) => {
-        const profile = payload.new;
-        if (profile && profile.status === 'pending') {
-          broadcastPushNotification({
-            title: 'New Account Registration',
-            body: `"${profile.full_name || 'New Staff'}" (${profile.email}) registered and requires admin approval.`,
-            tag: `profile-${profile.id}`,
-            data: { view: 'account-approvals' },
-          });
-        }
-      })
-      .subscribe();
-
-    // 3. Periodic Safety Check (every 5 seconds) to catch any DB activity if WebSocket drops
+    // Background Safety Polling Check (every 5 seconds) - Pure HTTP polling, NO WebSocket connections
     setInterval(async () => {
       if (!isInitialized) return;
       try {
+        // 1. Check for new audit logs
         const { data: recentLogs } = await supabase
           .from('stock_audit_logs')
           .select('*')
@@ -192,6 +163,28 @@ async function setupServerBackgroundSync() {
                 body,
                 tag: `audit-${log.id}`,
                 data: { view: 'audit-log', bookingId: log.booking_number },
+              });
+            }
+          }
+        }
+
+        // 2. Check for pending registration profiles
+        const { data: pendingProfiles } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('status', 'pending')
+          .limit(5);
+
+        if (pendingProfiles) {
+          for (const profile of pendingProfiles) {
+            const profileKey = `profile-${profile.id}`;
+            if (!seenLogIds.has(profileKey)) {
+              seenLogIds.add(profileKey);
+              await broadcastPushNotification({
+                title: 'New Account Registration',
+                body: `"${profile.full_name || 'New Staff'}" (${profile.email}) registered and requires admin approval.`,
+                tag: profileKey,
+                data: { view: 'account-approvals' },
               });
             }
           }
@@ -240,8 +233,8 @@ async function startServer() {
   app.post('/api/push/test', async (req, res) => {
     const { title, body } = req.body;
     await broadcastPushNotification({
-      title: title || 'Staff Request 70% Deposit',
-      body: body || 'Order #SPS-09112601: Staff requested changing upfront deposit from 50% to 70%.',
+      title: title || 'SPS Warehouse',
+      body: body || 'This is an Alert Message confirming app notifications are working fine.',
       tag: 'test-push-' + Date.now(),
       data: { view: 'audit-log' },
     });

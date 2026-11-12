@@ -454,18 +454,11 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
           </div>
 
           {/* Notice */}
-          {!isAdmin ? (
+          {!isAdmin && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5 font-medium">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
               <span>
                 <strong>Admin Review Required:</strong> This adjustment will appear in the Admin approval queue before inventory counts update.
-              </span>
-            </div>
-          ) : (
-            <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 text-xs text-slate-700 flex items-start gap-2.5 font-medium">
-              <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
-              <span>
-                <strong>Direct Action:</strong> Inventory updates immediately in Supabase and logs to Audit history.
               </span>
             </div>
           )}

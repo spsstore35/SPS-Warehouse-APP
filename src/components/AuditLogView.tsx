@@ -294,45 +294,32 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
               <span className="hidden sm:inline">Next Day</span>
               <ChevronRight className="w-4 h-4 text-slate-600" />
             </button>
+          </div>
 
-            {/* Quick jump to Today */}
+          {/* Right: Mode Switch (Today vs All Dates) */}
+          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start lg:self-auto border border-slate-200">
             <button
+              type="button"
               onClick={handleJumpToToday}
-              className={`px-3 py-2 border rounded-xl font-bold text-xs transition-all shadow-xs flex items-center gap-1.5 ${
-                selectedDate === todayKey && isDayFilterEnabled
-                  ? 'bg-amber-500 border-amber-600 text-slate-950 font-black'
-                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                isDayFilterEnabled && selectedDate === todayKey
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <CalendarDays className="w-3.5 h-3.5" />
-              Today
+              <span>Today</span>
             </button>
-          </div>
-
-          {/* Right: Mode Switch (Day View vs All Dates) */}
-          <div className="flex items-center gap-2 self-start lg:self-auto">
             <button
+              type="button"
               onClick={() => setIsDayFilterEnabled(false)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
                 !isDayFilterEnabled
-                  ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                  : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:bg-slate-50'
+                  ? 'bg-slate-900 text-white font-bold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              All Dates ({logs.length})
-            </button>
-            <button
-              onClick={() => setIsDayFilterEnabled(true)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
-                isDayFilterEnabled
-                  ? 'bg-amber-500 text-slate-950 border-amber-600 font-black shadow-sm'
-                  : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:bg-slate-50'
-              }`}
-            >
-              <span>By Date</span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-950/10 font-bold">
-                {countForSelectedDate}
-              </span>
+              <span>All Dates ({logs.length})</span>
             </button>
           </div>
         </div>

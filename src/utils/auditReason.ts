@@ -6,6 +6,15 @@ import { AuditLogEntry } from '../types/inventory';
  * "Making Order #SPS-09112601").
  */
 export function formatAuditLogReason(log: AuditLogEntry): string {
+  // If an explicit meaningful reason was provided (e.g. "Wrong Tag Correction", "Physical Count Discrepancy", "Damaged / Defective Garment", or custom text), always honor it first!
+  if (
+    log.reason &&
+    log.reason.trim() !== '' &&
+    !log.reason.toLowerCase().includes('direct physical adjustment')
+  ) {
+    return log.reason.trim();
+  }
+
   const combined = `${log.summary || ''} ${log.details || ''} ${log.reason || ''}`.toLowerCase();
 
   // Extract booking reference if present
@@ -83,31 +92,24 @@ export function formatAuditLogReason(log: AuditLogEntry): string {
     return bookingNum ? `Order #${bookingNum} Status Update` : 'Order Status Update';
   }
 
-  // 6. Stock adjustments (uses user's specified reason or defaults to "Stock Adjustment: {Item Name}")
-  if (log.action === 'stock_adjusted' || log.action === 'request_approved' || log.delta !== undefined) {
-    const prodName = log.productName || 'Inventory';
-    if (
-      log.reason &&
-      log.reason.trim() !== '' &&
-      !log.reason.toLowerCase().includes('direct physical adjustment')
-    ) {
-      return log.reason.trim();
-    }
-    return `Stock Adjustment: ${prodName}`;
-  }
-
-  // 7. Product catalog management
+  // 6. Product catalog management
   if (log.action === 'product_created' || log.action === 'product_submitted') {
-    return `New Item: ${log.productName || 'Catalog Product'}`;
-  }
-  if (log.action === 'product_updated') {
-    return `Item Updated: ${log.productName || 'Catalog Product'}`;
+    return `Added New Item: ${log.productName || 'Catalog Product'}`;
   }
   if (log.action === 'product_deleted') {
-    return `Item Removed: ${log.productName || 'Catalog Product'}`;
+    return `Removed Item: ${log.productName || 'Catalog Product'}`;
+  }
+  if (log.action === 'product_updated') {
+    return `Updated Item: ${log.productName || 'Catalog Product'}`;
   }
   if (log.action === 'variant_deleted') {
     return `Variant Removed: ${log.productName || 'Garment Variant'}`;
+  }
+
+  // 7. Stock adjustments (defaults to "Stock Adjustment: {Item Name}")
+  if (log.action === 'stock_adjusted' || log.action === 'request_approved' || log.delta !== undefined) {
+    const prodName = log.productName || 'Inventory';
+    return `Stock Adjustment: ${prodName}`;
   }
 
   // 8. Explicit reason if provided and not generic

@@ -50,7 +50,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     (product.variants[0].colorName === 'Standard' || !product.variants[0].colorName);
 
   const isPending = product.status === 'pending';
-  const displayPrice = product.price ?? 250;
+  const displayPrice = typeof product.price === 'number' ? product.price : 0;
 
   return (
     <div
@@ -88,7 +88,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 e.stopPropagation();
                 setActiveImgIdx((prev) => (prev > 0 ? prev - 1 : allCardImages.length - 1));
               }}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-80 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 hover:shadow-xl"
+              className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full backdrop-blur-md bg-slate-900/50 hover:bg-slate-900/80 active:scale-95 text-white border border-white/30 shadow-lg flex items-center justify-center transition-all opacity-90 hover:opacity-100 cursor-pointer"
               title="Previous photo"
             >
               <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
@@ -99,7 +99,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 e.stopPropagation();
                 setActiveImgIdx((prev) => (prev < allCardImages.length - 1 ? prev + 1 : 0));
               }}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full backdrop-blur-md bg-white/40 hover:bg-white/70 active:scale-95 text-slate-900 border border-white/60 shadow-lg flex items-center justify-center transition-all opacity-80 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 hover:shadow-xl"
+              className="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full backdrop-blur-md bg-slate-900/50 hover:bg-slate-900/80 active:scale-95 text-white border border-white/30 shadow-lg flex items-center justify-center transition-all opacity-90 hover:opacity-100 cursor-pointer"
               title="Next photo"
             >
               <ChevronRight className="w-4 h-4 stroke-[2.5]" />
@@ -184,6 +184,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <span className="font-mono text-amber-700 font-semibold">{product.sku}</span>
             <span aria-hidden="true">·</span>
             <span>{product.category}</span>
+            {product.folder && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-bold text-amber-800 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                  📁 {product.folder}
+                </span>
+              </>
+            )}
             <span aria-hidden="true">·</span>
             <span className="font-bold text-slate-800">{product.targetAudience || 'Unisex'}</span>
           </div>
@@ -203,46 +211,37 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             {product.description || product.fabricDetails || 'Warehouse inventory item.'}
           </p>
 
-          {isStandardItem ? (
-            <div className="mt-3.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-[11px] font-semibold text-slate-600">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Standard Item (Single Stock)</span>
+          {/* Color swatches preview */}
+          {uniqueColors.length > 0 && uniqueColors.some((c) => c.colorName !== 'Standard') && (
+            <div className="mt-3.5 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-medium text-slate-500 mr-1">Colors:</span>
+              {uniqueColors.map((col) => (
+                <div
+                  key={col.colorName}
+                  title={`${col.colorName}`}
+                  className="w-4 h-4 rounded-full border border-slate-300 shadow-sm shrink-0"
+                  style={{ backgroundColor: col.colorHex }}
+                />
+              ))}
+              <span className="text-[11px] text-slate-500 ml-1">
+                ({uniqueColors.length})
+              </span>
             </div>
-          ) : (
-            <>
-              {/* Color swatches preview */}
-              {uniqueColors.length > 0 && uniqueColors.some((c) => c.colorName !== 'Standard') && (
-                <div className="mt-3.5 flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-medium text-slate-500 mr-1">Colors:</span>
-                  {uniqueColors.map((col) => (
-                    <div
-                      key={col.colorName}
-                      title={`${col.colorName}`}
-                      className="w-4 h-4 rounded-full border border-slate-300 shadow-sm shrink-0"
-                      style={{ backgroundColor: col.colorHex }}
-                    />
-                  ))}
-                  <span className="text-[11px] text-slate-500 ml-1">
-                    ({uniqueColors.length})
-                  </span>
-                </div>
-              )}
+          )}
 
-              {/* Size range indicator */}
-              {uniqueSizes.length > 0 && uniqueSizes.some((s) => s !== 'One Size' && s !== 'Standard') && (
-                <div className="mt-2 text-xs text-slate-500 flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-medium text-slate-500">Sizes:</span>
-                  <div className="flex items-center gap-1 font-mono text-slate-700 font-medium">
-                    {uniqueSizes.map((s, idx) => (
-                      <span key={s}>
-                        {s}
-                        {idx < uniqueSizes.length - 1 && <span className="text-slate-300 mx-0.5">·</span>}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
+          {/* Size range indicator */}
+          {uniqueSizes.length > 0 && uniqueSizes.some((s) => s !== 'One Size' && s !== 'Standard') && (
+            <div className="mt-2 text-xs text-slate-500 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-medium text-slate-500">Sizes:</span>
+              <div className="flex items-center gap-1 font-mono text-slate-700 font-medium">
+                {uniqueSizes.map((s, idx) => (
+                  <span key={s}>
+                    {s}
+                    {idx < uniqueSizes.length - 1 && <span className="text-slate-300 mx-0.5">·</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 

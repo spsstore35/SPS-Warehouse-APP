@@ -77,6 +77,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   // Category - unselected by default for new items
   const [categoryId, setCategoryId] = useState<string>(productToEdit?.categoryId || '');
   const [category, setCategory] = useState<string>(productToEdit?.category || '');
+  const [folder, setFolder] = useState<string>(productToEdit?.folder || '');
 
   // Target audience - defaults to Men if not specified, or existing item's audience
   const [targetAudience, setTargetAudience] = useState<TargetAudience>(
@@ -114,10 +115,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     productToEdit ? (isExistingStandard ? 'standard' : 'matrix') : 'standard'
   );
 
-  // Standard Item Single Stock
-  const [standardQty, setStandardQty] = useState<number>(() => {
-    if (productToEdit) return productToEdit.totalQuantity || 0;
-    return 0;
+  // Standard Item Single Stock (Leave blank by default for new items)
+  const [standardQty, setStandardQty] = useState<number | ''>(() => {
+    if (productToEdit && typeof productToEdit.totalQuantity === 'number') {
+      return productToEdit.totalQuantity;
+    }
+    return '';
   });
   const [standardThreshold, setStandardThreshold] = useState<number | ''>(() => {
     if (productToEdit && productToEdit.variants[0]?.minThreshold !== undefined && productToEdit.variants[0]?.minThreshold !== null) {
@@ -433,6 +436,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       name: name.trim(),
       categoryId: categoryId || undefined,
       category: finalCategory,
+      folder: (finalCategory.toLowerCase() === 'others' || categoryId?.toLowerCase() === 'others') ? (folder.trim() || undefined) : undefined,
       targetAudience: finalAudience,
       description: description.trim() || `${name.trim()} item in warehouse inventory.`,
       fabricDetails: fabricDetails.trim(),
@@ -765,6 +769,54 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 </div>
               </div>
 
+              {/* Sub-folder within Others Category */}
+              {(category.toLowerCase() === 'others' || categoryId.toLowerCase() === 'others') && (
+                <div className="p-3.5 bg-amber-50/80 border-2 border-amber-300 rounded-xl space-y-2 shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Folder inside "Others" Category</span>
+                    </label>
+                    <span className="text-[11px] font-bold text-amber-800">
+                      {folder ? `Folder: ${folder}` : 'No folder'}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={folder}
+                    onChange={(e) => setFolder(e.target.value)}
+                    placeholder="Enter or pick folder (e.g. Wegla, Pins & Badges, Wa3d...)"
+                    className="w-full px-3 py-2 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
+                  />
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    <span className="text-[10px] text-amber-900 font-bold uppercase tracking-wider mr-1">Presets:</span>
+                    {['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'].map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setFolder(f)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                          folder === f
+                            ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-2xs font-black ring-1 ring-amber-400'
+                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
+                        }`}
+                      >
+                        📁 {f}
+                      </button>
+                    ))}
+                    {folder && (
+                      <button
+                        type="button"
+                        onClick={() => setFolder('')}
+                        className="px-2 py-1 rounded-lg text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Target Audience / Demographic */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider flex items-center justify-between">
@@ -909,7 +961,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       type="number"
                       min="0"
                       value={standardQty}
-                      onChange={(e) => setStandardQty(Math.max(0, parseInt(e.target.value) || 0))}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setStandardQty(val === '' ? '' : Math.max(0, parseInt(val, 10) || 0));
+                      }}
                       placeholder="e.g. 50"
                       className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-base font-mono font-bold text-slate-900 focus:outline-none focus:border-amber-600"
                     />
@@ -938,7 +993,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between">
                   <span className="text-xs font-bold text-amber-900">Total Item Stock:</span>
                   <span className="text-base font-black font-mono tabular-nums text-slate-900">
-                    {standardQty} units
+                    {standardQty === '' ? 0 : standardQty} units
                   </span>
                 </div>
               </div>

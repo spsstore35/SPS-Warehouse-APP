@@ -69,6 +69,7 @@ export interface Product {
   variants: ProductVariant[];
   totalQuantity: number;
   location?: string; // e.g. "Rack B-04 / Shelf 2"
+  folder?: string; // Sub-folder inside 'Others' category (e.g. 'Wegla', 'Pins & Badges', 'Wa3d', etc.)
   status?: 'active' | 'pending' | 'rejected';
   createdByRole?: Role;
   createdByName?: string;
@@ -179,6 +180,7 @@ export interface Booking {
   id: string;
   bookingNumber: string;
   clientName: string;
+  troopGroup?: string; // Ashbal, Zahrat, Kashafeen, Morshedat, 3ashera 1, 3ashera 2, Afrad
   clientPhone: string;
   notes?: string;
   items: BookingItem[];

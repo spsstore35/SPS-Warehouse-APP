@@ -238,14 +238,17 @@ export const sendSystemNotification = async (
 
 // Send an immediate test notification to verify mobile notifications
 export const sendTestNotification = async (): Promise<boolean> => {
+  const alertTitle = 'SPS Warehouse';
+  const alertBody = 'This is an Alert Message confirming app notifications are working fine.';
+
   // 1. Trigger via server Web Push (so it arrives from Google Cloud to Android lockscreen even if minimized)
   try {
     await fetch('/api/push/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: 'Staff Request 70% Deposit',
-        body: 'Order #SPS-09112601 (Tony Mohab): Staff requested changing upfront deposit from 50% to 70% (2275 EGP).',
+        title: alertTitle,
+        body: alertBody,
       }),
     });
   } catch {
@@ -253,8 +256,8 @@ export const sendTestNotification = async (): Promise<boolean> => {
   }
 
   // 2. Also dispatch locally via Service Worker as immediate feedback
-  return sendSystemNotification('Staff Request 70% Deposit', {
-    body: 'Order #SPS-09112601 (Tony Mohab): Staff requested changing upfront deposit from 50% to 70% (2275 EGP).',
+  return sendSystemNotification(alertTitle, {
+    body: alertBody,
     tag: 'test-notification-' + Date.now(),
     data: { view: 'audit-log' },
   });

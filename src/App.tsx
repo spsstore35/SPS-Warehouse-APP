@@ -124,6 +124,34 @@ export default function App() {
   const [selectedAudience, setSelectedAudience] = useState<string>('All');
   const [filterLowStockOnly, setFilterLowStockOnly] = useState(false);
 
+  // Others Category Sub-Folders
+  const [othersFolders, setOthersFolders] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('sps_others_folders');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return ['All Folders', 'Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'];
+  });
+  const [selectedOtherFolder, setSelectedOtherFolder] = useState<string>('All Folders');
+  const [showNewFolderModal, setShowNewFolderModal] = useState<boolean>(false);
+  const [newFolderNameInput, setNewFolderNameInput] = useState<string>('');
+
+  const handleCreateNewFolder = (folderName: string) => {
+    const trimmed = folderName.trim();
+    if (!trimmed) return;
+    if (!othersFolders.some((f) => f.toLowerCase() === trimmed.toLowerCase())) {
+      const nextFolders = [...othersFolders, trimmed];
+      setOthersFolders(nextFolders);
+      try {
+        localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
+      } catch {}
+    }
+    setSelectedOtherFolder(trimmed);
+    setShowNewFolderModal(false);
+    setNewFolderNameInput('');
+    showToast(`Folder "${trimmed}" created in Others.`);
+  };
+
   // Modals
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [adjustmentTarget, setAdjustmentTarget] = useState<{
@@ -522,42 +550,18 @@ export default function App() {
     }
   };
 
-  // Multi-Device Realtime Cloud Synchronization & Polling
+  // Multi-Device Cloud Synchronization & Polling (Pure HTTP, No WebSockets)
   useEffect(() => {
     // 1. Initial fetch
     refreshFromSupabase(false);
 
-    // 2. Realtime Postgres Changes Subscription
-    const channel = supabase
-      .channel('schema-db-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
-        refreshFromSupabase(false);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'product_variants' }, () => {
-        refreshFromSupabase(false);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
-        refreshFromSupabase(false);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        refreshFromSupabase(false);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'adjustment_requests' }, () => {
-        refreshFromSupabase(false);
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_audit_logs' }, () => {
-        refreshFromSupabase(false);
-      })
-      .subscribe();
-
-    // 3. Periodic Background Sync (every 8 seconds) so changes made anywhere (Supabase dashboard, other phones, laptops)
-    // sync seamlessly without requiring manual page reload!
+    // 2. Periodic Background Sync (every 5 seconds) so changes made anywhere
+    // sync seamlessly without WebSocket overhead or disconnect errors!
     const syncInterval = setInterval(() => {
       refreshFromSupabase(false);
-    }, 8000);
+    }, 5000);
 
     return () => {
-      supabase.removeChannel(channel);
       clearInterval(syncInterval);
     };
   }, []);
@@ -1622,7 +1626,14 @@ export default function App() {
       !filterLowStockOnly ||
       p.variants.some((v) => v.minThreshold !== undefined && v.quantity <= v.minThreshold);
 
-    return matchesSearch && matchesCategory && matchesAudience && matchesLowStock;
+    const matchesFolder = (() => {
+      if (selectedCategory.toLowerCase() !== 'others') return true;
+      if (selectedOtherFolder === 'All Folders') return true;
+      if (selectedOtherFolder === 'Uncategorized') return !p.folder;
+      return (p.folder || '').toLowerCase() === selectedOtherFolder.toLowerCase();
+    })();
+
+    return matchesSearch && matchesCategory && matchesAudience && matchesLowStock && matchesFolder;
   });
 
   // KPI Calculations
@@ -1835,6 +1846,71 @@ export default function App() {
                 <span className="hidden sm:inline">Manage Categories</span>
               </button>
             </div>
+
+            {/* Sub-Folders inside Others Category */}
+            {selectedCategory.toLowerCase() === 'others' && (
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-2.5 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold text-xs shadow-2xs">
+                      📁
+                    </span>
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-amber-950">
+                        Others Sub-Folders
+                      </h4>
+                      <p className="text-[11px] text-amber-800">
+                        Browse items classified into organized sub-folders
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowNewFolderModal(true)}
+                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>+ New Folder</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {othersFolders.map((f) => {
+                    const isSelected = selectedOtherFolder === f;
+                    const count =
+                      f === 'All Folders'
+                        ? products.filter((p) => p.category?.toLowerCase() === 'others').length
+                        : products.filter(
+                            (p) =>
+                              p.category?.toLowerCase() === 'others' &&
+                              (p.folder || '').toLowerCase() === f.toLowerCase()
+                          ).length;
+                    return (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setSelectedOtherFolder(f)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-slate-900 text-white shadow-xs'
+                            : 'bg-white border border-amber-200 text-slate-700 hover:bg-amber-100 hover:border-amber-300'
+                        }`}
+                      >
+                        <span>📁 {f}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                            isSelected ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-900 font-bold'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Product Grid or Clean Empty State */}
             {products.length === 0 ? (
@@ -2194,6 +2270,65 @@ export default function App() {
             >
               <X className="w-3.5 h-3.5" />
             </button>
+          </div>
+        )}
+
+        {/* Create New Folder inside Others Modal */}
+        {showNewFolderModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-5 border border-slate-200 shadow-xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                  <FolderPlus className="w-4 h-4 text-amber-600" />
+                  <span>Create New Folder in Others</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowNewFolderModal(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Folder Name
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={newFolderNameInput}
+                  onChange={(e) => setNewFolderNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCreateNewFolder(newFolderNameInput);
+                    }
+                  }}
+                  placeholder="e.g. Wegla, Pins, Wa3d..."
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNewFolderModal(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCreateNewFolder(newFolderNameInput)}
+                  disabled={!newFolderNameInput.trim()}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs shadow-xs disabled:opacity-50 transition-all"
+                >
+                  Create Folder
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -399,43 +399,35 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   <span className="hidden sm:inline">Next Day</span>
                   <ChevronRight className="w-4 h-4 text-slate-600" />
                 </button>
+              </div>
 
+              {/* Today vs All Dates Selector */}
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start lg:self-auto border border-slate-200">
                 <button
                   type="button"
                   onClick={() => {
                     setSelectedStockDate(todayKey);
                     setIsStockDayFilterEnabled(true);
                   }}
-                  className="px-3 py-2 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all shadow-xs"
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                    isStockDayFilterEnabled && selectedStockDate === todayKey
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
                   <CalendarDays className="w-3.5 h-3.5" />
                   <span>Today</span>
                 </button>
-              </div>
-
-              {/* All Dates vs By Date Selector */}
-              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start lg:self-auto border border-slate-200">
                 <button
                   type="button"
                   onClick={() => setIsStockDayFilterEnabled(false)}
                   className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
                     !isStockDayFilterEnabled
-                      ? 'bg-white text-slate-900 shadow-xs'
+                      ? 'bg-slate-900 text-white font-bold shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  All Dates ({requests.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsStockDayFilterEnabled(true)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                    isStockDayFilterEnabled
-                      ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  By Date ({countForSelectedStockDate})
+                  <span>All Dates ({requests.length})</span>
                 </button>
               </div>
             </div>
@@ -864,10 +856,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                         : `Staff (${allStaffUsers.filter((u) => u.role === 'worker' || u.requestedRole === 'worker').length})`}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                  <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
                     Can browse garments, count stock, submit new garments (pending Admin approval), and submit stock adjustment requests with verification notes.
                   </p>
-                  <span className="inline-block mt-2 text-[10px] font-bold text-sky-700">
+                  <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-sky-700">
                     {staffRoleFilter === 'worker' ? '• Click to reset' : '• Click to filter staff'}
                   </span>
                 </div>
@@ -910,10 +902,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                         : `Admin (${allStaffUsers.filter((u) => u.role === 'admin' || u.requestedRole === 'admin').length})`}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                  <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
                     Full warehouse control: direct stock overrides, approving or rejecting submissions, managing categories, and deleting items, sizes, or accounts.
                   </p>
-                  <span className="inline-block mt-2 text-[10px] font-bold text-amber-700">
+                  <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-amber-700">
                     {staffRoleFilter === 'admin' ? '• Click to reset' : '• Click to filter admins'}
                   </span>
                 </div>

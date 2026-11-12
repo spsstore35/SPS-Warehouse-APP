@@ -407,9 +407,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-black text-slate-900 flex items-center justify-between">
                     <span>New Client Booking</span>
-                    <span className="text-[10px] font-bold text-blue-900 bg-blue-200/70 px-2 py-0.5 rounded-full">
-                      50% Deposit
-                    </span>
                   </div>
                   <p className="text-xs text-slate-600 mt-0.5">
                     Create bulk client order, quotation & workshop sheet
@@ -422,7 +419,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               <button
                 type="button"
                 onClick={() => setShowCreateChoiceSheet(false)}
-                className="w-full py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+                className="w-full py-2.5 rounded-xl border border-rose-200 bg-rose-50 text-xs font-bold text-rose-600 hover:bg-rose-100 active:bg-rose-200 transition-colors cursor-pointer"
               >
                 Cancel
               </button>

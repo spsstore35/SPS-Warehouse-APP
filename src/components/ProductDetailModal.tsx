@@ -287,7 +287,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       Unit Price
                     </span>
                     <div className="text-xl sm:text-2xl font-black font-mono tabular-nums text-emerald-700 mt-0.5">
-                      {product.price ?? 250} <span className="text-xs font-sans font-bold text-emerald-600">EGP</span>
+                      {product.price ?? 0} <span className="text-xs font-sans font-bold text-emerald-600">EGP</span>
                     </div>
                   </div>
                   <div className="text-right">

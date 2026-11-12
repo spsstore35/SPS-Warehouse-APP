@@ -356,7 +356,14 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     <div className="text-[10px] uppercase tracking-wider font-black text-slate-400 mb-1">
                       QUOTATION PREPARED FOR
                     </div>
-                    <div className="text-base font-black text-slate-900">{booking.clientName}</div>
+                    <div className="text-base font-black text-slate-900 flex items-center gap-2">
+                      <span>{booking.clientName}</span>
+                      {booking.troopGroup && (
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 border border-blue-200">
+                          {booking.troopGroup}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-600 mt-0.5 font-medium">
                       Phone: <span className="font-semibold text-slate-800">{booking.clientPhone}</span>
                     </div>
@@ -418,7 +425,18 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                       {booking.items.map((it, idx) => (
                         <tr key={it.id}>
                           <td className="py-2 px-3 font-mono text-slate-400 font-bold text-center">{idx + 1}</td>
-                          <td className="py-2 px-3 font-black text-slate-900">{it.productName}</td>
+                          <td className="py-2 px-3 font-black text-slate-900">
+                            <div className="flex items-center gap-2">
+                              {it.productImage ? (
+                                <img
+                                  src={it.productImage}
+                                  alt={it.productName}
+                                  className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-50 print:w-7 print:h-7"
+                                />
+                              ) : null}
+                              <span>{it.productName}</span>
+                            </div>
+                          </td>
                           <td className="py-2 px-3 text-left">
                             <span className="inline-flex items-center gap-1.5 font-medium">
                               <span
@@ -428,7 +446,9 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                               <span className="text-slate-800 font-semibold">{it.colorName}</span>
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-center font-mono font-bold text-slate-800">{it.size}</td>
+                          <td className="py-2 px-3 text-center font-mono font-bold text-slate-800">
+                            {it.size === 'One Size' ? 'Standard' : it.size}
+                          </td>
                           <td className="py-2 px-3 text-center font-mono font-black text-slate-900">
                             {it.quantity}
                           </td>
@@ -633,7 +653,16 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                             className={hasDeficit ? 'bg-amber-50/40 font-medium' : 'hover:bg-slate-50/50'}
                           >
                             <td className="py-2 px-3">
-                              <div className="font-bold text-slate-900">{it.productName}</div>
+                              <div className="flex items-center gap-2">
+                                {it.productImage ? (
+                                  <img
+                                    src={it.productImage}
+                                    alt={it.productName}
+                                    className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-50 print:w-7 print:h-7"
+                                  />
+                                ) : null}
+                                <div className="font-bold text-slate-900">{it.productName}</div>
+                              </div>
                             </td>
                             <td className="py-2 px-3 text-center">
                               <span className="inline-flex items-center gap-1">
@@ -645,7 +674,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                               </span>
                             </td>
                             <td className="py-2 px-3 text-center font-mono font-bold">
-                              {it.size}
+                              {it.size === 'One Size' ? 'Standard' : it.size}
                             </td>
                             <td className="py-2 px-3 text-center font-mono font-bold text-slate-900">
                               {it.quantity}

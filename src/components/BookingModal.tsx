@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Product, ProductVariant, Booking, BookingItem, User, Role } from '../types/inventory';
 import {
   X,
@@ -12,6 +12,7 @@ import {
   Package,
   Layers,
   Check,
+  Edit3,
 } from 'lucide-react';
 
 interface BookingModalProps {
@@ -83,6 +84,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   // Client Info
   const [clientName, setClientName] = useState('');
+  const [troopGroup, setTroopGroup] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [notes, setNotes] = useState('');
   const [discount, setDiscount] = useState<number | ''>('');
@@ -97,7 +99,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       const v = initialProduct.variants[0];
       const avail = v.quantity || 0;
       const defaultQty = 1;
-      const unitPrice = initialProduct.price || 250;
+      const unitPrice = typeof initialProduct.price === 'number' ? initialProduct.price : 0;
       const deficit = Math.max(0, defaultQty - avail);
       const threshold = v.minThreshold || 5;
       const recProd =
@@ -131,6 +133,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return [];
   });
 
+  // Category Filter state before Item Model
+  const [selectedCategory, setSelectedCategory] = useState<string>('All Categories');
+
+  const availableCategories = useMemo(() => {
+    const cats = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
+    return ['All Categories', ...cats];
+  }, [products]);
+
+  const filteredProductsForSelection = useMemo(() => {
+    if (selectedCategory === 'All Categories') return products;
+    return products.filter((p) => p.category === selectedCategory);
+  }, [products, selectedCategory]);
+
   // Selector for adding next item - NO item model pre-selected unless initialProduct provided
   const [selectedProductId, setSelectedProductId] = useState<string>(
     initialProduct?.id || ''
@@ -143,62 +158,97 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (!selectedProduct) return [];
     const map = new Map<string, { colorName: string; colorHex: string }>();
     selectedProduct.variants.forEach((v) => {
-      if (!map.has(v.colorName)) {
-        map.set(v.colorName, {
-          colorName: v.colorName,
-          colorHex: v.colorHex || '#334155',
+      const cName = v.colorName || 'Standard';
+      const cHex = v.colorHex || '#94a3b8';
+      if (!map.has(cName)) {
+        map.set(cName, {
+          colorName: cName,
+          colorHex: cHex,
         });
       }
     });
+    if (map.size === 0) {
+      map.set('Standard', { colorName: 'Standard', colorHex: '#94a3b8' });
+    }
     return Array.from(map.values());
   }, [selectedProduct]);
 
   // Selected Color state
   const [selectedColorName, setSelectedColorName] = useState<string>(() => {
     if (initialProduct && initialProduct.variants.length > 0) {
-      return initialProduct.variants[0].colorName;
+      return initialProduct.variants[0].colorName || 'Standard';
     }
-    return '';
+    return 'Standard';
   });
 
   // Variants filtered by selected color
   const variantsForCurrentColor = useMemo(() => {
     if (!selectedProduct) return [];
     if (!selectedColorName) return selectedProduct.variants;
-    const filtered = selectedProduct.variants.filter((v) => v.colorName === selectedColorName);
+    const filtered = selectedProduct.variants.filter(
+      (v) => (v.colorName || 'Standard') === selectedColorName
+    );
     return filtered.length > 0 ? filtered : selectedProduct.variants;
   }, [selectedProduct, selectedColorName]);
 
-  // Selected Variant (Size) state - NO size selected by default!
+  // Selected Variant (Size) state
   const [selectedVariantId, setSelectedVariantId] = useState<string>('');
+
+  // Auto-select size if only 1 size option exists (e.g. One Size) so user doesn't have to click it!
+  useEffect(() => {
+    if (variantsForCurrentColor.length === 1) {
+      setSelectedVariantId(variantsForCurrentColor[0].id);
+    }
+  }, [variantsForCurrentColor]);
 
   // Order quantity BLANK by default as requested!
   const [newQty, setNewQty] = useState<number | ''>('');
-  const [newPrice, setNewPrice] = useState<number | ''>(selectedProduct?.price || 250);
+  const [newPrice, setNewPrice] = useState<number | ''>(
+    typeof selectedProduct?.price === 'number' ? selectedProduct.price : 0
+  );
+  // Unit price fixed/locked by default until clicking yellow pencil
+  const [isEditingPrice, setIsEditingPrice] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
   // Handler when item model changes
   const handleProductChange = (productId: string) => {
     setSelectedProductId(productId);
+    setIsEditingPrice(false);
     const prod = products.find((p) => p.id === productId);
     if (prod && prod.variants.length > 0) {
       const firstVariant = prod.variants[0];
-      setSelectedColorName(firstVariant.colorName);
-      setSelectedVariantId(''); // NO size selected initially!
-      setNewPrice(prod.price || 250);
+      const cName = firstVariant.colorName || 'Standard';
+      setSelectedColorName(cName);
+      const matching = prod.variants.filter((v) => (v.colorName || 'Standard') === cName);
+      if (matching.length === 1) {
+        setSelectedVariantId(matching[0].id);
+      } else {
+        setSelectedVariantId('');
+      }
+      setNewPrice(typeof prod.price === 'number' ? prod.price : 0);
     } else {
-      setSelectedColorName('');
+      setSelectedColorName('Standard');
       setSelectedVariantId('');
-      setNewPrice(250);
+      setNewPrice(0);
     }
   };
 
   // Handler when color changes
   const handleColorChange = (colorName: string) => {
     setSelectedColorName(colorName);
-    // When color changes, reset size selection so user explicitly picks size
-    setSelectedVariantId('');
+    if (selectedProduct) {
+      const matching = selectedProduct.variants.filter(
+        (v) => (v.colorName || 'Standard') === colorName
+      );
+      if (matching.length === 1) {
+        setSelectedVariantId(matching[0].id);
+      } else {
+        setSelectedVariantId('');
+      }
+    } else {
+      setSelectedVariantId('');
+    }
   };
 
   // Current selected variant object (null if no size selected)
@@ -329,6 +379,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       id: `bk_${Date.now()}`,
       bookingNumber,
       clientName: clientName.trim(),
+      troopGroup: troopGroup.trim() || undefined,
       clientPhone: clientPhone.trim() || 'N/A',
       notes: notes.trim(),
       items,
@@ -396,16 +447,39 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Client / Troop / Group Name <span className="text-rose-500">*</span>
+                  Client Name <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  placeholder="e.g. Saint George Scout Group / Leader Mark"
+                  placeholder="e.g. Leader Mark / Father Youhanna"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Troop / Group Name <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  required
+                  value={troopGroup}
+                  onChange={(e) => setTroopGroup(e.target.value)}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer ${
+                    troopGroup ? 'border-slate-300 text-slate-900' : 'border-amber-300 text-slate-500 bg-amber-50/20'
+                  }`}
+                >
+                  <option value="">-- Select Troop / Group --</option>
+                  <option value="Ashbal">Ashbal</option>
+                  <option value="Zahrat">Zahrat</option>
+                  <option value="Kashafeen">Kashafeen</option>
+                  <option value="Morshedat">Morshedat</option>
+                  <option value="3ashera 1">3ashera 1</option>
+                  <option value="3ashera 2">3ashera 2</option>
+                  <option value="Afrad">Afrad</option>
+                </select>
               </div>
 
               <div>
@@ -424,7 +498,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
 
-              <div className="sm:col-span-2">
+              <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Booking Notes / Special Request
                 </label>
@@ -432,14 +506,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   type="text"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="e.g. Needed before Annual Camp, specific patch placements, custom embroidery..."
+                  placeholder="e.g. Needed before Annual Camp, specific patch placements..."
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
                 />
               </div>
             </div>
           </div>
 
-          {/* Section 2: Item Selection with Separated Color Circles and Size Chips */}
+          {/* Section 2: Item Selection with Category Filter, Separated Color Circles and Size Chips */}
           <div className="border border-blue-200 bg-blue-50/40 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
             <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-blue-200/70 pb-2.5">
               <h3 className="text-xs font-black uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
@@ -451,26 +525,81 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </span>
             </div>
 
-            {/* 1. Item Model Selector */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                1. Item Model *
-              </label>
-              <select
-                value={selectedProductId}
-                onChange={(e) => handleProductChange(e.target.value)}
-                className={`w-full px-3.5 py-2.5 rounded-xl border bg-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs ${
-                  selectedProductId ? 'border-slate-300 text-slate-900' : 'border-amber-300 text-slate-500 bg-amber-50/20'
-                }`}
-              >
-                <option value="">-- Select Item Model --</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id} className="text-slate-900 font-medium">
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+            {/* 1. Category Filter & 2. Item Model Selector */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                  <span>1. Filter Category</span>
+                  <span className="text-[10px] text-blue-700 font-semibold">{availableCategories.length - 1} categories</span>
+                </label>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => {
+                    const cat = e.target.value;
+                    setSelectedCategory(cat);
+                    if (selectedProduct && cat !== 'All Categories' && selectedProduct.category !== cat) {
+                      handleProductChange('');
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-blue-200 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer"
+                >
+                  {availableCategories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                  <span>2. Item Model *</span>
+                  <span className="text-[10px] text-slate-500 font-medium">{filteredProductsForSelection.length} available</span>
+                </label>
+                <select
+                  value={selectedProductId}
+                  onChange={(e) => handleProductChange(e.target.value)}
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer ${
+                    selectedProductId ? 'border-slate-300 text-slate-900' : 'border-amber-300 text-slate-500 bg-amber-50/20'
+                  }`}
+                >
+                  <option value="">-- Select Item Model --</option>
+                  {filteredProductsForSelection.map((p) => (
+                    <option key={p.id} value={p.id} className="text-slate-900 font-medium">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+
+            {/* Selected Product Preview Card */}
+            {selectedProduct && (
+              <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-blue-200 shadow-2xs">
+                {selectedProduct.image ? (
+                  <img
+                    src={selectedProduct.image}
+                    alt={selectedProduct.name}
+                    className="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-50"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
+                    <Package className="w-6 h-6" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-black text-slate-900 truncate">{selectedProduct.name}</div>
+                  <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                    <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-bold border border-slate-200">
+                      {selectedProduct.sku}
+                    </span>
+                    {selectedProduct.category && (
+                      <span className="text-blue-700 font-semibold">{selectedProduct.category}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Color Swatches / Circles ("Dawayer") */}
             <div>
@@ -642,11 +771,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
 
-              {/* Unit Price in EGP */}
+              {/* Unit Price in EGP - Locked with Yellow Pencil Toggle */}
               <div className="sm:col-span-4">
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Unit Price (EGP)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    Unit Price (EGP)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPrice(!isEditingPrice)}
+                    className={`text-[11px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 transition-all ${
+                      isEditingPrice
+                        ? 'bg-amber-400 text-slate-950 font-black ring-2 ring-amber-300 shadow-xs'
+                        : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-2xs'
+                    }`}
+                    title={isEditingPrice ? "Lock price" : "Click yellow pencil to edit price"}
+                  >
+                    <Edit3 className="w-3 h-3 text-amber-900" />
+                    <span>{isEditingPrice ? 'Unlocked' : 'Edit'}</span>
+                  </button>
+                </div>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
                     EGP
@@ -655,15 +799,28 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     type="number"
                     min="0"
                     step="0.5"
+                    readOnly={!isEditingPrice}
                     value={newPrice}
                     onChange={(e) =>
                       setNewPrice(
                         e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0)
                       )
                     }
-                    placeholder="e.g. 250"
-                    className="w-full pl-12 pr-3 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
+                    placeholder="0"
+                    className={`w-full pl-12 pr-9 py-2.5 rounded-xl border text-xs font-mono font-bold transition-all ${
+                      isEditingPrice
+                        ? 'border-amber-400 bg-amber-50/50 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-xs'
+                        : 'border-slate-300 bg-slate-100/90 text-slate-700 cursor-not-allowed'
+                    }`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPrice(!isEditingPrice)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-amber-600 hover:text-amber-800 rounded"
+                    title={isEditingPrice ? "Lock price" : "Edit price"}
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
 
@@ -706,26 +863,39 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <div className="block sm:hidden divide-y divide-slate-100">
                   {items.map((it) => (
                     <div key={it.id} className="p-3.5 space-y-2.5 bg-white">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-slate-900 text-xs">{it.productName}</div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-1 flex-wrap">
-                            <span
-                              className="w-3 h-3 rounded-full border border-slate-300 inline-block"
-                              style={{ backgroundColor: it.colorHex }}
+                      <div className="flex items-start justify-between gap-2.5">
+                        <div className="flex items-center gap-2.5">
+                          {it.productImage ? (
+                            <img
+                              src={it.productImage}
+                              alt={it.productName}
+                              className="w-11 h-11 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-50"
                             />
-                            <span>{it.colorName}</span>
-                            <span>•</span>
-                            <span className="font-mono font-bold text-slate-800 bg-slate-100 px-1.5 py-0.2 rounded">
-                              Size {it.size}
-                            </span>
+                          ) : (
+                            <div className="w-11 h-11 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
+                              <Package className="w-5 h-5" />
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-slate-900 text-xs">{it.productName}</div>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block"
+                                style={{ backgroundColor: it.colorHex }}
+                              />
+                              <span>{it.colorName}</span>
+                              <span>•</span>
+                              <span className="font-mono font-bold text-slate-800 bg-slate-100 px-1.5 py-0.2 rounded">
+                                Size {it.size}
+                              </span>
+                            </div>
                           </div>
                         </div>
 
                         <button
                           type="button"
                           onClick={() => handleRemoveItem(it.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg shrink-0"
                           aria-label="Remove item"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -799,17 +969,32 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       {items.map((it) => (
                         <tr key={it.id} className="hover:bg-slate-50/70">
                           <td className="py-3 px-3">
-                            <div className="font-bold text-slate-900">{it.productName}</div>
-                            <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                              <span
-                                className="inline-block w-2.5 h-2.5 rounded-full border border-slate-300"
-                                style={{ backgroundColor: it.colorHex }}
-                              />
-                              <span>{it.colorName}</span>
-                              <span>•</span>
-                              <span className="font-mono font-bold text-slate-800 bg-slate-100 px-1.5 rounded">
-                                Size {it.size}
-                              </span>
+                            <div className="flex items-center gap-2.5">
+                              {it.productImage ? (
+                                <img
+                                  src={it.productImage}
+                                  alt={it.productName}
+                                  className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-50"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
+                                  <Package className="w-4 h-4" />
+                                </div>
+                              )}
+                              <div>
+                                <div className="font-bold text-slate-900">{it.productName}</div>
+                                <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                                  <span
+                                    className="inline-block w-2.5 h-2.5 rounded-full border border-slate-300"
+                                    style={{ backgroundColor: it.colorHex }}
+                                  />
+                                  <span>{it.colorName}</span>
+                                  <span>•</span>
+                                  <span className="font-mono font-bold text-slate-800 bg-slate-100 px-1.5 rounded">
+                                    Size {it.size}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                           </td>
 
