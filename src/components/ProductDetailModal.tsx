@@ -300,20 +300,24 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
-                  <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Description & Specs</span>
-                  </div>
-                  <p className="text-xs text-slate-700 mt-1.5 leading-relaxed font-medium">
-                    {product.description || (isStandardItem ? 'Standard warehouse item.' : 'Apparel item with size and color matrix.')}
-                  </p>
-                  {product.fabricDetails && (
-                    <div className="text-[11px] text-slate-500 mt-1 font-mono">
-                      Spec: {product.fabricDetails}
+                {(product.description || product.fabricDetails) && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Description & Specs</span>
                     </div>
-                  )}
-                </div>
+                    {product.description && (
+                      <p className="text-xs text-slate-700 mt-1.5 leading-relaxed font-medium">
+                        {product.description}
+                      </p>
+                    )}
+                    {product.fabricDetails && (
+                      <div className="text-[11px] text-slate-500 mt-1 font-mono">
+                        Spec: {product.fabricDetails}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -388,8 +392,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       )}
                       <div>
                         <div className="flex items-center gap-2">
+                          {variant.colorName && variant.colorName !== 'Standard' && isStandardItem && (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0"
+                              style={{ backgroundColor: variant.colorHex }}
+                            />
+                          )}
                           <span className="text-sm font-black text-slate-900">
-                            {isStandardItem ? 'Standard Item' : `Size ${variant.size}`}
+                            {!variant.size || variant.size === 'One Size' || variant.size === 'Standard'
+                              ? 'Standard Size'
+                              : `Size ${variant.size}`}
+                            {variant.colorName && variant.colorName !== 'Standard' ? ` · ${variant.colorName}` : ''}
                           </span>
                           {isLow && (
                             <span className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-1">
@@ -464,7 +477,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         isOpen={showDeleteProductConfirm}
         title="Delete Item"
         itemTitle={product.name}
-        message={`Are you sure you want to delete "${product.name}" (${product.sku})?`}
+        message={`Are you sure you want to delete "${product.name}"?`}
         details="This will permanently delete the item and all its color and size stock combinations from inventory."
         confirmLabel="Yes, Delete"
         cancelLabel="No, Cancel"

@@ -319,9 +319,15 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   <strong className="text-slate-950 font-black">
                     "{log.productName || product?.name}"
                   </strong>{' '}
-                  was updated. Size{' '}
-                  <strong className="text-amber-900 font-black">{log.variantSize}</strong>{' '}
-                  {log.variantColor ? `(${log.variantColor})` : ''} was changed from{' '}
+                  was updated.{' '}
+                  <strong className="text-amber-900 font-black">
+                    {log.variantSize === 'One Size' || log.variantSize === 'Standard' || log.variantSize === 'Standard Size'
+                      ? 'Standard Size'
+                      : log.variantSize === 'Multiple Sizes'
+                      ? 'Multiple Sizes'
+                      : `Size ${log.variantSize}`}
+                  </strong>{' '}
+                  {log.variantColor && log.variantColor !== 'Standard' ? `(${log.variantColor})` : ''} was changed from{' '}
                   <span className="font-mono font-bold text-slate-700">
                     {log.oldQuantity ?? 0} units
                   </span>{' '}
@@ -329,7 +335,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   <span className="font-mono font-black text-emerald-700">
                     {log.newQuantity ?? 0} units
                   </span>
-                  {delta !== undefined && (
+                  {delta !== undefined && delta !== null && (
                     <span
                       className={`ml-1 font-bold ${
                         isPositive ? 'text-emerald-700' : isNegative ? 'text-rose-700' : 'text-slate-700'
@@ -339,13 +345,13 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                     </span>
                   )}
                   .{' '}
-                  {log.totalQuantityAfter !== undefined && (
+                  {log.totalQuantityAfter !== undefined && log.totalQuantityAfter !== null && (
                     <>
                       The total stock for this item is now{' '}
                       <strong className="font-mono text-slate-950 font-black">
                         {log.totalQuantityAfter} total units
                       </strong>
-                      {log.totalQuantityBefore !== undefined && (
+                      {log.totalQuantityBefore !== undefined && log.totalQuantityBefore !== null && (
                         <span className="text-slate-600">
                           {' '}
                           (previously {log.totalQuantityBefore} units)
@@ -399,7 +405,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
           {/* Visual Stock Metrics Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {/* Box 1: Variant Count Transition */}
-            {log.oldQuantity !== undefined && log.newQuantity !== undefined && (
+            {log.oldQuantity !== undefined && log.oldQuantity !== null && log.newQuantity !== undefined && log.newQuantity !== null && (
               <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Size Stock</div>
                 <div className="flex items-center gap-2 mt-1">
@@ -412,7 +418,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   </span>
                   <span className="text-xs text-slate-500">units</span>
                 </div>
-                {delta !== undefined && (
+                {delta !== undefined && delta !== null && (
                   <span
                     className={`inline-block mt-1 px-1.5 py-0.2 rounded text-[10px] font-black ${
                       isPositive
@@ -422,14 +428,14 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                         : 'bg-slate-100 text-slate-700'
                     }`}
                   >
-                    {isPositive ? `+${delta} Added` : `${delta} Deducted`}
+                    {isPositive ? `+${delta} Added` : isNegative ? `${delta} Removed` : '0 Change'}
                   </span>
                 )}
               </div>
             )}
 
             {/* Box 2: Total Product Stock */}
-            {log.totalQuantityAfter !== undefined && (
+            {log.totalQuantityAfter !== undefined && log.totalQuantityAfter !== null && (
               <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Total Item Stock</div>
                 <div className="flex items-baseline gap-1 mt-1">
@@ -439,7 +445,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   <span className="text-xs text-slate-500">units</span>
                 </div>
                 <div className="text-[10px] text-slate-500 mt-1">
-                  {log.totalQuantityBefore !== undefined
+                  {log.totalQuantityBefore !== undefined && log.totalQuantityBefore !== null
                     ? `From ${log.totalQuantityBefore} units`
                     : 'Current on hand'}
                 </div>

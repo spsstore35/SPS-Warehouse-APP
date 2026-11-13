@@ -168,7 +168,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
       resolvedReason = reason.trim();
     }
 
-    const finalReason = resolvedReason !== '' ? resolvedReason : `Stock Adjustment: ${product.name}`;
+    const finalReason = resolvedReason !== '' ? resolvedReason : `Stock Adjustment: "${product.name}"`;
 
     if (isAdmin) {
       onAdminDirectAdjust({
@@ -252,7 +252,9 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
               <div className="text-xs font-mono font-semibold text-amber-700">{product.sku}</div>
               <div className="text-sm font-bold text-slate-900 truncate">{product.name}</div>
               <div className="text-[11px] text-slate-500 truncate">
-                {activeVariant.size !== 'One Size' ? `Size ${activeVariant.size}` : ''}{' '}
+                {!activeVariant.size || activeVariant.size === 'One Size' || activeVariant.size === 'Standard'
+                  ? 'Standard Size'
+                  : `Size ${activeVariant.size}`}{' '}
                 {activeVariant.colorName !== 'Standard' ? `· ${activeVariant.colorName}` : ''}
               </div>
             </div>
@@ -317,7 +319,11 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
                           : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300 font-bold'
                       }`}
                     >
-                      <div className="text-xs">{v.size !== 'One Size' ? `Size ${v.size}` : 'Standard'}</div>
+                      <div className="text-xs">
+                        {!v.size || v.size === 'One Size' || v.size === 'Standard'
+                          ? 'Standard Size'
+                          : `Size ${v.size}`}
+                      </div>
                       <div className={`text-[11px] font-mono mt-0.5 ${isSelected ? 'text-amber-300' : 'text-slate-500'}`}>
                         {v.quantity} units
                       </div>

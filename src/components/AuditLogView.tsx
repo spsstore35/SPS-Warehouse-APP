@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AuditLogEntry, Product, Booking } from '../types/inventory';
+import { formatAuditLogReason } from '../utils/auditReason';
 import {
   History,
   ShieldCheck,
@@ -15,6 +16,7 @@ import {
   Eye,
   CalendarDays,
   Bell,
+  ArrowRight,
 } from 'lucide-react';
 import { ActivityDetailModal } from './ActivityDetailModal';
 import {
@@ -22,6 +24,8 @@ import {
   requestNotificationPermission,
   sendTestNotification,
 } from '../services/notificationService';
+
+const ITEMS_PER_PAGE = 10;
 
 interface AuditLogViewProps {
   logs: AuditLogEntry[];
@@ -119,6 +123,12 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
 
   const [selectedDate, setSelectedDate] = useState<string>(initialDate);
   const [isDayFilterEnabled, setIsDayFilterEnabled] = useState<boolean>(true);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Reset to page 1 when filters or date change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, selectedDate, isDayFilterEnabled]);
 
   // Set of dates that have at least one log
   const datesWithActivity = useMemo(() => {
@@ -147,6 +157,13 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
       return true;
     });
   }, [logs, filter, isDayFilterEnabled, selectedDate]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedLogs = useMemo(() => {
+    const start = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
+    return filteredLogs.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredLogs, safeCurrentPage]);
 
   // Count total logs on the selected date (regardless of action filter)
   const countForSelectedDate = useMemo(() => {
@@ -252,13 +269,13 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
       )}
 
       {/* Day-by-Day Date Navigation Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 sm:p-5 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4">
           {/* Left: Day-by-Day Navigator Controls */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-between sm:justify-start gap-2 w-full lg:w-auto">
             <button
               onClick={handlePrevDay}
-              className="p-2 sm:px-3 sm:py-2 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs"
+              className="p-2.5 sm:px-3 sm:py-2 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs shrink-0"
               title="Previous Day"
             >
               <ChevronLeft className="w-4 h-4 text-slate-600" />
@@ -266,10 +283,10 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
             </button>
 
             {/* Interactive Date Picker & Formatted Day Label */}
-            <div className="relative flex items-center bg-amber-50/70 border border-amber-200/90 rounded-xl px-3 py-1.5 gap-2.5 shadow-xs hover:border-amber-400 transition-colors">
+            <div className="relative flex-1 sm:flex-none flex items-center justify-center sm:justify-start bg-amber-50/70 border border-amber-200/90 rounded-xl px-3 py-1.5 gap-2 shadow-xs hover:border-amber-400 transition-colors">
               <Calendar className="w-4 h-4 text-amber-700 shrink-0" />
-              <div className="flex flex-col">
-                <span className="text-[10px] font-black uppercase tracking-wider text-amber-800">
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 truncate">
                   {formatFriendlyDate(selectedDate)}
                 </span>
                 <input
@@ -288,7 +305,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
 
             <button
               onClick={handleNextDay}
-              className="p-2 sm:px-3 sm:py-2 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs"
+              className="p-2.5 sm:px-3 sm:py-2 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs shrink-0"
               title="Next Day"
             >
               <span className="hidden sm:inline">Next Day</span>
@@ -297,11 +314,11 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
           </div>
 
           {/* Right: Mode Switch (Today vs All Dates) */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl self-start lg:self-auto border border-slate-200">
+          <div className="grid grid-cols-2 sm:flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-full sm:w-auto border border-slate-200">
             <button
               type="button"
               onClick={handleJumpToToday}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-2 sm:py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                 isDayFilterEnabled && selectedDate === todayKey
                   ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -313,7 +330,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
             <button
               type="button"
               onClick={() => setIsDayFilterEnabled(false)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
+              className={`px-3 py-2 sm:py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center ${
                 !isDayFilterEnabled
                   ? 'bg-slate-900 text-white font-bold shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -450,112 +467,245 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
           </div>
         </div>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 shadow-sm">
-          {filteredLogs.map((log) => {
-            const isAdmin = log.actorRole === 'admin';
-            const matchedProduct = products.find(
-              (p) => p.id === log.productId || p.name === log.productName
-            );
-            const itemImage = log.productImage || matchedProduct?.image || matchedProduct?.images?.[0];
-
-            const isOrder =
-              Boolean(log.bookingNumber) ||
-              Boolean(log.bookingId) ||
-              log.action?.includes('booking') ||
-              /booking|order|sps-/i.test(`${log.summary || ''} ${log.details || ''}`);
-
-            const isAccount =
-              log.action === 'account_deleted' ||
-              log.action === 'account_updated' ||
-              /role|permission|user|account|worker to admin|admin to worker/i.test(
-                `${log.summary || ''} ${log.details || ''}`
+        <div className="space-y-3">
+          <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 shadow-sm">
+            {paginatedLogs.map((log) => {
+              const isAdmin = log.actorRole === 'admin';
+              const matchedProduct = products.find(
+                (p) => p.id === log.productId || p.name === log.productName
               );
+              const itemImage = log.productImage || matchedProduct?.image || matchedProduct?.images?.[0];
 
-            const hasProductImage = !isOrder && !isAccount && Boolean(itemImage);
+              const isOrder =
+                Boolean(log.bookingNumber) ||
+                Boolean(log.bookingId) ||
+                log.action?.includes('booking') ||
+                /booking|order|sps-/i.test(`${log.summary || ''} ${log.details || ''}`);
 
-            return (
-              <div
-                key={log.id}
-                onClick={() => setSelectedLog(log)}
-                className="p-4 sm:p-5 flex items-start gap-3.5 hover:bg-amber-50/40 cursor-pointer transition-all group"
-                title="Click to view detailed breakdown"
-              >
-                {/* Product thumbnail or specialized action icon */}
-                {isOrder ? (
-                  <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
-                    <ShoppingBag className="w-5 h-5 text-blue-600" />
-                  </div>
-                ) : isAccount ? (
-                  <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-700 border border-purple-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
-                    <UserCheck className="w-5 h-5 text-purple-600" />
-                  </div>
-                ) : hasProductImage ? (
-                  <div className="relative w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
-                    <img
-                      src={itemImage}
-                      alt={log.productName || 'Garment'}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                ) : (
-                  <div
-                    className={`w-12 h-12 rounded-xl shrink-0 flex items-center justify-center mt-0.5 ${
-                      isAdmin
-                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                        : 'bg-sky-50 text-sky-800 border border-sky-200'
-                    }`}
-                  >
-                    {isAdmin ? <ShieldCheck className="w-5 h-5" /> : <UserCheck className="w-5 h-5" />}
-                  </div>
-                )}
+              const isAccount =
+                log.action === 'account_deleted' ||
+                log.action === 'account_updated' ||
+                /role|permission|user|account|worker to admin|admin to worker/i.test(
+                  `${log.summary || ''} ${log.details || ''}`
+                );
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                    <h4 className="text-sm font-bold text-slate-900 group-hover:text-amber-800 transition-colors">
-                      {log.summary}
-                    </h4>
-                    <span className="text-[11px] font-mono font-medium text-slate-400">
-                      {new Date(log.timestamp).toLocaleString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })}
-                    </span>
-                  </div>
+              const hasProductImage = !isOrder && !isAccount && Boolean(itemImage);
+              const hasStockDiff =
+                log.oldQuantity !== undefined &&
+                log.oldQuantity !== null &&
+                log.newQuantity !== undefined &&
+                log.newQuantity !== null;
+              const diffDelta =
+                log.delta !== undefined && log.delta !== null
+                  ? log.delta
+                  : hasStockDiff
+                  ? Number(log.newQuantity) - Number(log.oldQuantity)
+                  : undefined;
+              const formattedSize =
+                !log.variantSize || log.variantSize === 'One Size' || log.variantSize === 'Standard' || log.variantSize === 'Standard Size'
+                  ? 'Standard Size'
+                  : log.variantSize === 'Multiple Sizes'
+                  ? 'Multiple Sizes'
+                  : `Size ${log.variantSize}`;
+              const friendlyReason = formatAuditLogReason(log);
 
-                  {log.details && (
-                    <p className="text-xs text-slate-600 mt-1 font-medium line-clamp-2">
-                      {log.details}
-                    </p>
+              return (
+                <div
+                  key={log.id}
+                  onClick={() => setSelectedLog(log)}
+                  className="p-3.5 sm:p-5 flex items-start gap-3 sm:gap-4 hover:bg-amber-50/40 active:bg-amber-50/60 cursor-pointer transition-all group"
+                  title="Click to view detailed breakdown"
+                >
+                  {/* Product thumbnail or specialized action icon */}
+                  {isOrder ? (
+                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-blue-50 text-blue-700 border border-blue-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
+                      <ShoppingBag className="w-5 h-5 text-blue-600" />
+                    </div>
+                  ) : isAccount ? (
+                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-purple-50 text-purple-700 border border-purple-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
+                      <UserCheck className="w-5 h-5 text-purple-600" />
+                    </div>
+                  ) : hasProductImage ? (
+                    <div className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 shrink-0 shadow-xs flex items-center justify-center mt-0.5 group-hover:scale-105 transition-transform">
+                      <img
+                        src={itemImage}
+                        alt={log.productName || 'Item'}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className={`w-11 h-11 sm:w-12 sm:h-12 rounded-xl shrink-0 flex items-center justify-center mt-0.5 ${
+                        isAdmin
+                          ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                          : 'bg-sky-50 text-sky-800 border border-sky-200'
+                      }`}
+                    >
+                      {isAdmin ? <ShieldCheck className="w-5 h-5" /> : <UserCheck className="w-5 h-5" />}
+                    </div>
                   )}
 
-                  <div className="flex items-center justify-between gap-2 mt-2">
-                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                      <span className="font-bold text-slate-700">{log.actorName}</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="capitalize">{log.actorRole} Authority</span>
-                      {log.productName && (
-                        <>
-                          <span aria-hidden="true">·</span>
-                          <span className="text-slate-600 font-semibold truncate max-w-[140px] sm:max-w-xs">
-                            {log.productName}
-                          </span>
-                        </>
-                      )}
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <h4 className="text-xs sm:text-sm font-black text-slate-900 group-hover:text-amber-800 transition-colors leading-snug">
+                        {log.summary}
+                      </h4>
+                      <span className="text-[10px] sm:text-[11px] font-mono font-medium text-slate-400 shrink-0">
+                        {new Date(log.timestamp).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
                     </div>
 
-                    <div className="flex items-center gap-1 text-[11px] font-bold text-amber-800 opacity-90 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0">
-                      <Eye className="w-3 h-3 text-amber-600" />
-                      <span className="hidden sm:inline">View Breakdown</span>
-                      <ChevronRight className="w-3.5 h-3.5 text-amber-600" />
+                    {/* Visual Stock Diff Pills when numeric quantities are recorded */}
+                    {hasStockDiff && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        {log.variantSize && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] sm:text-[11px] font-bold text-slate-800">
+                            <span>{formattedSize}</span>
+                            {log.variantColor && log.variantColor !== 'Standard' && (
+                              <span className="text-slate-500 font-medium">· {log.variantColor}</span>
+                            )}
+                          </span>
+                        )}
+
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[11px] font-mono shadow-2xs">
+                          <span className="text-slate-400 line-through font-bold">{log.oldQuantity}</span>
+                          <ArrowRight className="w-3 h-3 text-slate-400" />
+                          <span className="text-slate-900 font-black">{log.newQuantity}</span>
+                          <span className="text-slate-500 font-sans text-[10px]">units</span>
+                        </span>
+
+                        {diffDelta !== undefined && (
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-[11px] font-mono font-black ${
+                              diffDelta > 0
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : diffDelta < 0
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                : 'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}
+                          >
+                            {diffDelta > 0 ? `+${diffDelta} Added` : diffDelta < 0 ? `${diffDelta} Removed` : '0 Change'}
+                          </span>
+                        )}
+
+                        {log.totalQuantityAfter !== undefined && log.totalQuantityAfter !== null && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] sm:text-[11px] font-mono font-bold text-amber-900">
+                            Total: {log.totalQuantityAfter} units
+                            {log.totalQuantityBefore !== undefined && log.totalQuantityBefore !== null
+                              ? ` (from ${log.totalQuantityBefore})`
+                              : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {log.details && (
+                      <p className="text-xs text-slate-600 font-medium line-clamp-2 leading-relaxed">
+                        {log.details}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                        <span className="font-bold text-slate-700">{log.actorName}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-semibold text-[10px] capitalize">
+                          {log.actorRole === 'admin' ? 'Admin' : 'Staff'}
+                        </span>
+                        {friendlyReason && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="text-amber-800 font-semibold truncate max-w-[180px] sm:max-w-xs">
+                              {friendlyReason}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-amber-800 opacity-90 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0 ml-auto">
+                        <Eye className="w-3.5 h-3.5 text-amber-600" />
+                        <span>View Breakdown</span>
+                        <ChevronRight className="w-3.5 h-3.5 text-amber-600" />
+                      </div>
                     </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+
+          {/* Pagination Controls (10 logs per page) */}
+          <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+            <div className="text-xs text-slate-500 font-medium text-center sm:text-left">
+              Showing{' '}
+              <strong className="text-slate-900 font-bold">
+                {(safeCurrentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(safeCurrentPage * ITEMS_PER_PAGE, filteredLogs.length)}
+              </strong>{' '}
+              of <strong className="text-slate-900 font-bold">{filteredLogs.length}</strong> logs{' '}
+              <span className="text-slate-400">({ITEMS_PER_PAGE} per page)</span>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                <button
+                  type="button"
+                  disabled={safeCurrentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold text-slate-700 flex items-center gap-1 transition-colors"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Prev</span>
+                </button>
+
+                {Array.from({ length: totalPages }, (_, idx) => idx + 1)
+                  .filter((pageNum) => {
+                    if (totalPages <= 7) return true;
+                    return (
+                      pageNum === 1 ||
+                      pageNum === totalPages ||
+                      Math.abs(pageNum - safeCurrentPage) <= 1
+                    );
+                  })
+                  .map((pageNum, idx, arr) => {
+                    const prevPage = arr[idx - 1];
+                    const showEllipsis = prevPage && pageNum - prevPage > 1;
+                    return (
+                      <React.Fragment key={pageNum}>
+                        {showEllipsis && (
+                          <span className="px-1.5 text-xs text-slate-400 font-bold">…</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`min-w-[34px] h-8 px-2.5 rounded-xl text-xs font-mono font-bold transition-all ${
+                            safeCurrentPage === pageNum
+                              ? 'bg-amber-500 text-slate-950 font-black shadow-xs ring-2 ring-amber-400/40'
+                              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+
+                <button
+                  type="button"
+                  disabled={safeCurrentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold text-slate-700 flex items-center gap-1 transition-colors"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
       )}
 

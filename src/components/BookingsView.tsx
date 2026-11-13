@@ -22,6 +22,8 @@ import {
   X,
   Printer,
   MessageCircle,
+  Edit3,
+  Users,
 } from 'lucide-react';
 
 interface BookingsViewProps {
@@ -65,6 +67,16 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [waLanguage, setWaLanguage] = useState<'en' | 'ar'>('en');
   const [pendingPctChange, setPendingPctChange] = useState<number | null>(null);
   const [showConfirmDepositModal, setShowConfirmDepositModal] = useState<boolean>(false);
+  const [bookingToDelete, setBookingToDelete] = useState<Booking | null>(null);
+  const [isEditingTroop, setIsEditingTroop] = useState<boolean>(false);
+  const [editTroopValue, setEditTroopValue] = useState<string>('');
+
+  const TROOP_OPTIONS = ['Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'];
+
+  useEffect(() => {
+    setIsEditingTroop(false);
+    setEditTroopValue('');
+  }, [selectedBookingId]);
 
   // Helper to format clean WhatsApp URL with localized message & quotation details
   const formatPhoneForWhatsApp = (rawPhone: string): string => {
@@ -97,7 +109,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       itemsSummary = booking.items
         .map(
           (it, idx) =>
-            `${idx + 1}. ${it.productName} (${it.size} / ${it.colorName}) - ${it.quantity} pcs @ ${it.unitPrice.toFixed(0)} EGP = ${it.totalPrice.toFixed(0)} EGP`
+            `${idx + 1}. ${it.productName} (${!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard Size' : it.size} / ${it.colorName}) - ${it.quantity} pcs @ ${it.unitPrice.toFixed(0)} EGP = ${it.totalPrice.toFixed(0)} EGP`
         )
         .join('\n');
     }
@@ -295,6 +307,44 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
     };
     if (onLogActivity) onLogActivity(declineLog);
     if (onShowToast) onShowToast(`Declined deposit change request for Order #${activeBooking.bookingNumber}.`, declineLog);
+  };
+
+  const handleSaveTroopChange = () => {
+    if (!activeBooking || !isAdmin || !editTroopValue) return;
+    const oldTroop = activeBooking.troopGroup || 'Unassigned';
+    const nextTroop = editTroopValue.trim();
+    if (!nextTroop || nextTroop === oldTroop) {
+      setIsEditingTroop(false);
+      return;
+    }
+
+    const updated: Booking = {
+      ...activeBooking,
+      troopGroup: nextTroop,
+      updatedAt: new Date().toISOString(),
+    };
+    if (onUpdateBooking) {
+      onUpdateBooking(updated);
+    }
+
+    const troopLog = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_updated',
+      actorName: currentUser.name || 'Admin',
+      actorRole: 'admin',
+      bookingId: activeBooking.id,
+      bookingNumber: activeBooking.bookingNumber,
+      bookingItems: activeBooking.items,
+      reason: `Troop Changed: ${oldTroop} → ${nextTroop}`,
+      summary: `Admin moved "${activeBooking.clientName}" (#${activeBooking.bookingNumber}) from ${oldTroop} to ${nextTroop}`,
+      details: `Order #${activeBooking.bookingNumber} (${activeBooking.clientName}): Troop assignment changed from "${oldTroop}" to "${nextTroop}" by Admin (${currentUser.name || 'Admin'}).`,
+    };
+    if (onLogActivity) onLogActivity(troopLog);
+    if (onShowToast) {
+      onShowToast(`Moved "${activeBooking.clientName}" to ${nextTroop}.`, troopLog);
+    }
+    setIsEditingTroop(false);
   };
 
   return (
@@ -748,6 +798,71 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                 )}
               </div>
 
+              {/* Admin-Only Troop / Group Assignment Control */}
+              <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-black text-slate-400">
+                      Troop / Group Assignment
+                    </div>
+                    <div className="text-xs sm:text-sm font-black text-slate-900 mt-0.5">
+                      {activeBooking.troopGroup || 'Unassigned'}
+                    </div>
+                  </div>
+                </div>
+
+                {isAdmin && (
+                  isEditingTroop ? (
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                      <select
+                        value={editTroopValue}
+                        onChange={(e) => setEditTroopValue(e.target.value)}
+                        className="flex-1 sm:flex-none px-3 py-2 rounded-xl border border-blue-300 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[40px]"
+                      >
+                        <option value="">-- Select Troop --</option>
+                        {TROOP_OPTIONS.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleSaveTroopChange}
+                        disabled={!editTroopValue || editTroopValue === (activeBooking.troopGroup || '')}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1 min-h-[40px]"
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>Save</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingTroop(false)}
+                        className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs min-h-[40px]"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditTroopValue(activeBooking.troopGroup || '');
+                        setIsEditingTroop(true);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors min-h-[40px] shrink-0"
+                      title="Admins can transfer this booking to another troop"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Change Troop (Admin)</span>
+                    </button>
+                  )
+                )}
+              </div>
+
               {/* Action Cards: Quotation PDF & Workshop Sheet */}
               <div className="space-y-2.5">
                 <div className="text-[10px] uppercase tracking-wider font-black text-slate-400">
@@ -968,7 +1083,7 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                             </span>
                             <span>•</span>
                             <span className="font-mono font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 text-xs">
-                              Size: {it.size}
+                              {!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard Size' : `Size: ${it.size}`}
                             </span>
                           </div>
                         </div>
@@ -1071,12 +1186,7 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                 <div className="pt-1 flex justify-end">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (confirm(`Are you sure you want to delete booking ${activeBooking.bookingNumber}?`)) {
-                        onDeleteBooking(activeBooking.id);
-                        setSelectedBookingId(null);
-                      }
-                    }}
+                    onClick={() => setBookingToDelete(activeBooking)}
                     className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 border border-rose-200 transition-colors flex items-center justify-center gap-1.5"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -1245,6 +1355,55 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
               >
                 <Check className="w-4 h-4 stroke-[3]" />
                 <span>Yes, Confirm Payment Received</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: CONFIRM DELETE BOOKING */}
+      {bookingToDelete && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base sm:text-lg font-black text-slate-900">
+                Delete Booking Record?
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Are you sure you want to permanently delete booking{' '}
+                <strong className="text-slate-900 font-mono">{bookingToDelete.bookingNumber}</strong> for{' '}
+                <strong className="text-slate-900">{bookingToDelete.clientName}</strong>?
+              </p>
+              {bookingToDelete.inventoryDeducted && bookingToDelete.status === 'preparing' && (
+                <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-2 mt-2">
+                  Reserved inventory units from this order will be restored to warehouse stock.
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setBookingToDelete(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors min-h-[42px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteBooking(bookingToDelete.id);
+                  setBookingToDelete(null);
+                  setSelectedBookingId(null);
+                }}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs shadow-md shadow-rose-600/20 transition-all flex items-center justify-center gap-1.5 min-h-[42px]"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Yes, Delete</span>
               </button>
             </div>
           </div>

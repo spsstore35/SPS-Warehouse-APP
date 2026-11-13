@@ -13,7 +13,14 @@ import {
   Layers,
   Check,
   Edit3,
+  AlertCircle,
 } from 'lucide-react';
+
+const formatSizeShort = (sz?: string) =>
+  !sz || sz === 'One Size' || sz === 'Standard' ? 'Standard Size' : sz;
+
+const formatSizeBadge = (sz?: string) =>
+  !sz || sz === 'One Size' || sz === 'Standard' ? 'Standard Size' : `Size ${sz}`;
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -206,8 +213,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [newPrice, setNewPrice] = useState<number | ''>(
     typeof selectedProduct?.price === 'number' ? selectedProduct.price : 0
   );
-  // Unit price fixed/locked by default until clicking yellow pencil
   const [isEditingPrice, setIsEditingPrice] = useState<boolean>(false);
+  const [formError, setFormError] = useState<string>('');
+  const [addItemError, setAddItemError] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -215,6 +223,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const handleProductChange = (productId: string) => {
     setSelectedProductId(productId);
     setIsEditingPrice(false);
+    setAddItemError('');
     const prod = products.find((p) => p.id === productId);
     if (prod && prod.variants.length > 0) {
       const firstVariant = prod.variants[0];
@@ -257,17 +266,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   // Add Item to List
   const handleAddItem = () => {
+    setFormError('');
+    setAddItemError('');
     if (!selectedProduct) {
-      alert('Please select an Item Model first.');
+      setAddItemError('Please select an Item Model first.');
       return;
     }
     if (!currentVariant) {
-      alert('Please select a size for the item.');
+      setAddItemError('Please select a size for the item.');
       return;
     }
 
     if (newQty === '' || newQty <= 0) {
-      alert('Please enter order quantity.');
+      setAddItemError('Please add quantity');
       return;
     }
 
@@ -364,12 +375,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
     if (!clientName.trim()) {
-      alert('Please enter client or organization name.');
+      setFormError('Please enter client or organization name.');
       return;
     }
     if (items.length === 0) {
-      alert('Please add at least one item to this booking order.');
+      setFormError('Please add at least one item to this booking order.');
       return;
     }
 
@@ -437,6 +449,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
         {/* Scrollable Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 text-slate-900">
+          {formError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <span>{formError}</span>
+            </div>
+          )}
+
           {/* Section 1: Client Information */}
           <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
             <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
@@ -672,7 +691,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs font-bold text-slate-700">
-                  3. Choose Size: <span className={`ml-1 font-black ${currentVariant ? 'text-blue-950' : 'text-amber-700'}`}>{currentVariant ? currentVariant.size : '(Please select a size)'}</span>
+                  3. Choose Size: <span className={`ml-1 font-black ${currentVariant ? 'text-blue-950' : 'text-amber-700'}`}>{currentVariant ? formatSizeShort(currentVariant.size) : '(Please select a size)'}</span>
                 </label>
                 {selectedProduct && (
                   <span className="text-[11px] text-slate-500 font-medium">
@@ -709,7 +728,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                             : 'bg-white text-slate-800 border-slate-300 hover:border-blue-400 shadow-xs'
                         }`}
                       >
-                        <span className="font-mono text-xs uppercase">{v.size}</span>
+                        <span className="font-mono text-xs">{formatSizeShort(v.size)}</span>
                         <span
                           className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${
                             isSelected
@@ -735,13 +754,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Order Quantity
                 </label>
-                <div className="flex items-center border border-slate-300 rounded-xl bg-white shadow-xs overflow-hidden">
+                <div
+                  className={`flex items-center border rounded-xl bg-white shadow-xs overflow-hidden transition-colors ${
+                    addItemError === 'Please add quantity'
+                      ? 'border-rose-500 ring-2 ring-rose-500/20'
+                      : 'border-slate-300'
+                  }`}
+                >
                   <button
                     type="button"
-                    onClick={() =>
-                      setNewQty((q) => Math.max(1, (typeof q === 'number' ? q : 1) - 1))
-                    }
-                    className="w-10 h-10 flex items-center justify-center text-slate-600 hover:bg-slate-100 active:bg-slate-200 border-r border-slate-200 shrink-0"
+                    onClick={() => {
+                      setAddItemError('');
+                      setNewQty((q) => Math.max(1, (typeof q === 'number' ? q : 1) - 1));
+                    }}
+                    className="w-11 h-11 flex items-center justify-center text-slate-600 hover:bg-slate-100 active:bg-slate-200 border-r border-slate-200 shrink-0"
                     aria-label="Decrease quantity"
                   >
                     <Minus className="w-3.5 h-3.5" />
@@ -751,19 +777,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     min="1"
                     placeholder="Enter qty..."
                     value={newQty}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      setAddItemError('');
                       setNewQty(
                         e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value) || 1)
-                      )
-                    }
-                    className="w-full text-center py-2 text-xs font-mono font-black text-slate-900 focus:outline-none placeholder:text-slate-400 placeholder:font-normal"
+                      );
+                    }}
+                    className="w-full text-center py-2.5 text-xs font-mono font-black text-slate-900 focus:outline-none placeholder:text-slate-400 placeholder:font-normal"
                   />
                   <button
                     type="button"
-                    onClick={() =>
-                      setNewQty((q) => (typeof q === 'number' ? q + 1 : 1))
-                    }
-                    className="w-10 h-10 flex items-center justify-center text-slate-600 hover:bg-slate-100 active:bg-slate-200 border-l border-slate-200 shrink-0"
+                    onClick={() => {
+                      setAddItemError('');
+                      setNewQty((q) => (typeof q === 'number' ? q + 1 : 1));
+                    }}
+                    className="w-11 h-11 flex items-center justify-center text-slate-600 hover:bg-slate-100 active:bg-slate-200 border-l border-slate-200 shrink-0"
                     aria-label="Increase quantity"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -829,13 +857,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <button
                   type="button"
                   onClick={handleAddItem}
-                  className="w-full h-10 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
+                  className="w-full h-11 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
                 >
                   <Plus className="w-4 h-4 stroke-[2.5]" />
                   <span>+ Add Item</span>
                 </button>
               </div>
             </div>
+
+            {addItemError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2 animate-in fade-in duration-150">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{addItemError}</span>
+              </div>
+            )}
           </div>
 
           {/* Section 3: Items in Order Breakdown */}
@@ -860,33 +895,36 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             ) : (
               <>
                 {/* Mobile Cards View (Visible on phones) */}
-                <div className="block sm:hidden divide-y divide-slate-100">
+                <div className="block sm:hidden divide-y divide-slate-200 bg-slate-50/40">
                   {items.map((it) => (
-                    <div key={it.id} className="p-3.5 space-y-2.5 bg-white">
-                      <div className="flex items-start justify-between gap-2.5">
-                        <div className="flex items-center gap-2.5">
+                    <div key={it.id} className="p-3.5 space-y-3 bg-white">
+                      {/* Header Row: Image + Name/Variant + Remove Button */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
                           {it.productImage ? (
                             <img
                               src={it.productImage}
                               alt={it.productName}
-                              className="w-11 h-11 rounded-lg object-cover border border-slate-200 shrink-0 bg-slate-50"
+                              className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0 bg-slate-50 shadow-2xs"
                             />
                           ) : (
-                            <div className="w-11 h-11 rounded-lg bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
+                            <div className="w-12 h-12 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center font-bold text-xs shrink-0">
                               <Package className="w-5 h-5" />
                             </div>
                           )}
-                          <div>
-                            <div className="font-bold text-slate-900 text-xs">{it.productName}</div>
-                            <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <div className="min-w-0">
+                            <div className="font-black text-slate-900 text-sm leading-snug truncate">
+                              {it.productName}
+                            </div>
+                            <div className="text-[11px] text-slate-600 flex items-center gap-1.5 mt-1 flex-wrap">
                               <span
-                                className="w-2.5 h-2.5 rounded-full border border-slate-300 inline-block"
+                                className="w-2.5 h-2.5 rounded-full border border-black/15 inline-block shrink-0"
                                 style={{ backgroundColor: it.colorHex }}
                               />
-                              <span>{it.colorName}</span>
-                              <span>•</span>
-                              <span className="font-mono font-bold text-slate-800 bg-slate-100 px-1.5 py-0.2 rounded">
-                                Size {it.size}
+                              <span className="font-semibold">{it.colorName}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-mono font-bold text-slate-800 bg-slate-100 border border-slate-200/80 px-1.5 py-0.5 rounded-md">
+                                {formatSizeBadge(it.size)}
                               </span>
                             </div>
                           </div>
@@ -895,16 +933,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         <button
                           type="button"
                           onClick={() => handleRemoveItem(it.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg shrink-0"
+                          className="w-10 h-10 -mr-1 -mt-1 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl shrink-0 transition-colors"
                           aria-label="Remove item"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
 
-                      <div className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-xl">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-500 text-[11px]">Qty:</span>
+                      {/* Pricing & Quantity Strip */}
+                      <div className="grid grid-cols-12 items-center gap-2 bg-slate-50/90 border border-slate-200/70 px-3 py-2.5 rounded-xl">
+                        <div className="col-span-4 flex items-center gap-1.5">
+                          <span className="text-[11px] font-bold text-slate-500">Qty</span>
                           <input
                             type="number"
                             min="1"
@@ -912,39 +951,32 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                             onChange={(e) =>
                               handleUpdateItem(it.id, { quantity: parseInt(e.target.value) || 1 })
                             }
-                            className="w-14 px-1.5 py-1 text-center font-mono font-bold border border-slate-300 rounded-lg bg-white"
+                            className="w-16 h-9 px-2 text-center font-mono text-xs font-black text-slate-900 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
 
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-500 text-[11px]">Price:</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
-                            value={it.unitPrice}
-                            onChange={(e) =>
-                              handleUpdateItem(it.id, { unitPrice: parseFloat(e.target.value) || 0 })
-                            }
-                            className="w-16 px-1.5 py-1 text-right font-mono font-bold border border-slate-300 rounded-lg bg-white"
-                          />
+                        <div className="col-span-4 text-center">
+                          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Unit Price</div>
+                          <div className="font-mono text-xs font-bold tabular-nums text-slate-700 mt-0.5">
+                            {it.unitPrice.toFixed(0)} EGP
+                          </div>
                         </div>
 
-                        <div className="font-mono font-bold text-blue-900 text-right">
-                          {it.totalPrice.toFixed(2)} EGP
+                        <div className="col-span-4 text-right">
+                          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Total</div>
+                          <div className="font-mono text-xs font-black tabular-nums text-blue-900 mt-0.5">
+                            {it.totalPrice.toFixed(2)} EGP
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-slate-500 font-mono">
-                          Warehouse: {it.availableStock} in stock
+                      {/* Clean Warehouse Stock Row (Single Deficit remains at header only) */}
+                      <div className="flex items-center justify-between text-[11px] px-0.5">
+                        <span className="text-slate-500 font-mono tabular-nums">
+                          Warehouse stock: <strong className="text-slate-700">{it.availableStock}</strong> units
                         </span>
-                        {it.deficitQuantity > 0 ? (
-                          <span className="font-mono font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
-                            Deficit: +{it.deficitQuantity} to manufacture
-                          </span>
-                        ) : (
-                          <span className="text-emerald-700 font-semibold">Stock reserved</span>
+                        {it.deficitQuantity <= 0 && (
+                          <span className="text-emerald-700 font-bold">In Stock</span>
                         )}
                       </div>
                     </div>
@@ -957,11 +989,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                       <tr>
                         <th className="py-2.5 px-3">Item & Variant</th>
-                        <th className="py-2.5 px-3 text-center">Warehouse Stock</th>
                         <th className="py-2.5 px-3 text-center">Quantity</th>
-                        <th className="py-2.5 px-3 text-center">Deficit</th>
                         <th className="py-2.5 px-3 text-right">Unit Price (EGP)</th>
                         <th className="py-2.5 px-3 text-right">Total (EGP)</th>
+                        <th className="py-2.5 px-3 text-center">Warehouse Stock</th>
+                        <th className="py-2.5 px-3 text-center">Deficit</th>
                         <th className="py-2.5 px-2 text-center">Action</th>
                       </tr>
                     </thead>
@@ -991,15 +1023,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                                   <span>{it.colorName}</span>
                                   <span>•</span>
                                   <span className="font-mono font-bold text-slate-800 bg-slate-100 px-1.5 rounded">
-                                    Size {it.size}
+                                    {formatSizeBadge(it.size)}
                                   </span>
                                 </div>
                               </div>
                             </div>
-                          </td>
-
-                          <td className="py-3 px-3 text-center font-mono font-semibold text-slate-600">
-                            {it.availableStock} units
                           </td>
 
                           <td className="py-3 px-3 text-center">
@@ -1014,6 +1042,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                             />
                           </td>
 
+                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-700 whitespace-nowrap">
+                            {it.unitPrice.toFixed(2)} EGP
+                          </td>
+
+                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                            {it.totalPrice.toFixed(2)} EGP
+                          </td>
+
+                          <td className="py-3 px-3 text-center font-mono font-semibold text-slate-600">
+                            {it.availableStock} units
+                          </td>
+
                           <td className="py-3 px-3 text-center">
                             {it.deficitQuantity > 0 ? (
                               <span className="inline-block font-mono font-black text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-lg">
@@ -1024,25 +1064,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                                 In Stock
                               </span>
                             )}
-                          </td>
-
-                          <td className="py-3 px-3 text-right">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={it.unitPrice}
-                              onChange={(e) =>
-                                handleUpdateItem(it.id, {
-                                  unitPrice: parseFloat(e.target.value) || 0,
-                                })
-                              }
-                              className="w-20 px-2 py-1 text-right font-mono font-bold border border-slate-300 rounded-lg bg-white"
-                            />
-                          </td>
-
-                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                            {it.totalPrice.toFixed(2)} EGP
                           </td>
 
                           <td className="py-3 px-2 text-center">

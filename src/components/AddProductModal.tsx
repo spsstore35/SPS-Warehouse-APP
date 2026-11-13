@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   Product,
   GarmentCategory,
@@ -31,11 +31,13 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface AddProductModalProps {
   currentUser: User;
   categories: Category[];
+  availableFolders?: string[];
   onClose: () => void;
   onSaveProduct: (product: Product) => void;
   productToEdit?: Product;
@@ -61,6 +63,7 @@ const PRESET_COLORS: ColorVariant[] = [
 export const AddProductModal: React.FC<AddProductModalProps> = ({
   currentUser,
   categories,
+  availableFolders = ['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'],
   onClose,
   onSaveProduct,
   productToEdit,
@@ -100,12 +103,13 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [cropTargetIdx, setCropTargetIdx] = useState<number | null>(null);
   const [isProcessingImage, setIsProcessingImage] = useState(false);
 
-  // Check if item is standard (no sizes or colors, e.g. bracelet, non-apparel accessory)
+  // Check if item is standard (single stock, optional color)
   const isExistingStandard = Boolean(
     productToEdit &&
       productToEdit.variants.length === 1 &&
-      (productToEdit.variants[0].size === 'One Size' || productToEdit.variants[0].size === 'Standard') &&
-      (productToEdit.variants[0].colorName === 'Standard' || !productToEdit.variants[0].colorName)
+      (!productToEdit.variants[0].size ||
+        productToEdit.variants[0].size === 'One Size' ||
+        productToEdit.variants[0].size === 'Standard')
   );
 
   // Tracking Mode:
@@ -128,6 +132,22 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     }
     return '';
   });
+  // Optional Color for Standard Single Item
+  const [standardColorName, setStandardColorName] = useState<string>(() => {
+    if (isExistingStandard && productToEdit?.variants[0]?.colorName) {
+      return productToEdit.variants[0].colorName;
+    }
+    return 'Standard';
+  });
+  const [standardColorHex, setStandardColorHex] = useState<string>(() => {
+    if (isExistingStandard && productToEdit?.variants[0]?.colorHex) {
+      return productToEdit.variants[0].colorHex;
+    }
+    return '#94a3b8';
+  });
+  const [showStdCustomColor, setShowStdCustomColor] = useState(false);
+  const [stdCustomColorName, setStdCustomColorName] = useState('');
+  const [stdCustomColorHex, setStdCustomColorHex] = useState('#3b82f6');
 
   // Matrix Configuration: Has sizes / Has colors
   const [hasSizes, setHasSizes] = useState<boolean>(() => {
@@ -193,6 +213,89 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [bulkThreshold, setBulkThreshold] = useState<number | ''>('');
 
   const [formError, setFormError] = useState('');
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
+
+  const initialSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        name: productToEdit?.name || '',
+        sku: productToEdit?.sku || '',
+        categoryId: productToEdit?.categoryId || '',
+        category: productToEdit?.category || '',
+        folder: productToEdit?.folder || '',
+        targetAudience: productToEdit?.targetAudience || 'Men',
+        description: productToEdit?.description || '',
+        fabricDetails: productToEdit?.fabricDetails || '',
+        price: productToEdit?.price || '',
+        images: initialImages,
+        trackingMode: productToEdit ? (isExistingStandard ? 'standard' : 'matrix') : 'standard',
+        standardQty:
+          productToEdit && typeof productToEdit.totalQuantity === 'number'
+            ? productToEdit.totalQuantity
+            : '',
+        standardThreshold:
+          productToEdit &&
+          productToEdit.variants[0]?.minThreshold !== undefined &&
+          productToEdit.variants[0]?.minThreshold !== null
+            ? productToEdit.variants[0].minThreshold
+            : '',
+        standardColorName:
+          isExistingStandard && productToEdit?.variants[0]?.colorName
+            ? productToEdit.variants[0].colorName
+            : 'Standard',
+        standardColorHex:
+          isExistingStandard && productToEdit?.variants[0]?.colorHex
+            ? productToEdit.variants[0].colorHex
+            : '#94a3b8',
+        hasSizes:
+          productToEdit && !isExistingStandard
+            ? productToEdit.variants.some((v) => v.size && v.size !== 'One Size' && v.size !== 'Standard')
+            : true,
+        hasColors:
+          productToEdit && !isExistingStandard
+            ? productToEdit.variants.some((v) => v.colorName && v.colorName !== 'Standard')
+            : true,
+        selectedSizes: initialSizes,
+        selectedColors: initialColors,
+        variantQuantities: initialQuantities,
+        variantThresholds: initialThresholds,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  const isDirty =
+    JSON.stringify({
+      name,
+      sku,
+      categoryId,
+      category,
+      folder,
+      targetAudience,
+      description,
+      fabricDetails,
+      price,
+      images,
+      trackingMode,
+      standardQty,
+      standardThreshold,
+      standardColorName,
+      standardColorHex,
+      hasSizes,
+      hasColors,
+      selectedSizes,
+      selectedColors,
+      variantQuantities,
+      variantThresholds,
+    }) !== initialSnapshot;
+
+  const handleAttemptClose = () => {
+    if (isDirty) {
+      setShowUnsavedConfirm(true);
+    } else {
+      onClose();
+    }
+  };
 
   // Handle image files from mobile camera or gallery
   const handleFilePicked = (file: File, replaceIdx: number | null = null) => {
@@ -357,13 +460,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
         }, 0);
       })();
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveProductNow = (): boolean => {
     setFormError('');
 
     if (!name.trim()) {
       setFormError('Please enter item name');
-      return;
+      return false;
     }
 
     const finalSku = sku.trim() || `WH-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -374,13 +476,13 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     let variants: ProductVariant[] = [];
 
     if (trackingMode === 'standard') {
-      // 1. Standard single item (e.g. Bracelet "7azaza", non-clothing accessory, one-size item)
+      // 1. Standard single item (with optional single color)
       variants = [
         {
           id: productToEdit?.variants[0]?.id || `v_${finalSku}_std`.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
           size: 'One Size',
-          colorName: 'Standard',
-          colorHex: '#94a3b8',
+          colorName: standardColorName.trim() || 'Standard',
+          colorHex: standardColorHex || '#94a3b8',
           quantity: Math.max(0, Number(standardQty) || 0),
           sku: finalSku,
           minThreshold:
@@ -393,7 +495,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       // 2. Matrix Item (Sizes & Colors)
       if (hasSizes && selectedSizes.length === 0 && hasColors && selectedColors.length === 0) {
         setFormError('Please select at least one size or color, or choose "Standard Single Item" mode.');
-        return;
+        return false;
       }
 
       const effectiveSizes: GarmentSize[] = hasSizes
@@ -419,7 +521,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             colorHex: col.hex,
             quantity: Math.max(0, qty),
             sku: `${finalSku}-${colorSlug}-${sizeSlug}`,
-            // Save specific alert threshold per size/variant, or leave undefined/blank
             minThreshold:
               threshVal !== '' && threshVal !== undefined && !isNaN(Number(threshVal))
                 ? Number(threshVal)
@@ -438,7 +539,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       category: finalCategory,
       folder: (finalCategory.toLowerCase() === 'others' || categoryId?.toLowerCase() === 'others') ? (folder.trim() || undefined) : undefined,
       targetAudience: finalAudience,
-      description: description.trim() || `${name.trim()} item in warehouse inventory.`,
+      description: description.trim(),
       fabricDetails: fabricDetails.trim(),
       price: price === '' ? undefined : Number(price),
       image: images[0] || '',
@@ -455,9 +556,18 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
     onSaveProduct(finalProduct);
     onClose();
+    return true;
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveProductNow();
   };
 
   const isAdmin = currentUser.role === 'admin';
+  const mergedFolderPresets = Array.from(
+    new Set(['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs', ...availableFolders])
+  );
 
   return (
     <>
@@ -473,8 +583,14 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
         />
       )}
 
-      <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-        <div className="w-full max-w-lg md:max-w-xl lg:max-w-3xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+      <div
+        onClick={handleAttemptClose}
+        className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-lg md:max-w-xl lg:max-w-3xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
+        >
           {/* Mobile handle */}
           <div className="sm:hidden w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-3" />
 
@@ -510,7 +626,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             </div>
 
             <button
-              onClick={onClose}
+              type="button"
+              onClick={handleAttemptClose}
               className="p-2 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
@@ -790,7 +907,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   />
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
                     <span className="text-[10px] text-amber-900 font-bold uppercase tracking-wider mr-1">Presets:</span>
-                    {['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'].map((f) => (
+                    {mergedFolderPresets.map((f) => (
                       <button
                         key={f}
                         type="button"
@@ -995,6 +1112,122 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   <span className="text-base font-black font-mono tabular-nums text-slate-900">
                     {standardQty === '' ? 0 : standardQty} units
                   </span>
+                </div>
+
+                {/* Optional Color Picker for Standard Single Item */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <span
+                        className="w-3.5 h-3.5 rounded-full border border-slate-300 inline-block shrink-0"
+                        style={{ backgroundColor: standardColorHex }}
+                      />
+                      <span>Item Color (Optional): {standardColorName}</span>
+                    </label>
+                    {standardColorName !== 'Standard' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStandardColorName('Standard');
+                          setStandardColorHex('#94a3b8');
+                        }}
+                        className="text-[11px] font-bold text-rose-600 hover:underline"
+                      >
+                        Reset to Standard
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStandardColorName('Standard');
+                        setStandardColorHex('#94a3b8');
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] border transition-all ${
+                        standardColorName === 'Standard'
+                          ? 'bg-white border-amber-500 text-slate-950 font-black shadow-2xs ring-1 ring-amber-400'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 font-semibold'
+                      }`}
+                    >
+                      <span className="w-3 h-3 rounded-full border border-slate-300 bg-slate-400 shrink-0" />
+                      <span>No Specific Color</span>
+                    </button>
+
+                    {PRESET_COLORS.map((col) => {
+                      const isPicked = standardColorName.toLowerCase() === col.name.toLowerCase();
+                      return (
+                        <button
+                          key={col.name}
+                          type="button"
+                          onClick={() => {
+                            setStandardColorName(col.name);
+                            setStandardColorHex(col.hex);
+                          }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] border transition-all ${
+                            isPicked
+                              ? 'bg-white border-amber-500 text-slate-950 font-black shadow-2xs ring-1 ring-amber-400'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 font-medium'
+                          }`}
+                        >
+                          <span
+                            className="w-3 h-3 rounded-full border border-slate-300 shrink-0"
+                            style={{ backgroundColor: col.hex }}
+                          />
+                          <span>{col.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom single-item color picker */}
+                  {!showStdCustomColor ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowStdCustomColor(true)}
+                      className="text-xs text-amber-700 hover:underline flex items-center gap-1 font-bold pt-0.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Pick Custom Color</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="color"
+                        value={stdCustomColorHex}
+                        onChange={(e) => setStdCustomColorHex(e.target.value)}
+                        className="w-8 h-8 rounded-lg bg-transparent cursor-pointer border border-slate-300 shrink-0"
+                      />
+                      <input
+                        type="text"
+                        value={stdCustomColorName}
+                        onChange={(e) => setStdCustomColorName(e.target.value)}
+                        placeholder="Custom color name (e.g. Royal Blue)"
+                        className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs text-slate-900"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!stdCustomColorName.trim()) return;
+                          setStandardColorName(stdCustomColorName.trim());
+                          setStandardColorHex(stdCustomColorHex);
+                          setStdCustomColorName('');
+                          setShowStdCustomColor(false);
+                        }}
+                        className="px-3 py-1.5 bg-slate-900 text-white rounded-xl text-xs font-bold shrink-0"
+                      >
+                        Apply
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowStdCustomColor(false)}
+                        className="p-1.5 text-slate-400 hover:text-slate-700"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1290,7 +1523,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                                   >
                                     <div className="flex items-center justify-between">
                                       <span className="text-xs font-mono font-black text-slate-800">
-                                        Size {sz}
+                                        {!sz || sz === 'One Size' || sz === 'Standard' ? 'Standard Size' : `Size ${sz}`}
                                       </span>
                                       <span className="text-[10px] text-slate-400 font-medium">
                                         Stock & Alert
@@ -1364,7 +1597,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleAttemptClose}
               className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 min-h-[44px]"
             >
               Cancel
@@ -1383,6 +1616,66 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
         </form>
       </div>
     </div>
+
+    {/* Unsaved Changes Confirmation Modal */}
+    {showUnsavedConfirm && (
+      <div
+        onClick={() => setShowUnsavedConfirm(false)}
+        className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in duration-150"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">Unsaved Changes</h3>
+                <p className="text-xs text-slate-500 font-medium">You have unsaved edits on this item</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowUnsavedConfirm(false)}
+              className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <p className="text-xs sm:text-sm text-slate-700 leading-relaxed bg-slate-50 border border-slate-200 rounded-2xl p-3.5 font-medium">
+            Are you sure you want to leave without saving your changes? Would you like to save them before closing?
+          </p>
+
+          <div className="grid grid-cols-2 gap-2.5 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setShowUnsavedConfirm(false);
+                onClose();
+              }}
+              className="py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs shadow-md shadow-rose-600/20 transition-all min-h-[44px]"
+            >
+              Cancel (Discard)
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowUnsavedConfirm(false);
+                saveProductNow();
+              }}
+              className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all min-h-[44px]"
+            >
+              Yes, Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </>
   );
 };

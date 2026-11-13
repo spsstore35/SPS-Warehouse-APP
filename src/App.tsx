@@ -125,23 +125,39 @@ export default function App() {
   const [filterLowStockOnly, setFilterLowStockOnly] = useState(false);
 
   // Others Category Sub-Folders
-  const [othersFolders, setOthersFolders] = useState<string[]>(() => {
+  const [customFolders, setCustomFolders] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('sps_others_folders');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((f: string) => (f === 'All Folders' ? 'All Items' : f));
+        }
+      }
     } catch {}
-    return ['All Folders', 'Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'];
+    return ['All Items', 'Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'];
   });
-  const [selectedOtherFolder, setSelectedOtherFolder] = useState<string>('All Folders');
+  const [selectedOtherFolder, setSelectedOtherFolder] = useState<string>('All Items');
   const [showNewFolderModal, setShowNewFolderModal] = useState<boolean>(false);
   const [newFolderNameInput, setNewFolderNameInput] = useState<string>('');
+
+  // Combine saved folders with any folders attached to products
+  const othersFolders = React.useMemo(() => {
+    const merged = [...customFolders];
+    products.forEach((p) => {
+      if (p.folder && !merged.some((f) => f.toLowerCase() === p.folder!.toLowerCase())) {
+        merged.push(p.folder);
+      }
+    });
+    return merged;
+  }, [customFolders, products]);
 
   const handleCreateNewFolder = (folderName: string) => {
     const trimmed = folderName.trim();
     if (!trimmed) return;
-    if (!othersFolders.some((f) => f.toLowerCase() === trimmed.toLowerCase())) {
-      const nextFolders = [...othersFolders, trimmed];
-      setOthersFolders(nextFolders);
+    if (!customFolders.some((f) => f.toLowerCase() === trimmed.toLowerCase())) {
+      const nextFolders = [...customFolders, trimmed];
+      setCustomFolders(nextFolders);
       try {
         localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
       } catch {}
@@ -508,8 +524,17 @@ export default function App() {
         ]);
 
         if (dbProducts.status === 'fulfilled') {
-          setProducts(dbProducts.value);
-          saveStoredProducts(dbProducts.value);
+          setProducts((prev) => {
+            const merged = dbProducts.value.map((p) => {
+              const localMatch = prev.find((lp) => lp.id === p.id);
+              return {
+                ...p,
+                folder: p.folder || localMatch?.folder,
+              };
+            });
+            saveStoredProducts(merged);
+            return merged;
+          });
         }
         if (dbRequests.status === 'fulfilled') {
           setRequests(dbRequests.value);
@@ -524,14 +549,43 @@ export default function App() {
           setCategories(cats);
           saveStoredCategories(cats);
         }
-        // Unconditionally sync logs from Supabase so deleted mock logs are never resurrected
         if (dbLogs.status === 'fulfilled') {
-          setAuditLogs(dbLogs.value);
-          saveStoredAuditLogs(dbLogs.value);
+          setAuditLogs((prev) => {
+            const merged = dbLogs.value.map((l) => {
+              const localMatch = prev.find((ll) => ll.id === l.id);
+              if (!localMatch) return l;
+              return {
+                ...l,
+                productImage: l.productImage || localMatch.productImage,
+                variantSize: l.variantSize || localMatch.variantSize,
+                variantColor: l.variantColor || localMatch.variantColor,
+                oldQuantity: l.oldQuantity !== undefined ? l.oldQuantity : localMatch.oldQuantity,
+                newQuantity: l.newQuantity !== undefined ? l.newQuantity : localMatch.newQuantity,
+                delta: l.delta !== undefined ? l.delta : localMatch.delta,
+                totalQuantityBefore: l.totalQuantityBefore !== undefined ? l.totalQuantityBefore : localMatch.totalQuantityBefore,
+                totalQuantityAfter: l.totalQuantityAfter !== undefined ? l.totalQuantityAfter : localMatch.totalQuantityAfter,
+                reason: l.reason || localMatch.reason,
+                note: l.note || localMatch.note,
+                bookingId: l.bookingId || localMatch.bookingId,
+                bookingNumber: l.bookingNumber || localMatch.bookingNumber,
+              };
+            });
+            saveStoredAuditLogs(merged);
+            return merged;
+          });
         }
         if (dbBookings.status === 'fulfilled') {
-          setBookings(dbBookings.value);
-          saveStoredBookings(dbBookings.value);
+          setBookings((prev) => {
+            const merged = dbBookings.value.map((b) => {
+              const localMatch = prev.find((lb) => lb.id === b.id);
+              return {
+                ...b,
+                troopGroup: b.troopGroup || localMatch?.troopGroup,
+              };
+            });
+            saveStoredBookings(merged);
+            return merged;
+          });
         }
 
         if (notify) {
@@ -628,7 +682,8 @@ export default function App() {
 
   // Product CRUD (Persisted to Supabase)
   const handleSaveProduct = async (product: Product) => {
-    const isEdit = products.some((p) => p.id === product.id);
+    const existingProd = products.find((p) => p.id === product.id);
+    const isEdit = Boolean(existingProd);
     const isAdmin = isUserAdmin(currentUser);
 
     // If staff is creating a product (not editing existing approved), it is pending approval
@@ -640,6 +695,14 @@ export default function App() {
       createdById: product.createdById || currentUser?.id,
     };
 
+    if (finalProd.folder && !customFolders.some((f) => f.toLowerCase() === finalProd.folder!.toLowerCase())) {
+      const nextFolders = [...customFolders, finalProd.folder];
+      setCustomFolders(nextFolders);
+      try {
+        localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
+      } catch {}
+    }
+
     let updatedProducts: Product[];
     if (isEdit) {
       updatedProducts = products.map((p) => (p.id === finalProd.id ? finalProd : p));
@@ -649,28 +712,251 @@ export default function App() {
 
     setProducts(updatedProducts);
 
-    // Audit log
-    const actionType = isEdit
-      ? 'product_updated'
-      : (isAdmin ? 'product_created' : 'product_submitted');
+    const normalizeSizeName = (sz?: string) =>
+      !sz || sz === 'One Size' || sz === 'Standard' ? 'Standard Size' : sz;
 
-    const newLog: AuditLogEntry = {
-      id: `log_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      action: actionType as any,
-      actorName: currentUser?.name || (isAdmin ? 'Admin' : 'Staff'),
-      actorRole: currentUser?.role || 'worker',
-      summary: isEdit
-        ? `Updated garment "${finalProd.name}"`
-        : isAdmin
-        ? `Added new garment "${finalProd.name}"`
-        : `Submitted new item "${finalProd.name}" for Admin approval`,
-      details: `${finalProd.variants.length} size/color variants (${finalProd.totalQuantity} total units).`,
-      productId: finalProd.id,
-      productName: finalProd.name,
-      productImage: finalProd.image || finalProd.images?.[0],
-      totalQuantityAfter: finalProd.totalQuantity,
-    };
+    let newLog: AuditLogEntry;
+
+    if (isEdit && existingProd) {
+      const oldTotal = existingProd.totalQuantity ?? 0;
+      const newTotal = finalProd.totalQuantity ?? 0;
+      const totalDelta = newTotal - oldTotal;
+
+      const changedVariants: Array<{ size: string; colorName: string; oldQty: number; newQty: number }> = [];
+      finalProd.variants.forEach((nv) => {
+        const ov = existingProd.variants.find(
+          (v) => v.id === nv.id || (v.size === nv.size && v.colorName === nv.colorName)
+        );
+        const oldQ = ov ? ov.quantity : 0;
+        if (nv.quantity !== oldQ) {
+          changedVariants.push({
+            size: nv.size,
+            colorName: nv.colorName,
+            oldQty: oldQ,
+            newQty: nv.quantity,
+          });
+        }
+      });
+      existingProd.variants.forEach((ov) => {
+        const stillExists = finalProd.variants.some(
+          (nv) => nv.id === ov.id || (nv.size === ov.size && nv.colorName === ov.colorName)
+        );
+        if (!stillExists && ov.quantity > 0) {
+          changedVariants.push({
+            size: ov.size,
+            colorName: ov.colorName,
+            oldQty: ov.quantity,
+            newQty: 0,
+          });
+        }
+      });
+
+      const extractNonStandardColors = (variants: Product['variants']) => {
+        const seen = new Set<string>();
+        const list: string[] = [];
+        variants.forEach((v) => {
+          const c = (v.colorName || '').trim();
+          if (c && c.toLowerCase() !== 'standard' && !seen.has(c.toLowerCase())) {
+            seen.add(c.toLowerCase());
+            list.push(c);
+          }
+        });
+        return list;
+      };
+
+      const metaReasons: string[] = [];
+      const metaDetails: string[] = [];
+
+      const oldDesc = (existingProd.description || '').trim();
+      const newDesc = (finalProd.description || '').trim();
+      if (oldDesc && !newDesc) {
+        metaReasons.push('Removed description');
+        metaDetails.push(`Removed description (was: "${oldDesc}").`);
+      } else if (!oldDesc && newDesc) {
+        metaReasons.push('Added description');
+        metaDetails.push(`Added description: "${newDesc}".`);
+      } else if (oldDesc !== newDesc) {
+        metaReasons.push('Updated description');
+        metaDetails.push(`Updated description from "${oldDesc}" to "${newDesc}".`);
+      }
+
+      const oldColors = extractNonStandardColors(existingProd.variants);
+      const newColors = extractNonStandardColors(finalProd.variants);
+      const oldColorLowerSet = new Set(oldColors.map((c) => c.toLowerCase()));
+      const newColorLowerSet = new Set(newColors.map((c) => c.toLowerCase()));
+
+      if (oldColors.length === 0 && newColors.length > 0) {
+        const addedLabel = newColors.join(', ');
+        metaReasons.push(`Added color: ${addedLabel} (previously without color)`);
+        metaDetails.push(`Added color "${addedLabel}" (previously without color).`);
+      } else if (oldColors.length > 0 && newColors.length === 0) {
+        const removedLabel = oldColors.join(', ');
+        metaReasons.push(`Removed color: ${removedLabel}`);
+        metaDetails.push(`Removed color "${removedLabel}" (set to without color).`);
+      } else if (
+        oldColors.length === 1 &&
+        newColors.length === 1 &&
+        oldColors[0].toLowerCase() !== newColors[0].toLowerCase()
+      ) {
+        metaReasons.push(`Changed color from ${oldColors[0]} to ${newColors[0]}`);
+        metaDetails.push(`Changed color from "${oldColors[0]}" to "${newColors[0]}".`);
+      } else {
+        const addedColors = newColors.filter((c) => !oldColorLowerSet.has(c.toLowerCase()));
+        const removedColors = oldColors.filter((c) => !newColorLowerSet.has(c.toLowerCase()));
+        if (addedColors.length > 0 || removedColors.length > 0) {
+          const parts: string[] = [];
+          if (addedColors.length > 0) parts.push(`added ${addedColors.join(', ')}`);
+          if (removedColors.length > 0) parts.push(`removed ${removedColors.join(', ')}`);
+          const msg = `Changed colors (${parts.join('; ')})`;
+          metaReasons.push(msg);
+          metaDetails.push(`${msg}.`);
+        }
+      }
+
+      const oldPrice = existingProd.price ?? 0;
+      const newPrice = finalProd.price ?? 0;
+      if (oldPrice !== newPrice) {
+        metaReasons.push(`Updated price (${oldPrice} → ${newPrice} EGP)`);
+        metaDetails.push(`Unit price changed from ${oldPrice} EGP to ${newPrice} EGP.`);
+      }
+
+      const oldFolder = (existingProd.folder || '').trim();
+      const newFolder = (finalProd.folder || '').trim();
+      if (oldFolder !== newFolder) {
+        if (newFolder) {
+          metaReasons.push(`Moved to folder: ${newFolder}`);
+          metaDetails.push(`Moved to folder "${newFolder}".`);
+        } else {
+          metaReasons.push(`Removed from folder "${oldFolder}"`);
+          metaDetails.push(`Removed from folder "${oldFolder}".`);
+        }
+      }
+
+      if (existingProd.name.trim() !== finalProd.name.trim()) {
+        metaReasons.push('Renamed item');
+        metaDetails.push(`Renamed from "${existingProd.name}" to "${finalProd.name}".`);
+      }
+
+      if (changedVariants.length === 1) {
+        const c = changedVariants[0];
+        const d = c.newQty - c.oldQty;
+        const sizeLabel = normalizeSizeName(c.size);
+        const sizePrefix = sizeLabel === 'Standard Size' ? 'Standard Size' : `Size ${sizeLabel}`;
+        const colorPart = c.colorName && c.colorName !== 'Standard' ? ` (${c.colorName})` : '';
+        const verb = d >= 0 ? 'Added to inventory' : 'Removed from inventory';
+        const baseReason = `Stock Adjustment: "${finalProd.name}"`;
+        const effectiveReason =
+          metaReasons.length > 0 ? `${baseReason} • ${metaReasons.join(' • ')}` : baseReason;
+        const extraMeta = metaDetails.length > 0 ? ` ${metaDetails.join(' ')}` : '';
+
+        newLog = {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'stock_adjusted',
+          actorName: currentUser?.name || (isAdmin ? 'Admin' : 'Staff'),
+          actorRole: currentUser?.role || 'worker',
+          summary: `Updated inventory for "${finalProd.name}"`,
+          details: `${verb}: ${sizePrefix}${colorPart} adjusted from ${c.oldQty} to ${c.newQty} units (${d >= 0 ? `+${d}` : d} units). Total units changed from ${oldTotal} to ${newTotal} units. Reason: ${effectiveReason}.${extraMeta}`,
+          productId: finalProd.id,
+          productName: finalProd.name,
+          productImage: finalProd.image || finalProd.images?.[0],
+          variantSize: sizeLabel,
+          variantColor: c.colorName,
+          oldQuantity: c.oldQty,
+          newQuantity: c.newQty,
+          delta: d,
+          totalQuantityBefore: oldTotal,
+          totalQuantityAfter: newTotal,
+          reason: effectiveReason,
+        };
+      } else if (changedVariants.length > 1 || totalDelta !== 0) {
+        const d = totalDelta;
+        const verb = d >= 0 ? 'Added to inventory' : 'Removed from inventory';
+        const baseReason = `Stock Adjustment: "${finalProd.name}"`;
+        const effectiveReason =
+          metaReasons.length > 0 ? `${baseReason} • ${metaReasons.join(' • ')}` : baseReason;
+        const extraMeta = metaDetails.length > 0 ? ` ${metaDetails.join(' ')}` : '';
+        const changesList = changedVariants
+          .map((c) => {
+            const s = normalizeSizeName(c.size);
+            const col = c.colorName && c.colorName !== 'Standard' ? ` (${c.colorName})` : '';
+            return `${s}${col}: ${c.oldQty} → ${c.newQty}`;
+          })
+          .join(', ');
+
+        newLog = {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'stock_adjusted',
+          actorName: currentUser?.name || (isAdmin ? 'Admin' : 'Staff'),
+          actorRole: currentUser?.role || 'worker',
+          summary: `Updated inventory for "${finalProd.name}"`,
+          details: `${verb}: Multiple Variants adjusted from ${oldTotal} to ${newTotal} units (${d >= 0 ? `+${d}` : d} units). Total units changed from ${oldTotal} to ${newTotal} units${changesList ? ` (${changesList})` : ''}. Reason: ${effectiveReason}.${extraMeta}`,
+          productId: finalProd.id,
+          productName: finalProd.name,
+          productImage: finalProd.image || finalProd.images?.[0],
+          variantSize: 'Multiple Sizes',
+          oldQuantity: oldTotal,
+          newQuantity: newTotal,
+          delta: d,
+          totalQuantityBefore: oldTotal,
+          totalQuantityAfter: newTotal,
+          reason: effectiveReason,
+        };
+      } else {
+        const effectiveReason =
+          metaReasons.length > 0 ? metaReasons.join(' • ') : `Updated Item: "${finalProd.name}"`;
+        const effectiveDetails =
+          metaDetails.length > 0
+            ? `${metaDetails.join(' ')} (${finalProd.variants.length} variant(s), ${finalProd.totalQuantity} total units).`
+            : `${finalProd.variants.length} variant(s) (${finalProd.totalQuantity} total units).`;
+
+        newLog = {
+          id: `log_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'product_updated',
+          actorName: currentUser?.name || (isAdmin ? 'Admin' : 'Staff'),
+          actorRole: currentUser?.role || 'worker',
+          summary:
+            metaReasons.length > 0
+              ? `Updated "${finalProd.name}" (${metaReasons.join(', ')})`
+              : `Updated item "${finalProd.name}"`,
+          details: effectiveDetails,
+          productId: finalProd.id,
+          productName: finalProd.name,
+          productImage: finalProd.image || finalProd.images?.[0],
+          variantColor: newColors.length === 1 ? newColors[0] : oldColors.length === 1 ? oldColors[0] : undefined,
+          totalQuantityAfter: finalProd.totalQuantity,
+          reason: effectiveReason,
+        };
+      }
+    } else {
+      const actionType = isAdmin ? 'product_created' : 'product_submitted';
+      const firstVar = finalProd.variants[0];
+      const sizeLabel = finalProd.variants.length === 1 && firstVar ? normalizeSizeName(firstVar.size) : undefined;
+      newLog = {
+        id: `log_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        action: actionType as any,
+        actorName: currentUser?.name || (isAdmin ? 'Admin' : 'Staff'),
+        actorRole: currentUser?.role || 'worker',
+        summary: isAdmin
+          ? `Added new item "${finalProd.name}"`
+          : `Submitted new item "${finalProd.name}" for Admin approval`,
+        details: `${finalProd.variants.length} variant(s) (${finalProd.totalQuantity} total units).`,
+        productId: finalProd.id,
+        productName: finalProd.name,
+        productImage: finalProd.image || finalProd.images?.[0],
+        variantSize: sizeLabel,
+        variantColor: finalProd.variants.length === 1 && firstVar ? firstVar.colorName : undefined,
+        oldQuantity: 0,
+        newQuantity: finalProd.totalQuantity,
+        delta: finalProd.totalQuantity,
+        totalQuantityBefore: 0,
+        totalQuantityAfter: finalProd.totalQuantity,
+      };
+    }
+
     setAuditLogs((prev) => [newLog, ...prev]);
 
     // Save product to Supabase FIRST so foreign key constraint is satisfied before writing audit logs
@@ -861,12 +1147,18 @@ export default function App() {
 
     // Audit log
     const delta = data.newQuantity - oldQty;
-    const oldProductTotal = affectedProduct?.totalQuantity || 0;
+    const oldProductTotal = affectedProduct?.totalQuantity ?? 0;
     const newProductTotal = oldProductTotal + delta;
     const effectiveReason =
       data.reason && data.reason.trim() !== ''
         ? data.reason.trim()
-        : `Stock Adjustment: ${affectedProduct?.name || 'Inventory'}`;
+        : `Stock Adjustment: "${affectedProduct?.name || 'Inventory'}"`;
+    const sizeLabel =
+      !variantSize || variantSize === 'One Size' || variantSize === 'Standard'
+        ? 'Standard Size'
+        : variantSize;
+    const sizePrefix = sizeLabel === 'Standard Size' ? 'Standard Size' : `Size ${sizeLabel}`;
+    const verb = delta >= 0 ? 'Added to inventory' : 'Removed from inventory';
 
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
@@ -875,11 +1167,11 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       summary: `Updated inventory for "${affectedProduct?.name || 'Item'}"`,
-      details: `Added to inventory: Size ${variantSize}${variantColor ? ` (${variantColor})` : ''} adjusted from ${oldQty} to ${data.newQuantity} units (${delta > 0 ? `+${delta}` : delta} units). Total units changed from ${oldProductTotal} to ${newProductTotal} units. Reason: ${effectiveReason}. ${data.note ? `Note: ${data.note}` : ''}`,
+      details: `${verb}: ${sizePrefix}${variantColor ? ` (${variantColor})` : ''} adjusted from ${oldQty} to ${data.newQuantity} units (${delta > 0 ? `+${delta}` : delta} units). Total units changed from ${oldProductTotal} to ${newProductTotal} units. Reason: ${effectiveReason}. ${data.note ? `Note: ${data.note}` : ''}`,
       productId: data.productId,
       productName: affectedProduct?.name,
       productImage: affectedProduct?.image || affectedProduct?.images?.[0],
-      variantSize,
+      variantSize: sizeLabel,
       variantColor,
       oldQuantity: oldQty,
       newQuantity: data.newQuantity,
@@ -892,7 +1184,7 @@ export default function App() {
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
 
-    showToast(`Inventory updated: ${affectedProduct?.name || 'Item'} (${variantSize}) is now ${data.newQuantity} units.`, newLog);
+    showToast(`Inventory updated: ${affectedProduct?.name || 'Item'} (${sizeLabel}) is now ${data.newQuantity} units.`, newLog);
   };
 
   // Admin Approves a Worker Request (Persisted to Supabase)
@@ -952,6 +1244,12 @@ export default function App() {
     const delta = targetReq.requestedQuantity - targetReq.currentQuantity;
     const nextProductTotal = oldProductTotal + delta;
 
+    const approvedSizeLabel =
+      !targetReq.size || targetReq.size === 'One Size' || targetReq.size === 'Standard'
+        ? 'Standard Size'
+        : targetReq.size;
+    const approvedSizePrefix = approvedSizeLabel === 'Standard Size' ? 'Standard Size' : `Size ${approvedSizeLabel}`;
+
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -959,17 +1257,15 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       summary: `Approved stock change for "${targetReq.productName}"`,
-      details: `Worker ${targetReq.workerName} requested ${targetReq.currentQuantity} → ${
+      details: `Staff ${targetReq.workerName} requested ${targetReq.currentQuantity} → ${
         targetReq.requestedQuantity
-      } (${delta > 0 ? `+${delta}` : delta} units) for Size ${
-        targetReq.size
-      } / ${targetReq.colorName}. Total units changed from ${oldProductTotal} to ${nextProductTotal} units. Reason: ${targetReq.reason}.${
+      } (${delta > 0 ? `+${delta}` : delta} units) for ${approvedSizePrefix} / ${targetReq.colorName}. Total units changed from ${oldProductTotal} to ${nextProductTotal} units. Reason: ${targetReq.reason}.${
         adminNote ? ` Admin note: ${adminNote}` : ''
       }`,
       productId: targetReq.productId,
       productName: targetReq.productName,
       productImage: targetReq.productImage,
-      variantSize: targetReq.size,
+      variantSize: approvedSizeLabel,
       variantColor: targetReq.colorName,
       oldQuantity: targetReq.currentQuantity,
       newQuantity: targetReq.requestedQuantity,
@@ -1317,10 +1613,18 @@ export default function App() {
     );
   };
   const handleUpdateBooking = (updatedBooking: Booking) => {
-    const nextBookings = bookings.map((b) => (b.id === updatedBooking.id ? updatedBooking : b));
+    const prevBooking = bookings.find((b) => b.id === updatedBooking.id);
+    const safeBooking: Booking =
+      prevBooking &&
+      (prevBooking.troopGroup || '') !== (updatedBooking.troopGroup || '') &&
+      !isUserAdmin(currentUser)
+        ? { ...updatedBooking, troopGroup: prevBooking.troopGroup }
+        : updatedBooking;
+
+    const nextBookings = bookings.map((b) => (b.id === safeBooking.id ? safeBooking : b));
     setBookings(nextBookings);
     saveStoredBookings(nextBookings);
-    insertBookingInDb(updatedBooking).catch((err) => {
+    insertBookingInDb(safeBooking).catch((err) => {
       console.warn('Notice saving updated booking to Supabase:', err?.message);
     });
   };
@@ -1628,7 +1932,7 @@ export default function App() {
 
     const matchesFolder = (() => {
       if (selectedCategory.toLowerCase() !== 'others') return true;
-      if (selectedOtherFolder === 'All Folders') return true;
+      if (selectedOtherFolder === 'All Items') return true;
       if (selectedOtherFolder === 'Uncategorized') return !p.folder;
       return (p.folder || '').toLowerCase() === selectedOtherFolder.toLowerCase();
     })();
@@ -1879,7 +2183,7 @@ export default function App() {
                   {othersFolders.map((f) => {
                     const isSelected = selectedOtherFolder === f;
                     const count =
-                      f === 'All Folders'
+                      f === 'All Items'
                         ? products.filter((p) => p.category?.toLowerCase() === 'others').length
                         : products.filter(
                             (p) =>
@@ -2145,6 +2449,7 @@ export default function App() {
         <AddProductModal
           currentUser={currentUser}
           categories={categories}
+          availableFolders={othersFolders.filter((f) => f !== 'All Items')}
           productToEdit={productToEdit}
           onClose={() => {
             setShowAddModal(false);
@@ -2171,7 +2476,7 @@ export default function App() {
         isOpen={!!productToDelete}
         title="Delete Item"
         itemTitle={productToDelete?.name}
-        message={`Are you sure you want to delete "${productToDelete?.name}" (${productToDelete?.sku})?`}
+        message={`Are you sure you want to delete "${productToDelete?.name}"?`}
         details="This will permanently delete the item and all its variant stock combinations from the catalog."
         confirmLabel="Yes, Delete"
         cancelLabel="No, Cancel"

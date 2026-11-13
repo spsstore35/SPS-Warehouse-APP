@@ -593,9 +593,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                               />
                             )}
                             <span className="text-xs text-slate-700 font-bold">
-                              {(req.size === 'Standard' || req.size === 'One Size') &&
-                              (req.colorName === 'Standard' || req.colorName === 'Default' || req.colorName === 'N/A')
-                                ? 'Standard Item'
+                              {!req.size || req.size === 'Standard' || req.size === 'One Size'
+                                ? (req.colorName && req.colorName !== 'Standard' && req.colorName !== 'Default' && req.colorName !== 'N/A'
+                                    ? `Standard Size · ${req.colorName}`
+                                    : 'Standard Size')
                                 : `Size ${req.size} · ${req.colorName}`}
                             </span>
                           </div>

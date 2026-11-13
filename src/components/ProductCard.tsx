@@ -206,10 +206,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </h3>
           </div>
 
-          {/* Product Description */}
-          <p className="mt-1.5 text-xs text-slate-600 line-clamp-2 leading-relaxed">
-            {product.description || product.fabricDetails || 'Warehouse inventory item.'}
-          </p>
+          {/* Product Description (only when present) */}
+          {(product.description || product.fabricDetails) && (
+            <p className="mt-1.5 text-xs text-slate-600 line-clamp-2 leading-relaxed">
+              {product.description || product.fabricDetails}
+            </p>
+          )}
 
           {/* Color swatches preview */}
           {uniqueColors.length > 0 && uniqueColors.some((c) => c.colorName !== 'Standard') && (

@@ -94,7 +94,11 @@ export const WorkerRequestsView: React.FC<WorkerRequestsViewProps> = ({
                         />
                       )}
                       <span className="text-xs text-slate-700 font-semibold">
-                        {isStandardItem ? 'Standard Item' : `Size ${req.size} · ${req.colorName}`}
+                        {!req.size || req.size === 'Standard' || req.size === 'One Size'
+                          ? (req.colorName && req.colorName !== 'Standard' && req.colorName !== 'Default' && req.colorName !== 'N/A'
+                              ? `Standard Size · ${req.colorName}`
+                              : 'Standard Size')
+                          : `Size ${req.size} · ${req.colorName}`}
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">

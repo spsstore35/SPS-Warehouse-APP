@@ -24,6 +24,51 @@ export interface DbConnectionStatus {
 }
 
 /**
+ * Paginate through all rows in a Supabase table in batches of 1,000 so large
+ * inventories (>1,000 variants / >10,000 units), logs, or bookings are never truncated.
+ */
+async function fetchAllRows<T = any>(
+  table: string,
+  options?: {
+    select?: string;
+    orderColumn?: string;
+    ascending?: boolean;
+  }
+): Promise<{ data: T[]; error: any }> {
+  const pageSize = 1000;
+  let from = 0;
+  const allRows: T[] = [];
+  const selectCols = options?.select || '*';
+
+  while (true) {
+    let query = supabase.from(table).select(selectCols);
+    if (options?.orderColumn) {
+      query = query.order(options.orderColumn, { ascending: options.ascending ?? true });
+      if (options.orderColumn !== 'id') {
+        query = query.order('id', { ascending: true });
+      }
+    } else {
+      query = query.order('id', { ascending: true });
+    }
+
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) {
+      return { data: allRows, error };
+    }
+    if (!data || data.length === 0) {
+      break;
+    }
+    allRows.push(...(data as T[]));
+    if (data.length < pageSize) {
+      break;
+    }
+    from += pageSize;
+  }
+
+  return { data: allRows, error: null };
+}
+
+/**
  * Test connectivity to Supabase and check if tables are created
  */
 export async function checkSupabaseConnection(): Promise<DbConnectionStatus> {
@@ -49,10 +94,10 @@ export async function checkSupabaseConnection(): Promise<DbConnectionStatus> {
  */
 export async function fetchCategoriesFromDb(): Promise<Category[]> {
   try {
-    const { data, error } = await supabase
-      .from('categories')
-      .select('*')
-      .order('display_order', { ascending: true });
+    const { data, error } = await fetchAllRows('categories', {
+      orderColumn: 'display_order',
+      ascending: true,
+    });
 
     if (error || !data || data.length === 0) {
       return [];
@@ -180,10 +225,10 @@ export const CATEGORY_MAP: Record<string, string> = {
  */
 
 export async function fetchProductsFromDb(): Promise<Product[]> {
-  const { data: productsData, error: prodError } = await supabase
-    .from('products')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const { data: productsData, error: prodError } = await fetchAllRows('products', {
+    orderColumn: 'created_at',
+    ascending: false,
+  });
 
   if (prodError) throw prodError;
   if (!productsData || productsData.length === 0) return [];
@@ -191,7 +236,7 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
   // Query categories table to map any custom category IDs dynamically
   const dynamicCatMap: Record<string, string> = { ...CATEGORY_MAP };
   try {
-    const { data: dbCats } = await supabase.from('categories').select('id, name');
+    const { data: dbCats } = await fetchAllRows('categories', { select: 'id, name' });
     if (dbCats && dbCats.length > 0) {
       dbCats.forEach((c: any) => {
         dynamicCatMap[c.id.toLowerCase()] = c.name;
@@ -200,9 +245,7 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
     }
   } catch (_e) {}
 
-  const { data: variantsData, error: varError } = await supabase
-    .from('product_variants')
-    .select('*');
+  const { data: variantsData, error: varError } = await fetchAllRows('product_variants');
 
   if (varError) throw varError;
 
@@ -298,6 +341,7 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
       images: imageList,
       variants,
       totalQuantity,
+      folder: p.folder || undefined,
       status: (p.status as any) || 'active',
       createdByRole: p.created_by_role || undefined,
       createdByName: p.created_by_name || undefined,
@@ -325,6 +369,7 @@ export async function upsertProductToDb(product: Product): Promise<void> {
     sku: product.sku,
     name: product.name,
     category_id: product.categoryId || null,
+    folder: product.folder || null,
     target_audience: product.targetAudience || 'Men',
     target_audience_id: product.targetAudience || 'Men',
     description: product.description || '',
@@ -339,6 +384,16 @@ export async function upsertProductToDb(product: Product): Promise<void> {
   };
 
   let { error: prodError } = await supabase.from('products').upsert(productPayload);
+
+  // If remote schema does not have folder column yet, strip and retry cleanly
+  if (
+    prodError &&
+    (prodError.message?.includes('folder') || prodError.details?.includes('folder'))
+  ) {
+    delete productPayload.folder;
+    const retry = await supabase.from('products').upsert(productPayload);
+    prodError = retry.error;
+  }
 
   // If remote schema does not have status / created_by columns, strip and retry
   if (
@@ -421,7 +476,6 @@ export async function upsertProductToDb(product: Product): Promise<void> {
     // Prune stale variants in database that no longer match the product's variants
     try {
       if (validVariantIds.length > 0) {
-        // Fetch current variant IDs in DB for this product
         const { data: existingRows } = await supabase
           .from('product_variants')
           .select('id')
@@ -432,8 +486,11 @@ export async function upsertProductToDb(product: Product): Promise<void> {
             .map((r) => r.id)
             .filter((id) => !validVariantIds.includes(id));
 
-          if (toDelete.length > 0) {
-            await supabase.from('product_variants').delete().in('id', toDelete);
+          for (let i = 0; i < toDelete.length; i += 500) {
+            await supabase
+              .from('product_variants')
+              .delete()
+              .in('id', toDelete.slice(i, i + 500));
           }
         }
       }
@@ -449,7 +506,6 @@ export async function upsertProductToDb(product: Product): Promise<void> {
       color_hex: v.colorHex,
       quantity: v.quantity,
       sku: v.sku,
-      // Save exact custom threshold, or NULL if left blank
       min_threshold:
         v.minThreshold !== undefined && v.minThreshold !== null && !isNaN(Number(v.minThreshold))
           ? Number(v.minThreshold)
@@ -457,11 +513,13 @@ export async function upsertProductToDb(product: Product): Promise<void> {
       updated_at: new Date().toISOString(),
     }));
 
-    const { error: varError } = await supabase
-      .from('product_variants')
-      .upsert(variantRows);
+    for (let i = 0; i < variantRows.length; i += 500) {
+      const { error: varError } = await supabase
+        .from('product_variants')
+        .upsert(variantRows.slice(i, i + 500));
 
-    if (varError) throw varError;
+      if (varError) throw varError;
+    }
   }
 }
 
@@ -498,13 +556,13 @@ export async function updateVariantQuantityInDb(variantId: string, newQuantity: 
  */
 
 export async function fetchAdjustmentRequestsFromDb(): Promise<AdjustmentRequest[]> {
-  const { data, error } = await supabase
-    .from('adjustment_requests')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const { data, error } = await fetchAllRows('adjustment_requests', {
+    orderColumn: 'created_at',
+    ascending: false,
+  });
 
   if (error) throw error;
-  if (!data) return [];
+  if (!data || data.length === 0) return [];
 
   return data.map((r: any) => ({
     id: r.id,
@@ -580,13 +638,13 @@ export async function updateAdjustmentRequestInDb(
  */
 
 export async function fetchUsersFromDb(): Promise<User[]> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const { data, error } = await fetchAllRows('profiles', {
+    orderColumn: 'created_at',
+    ascending: false,
+  });
 
   if (error) throw error;
-  if (!data) return [];
+  if (!data || data.length === 0) return [];
 
   return data.map((u: any) => {
     const rawRole = String(u.role || u.requested_role || '').trim().toLowerCase();
@@ -733,19 +791,74 @@ export async function updateUserRoleInDb(
  */
 
 export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
-  const { data, error } = await supabase
-    .from('stock_audit_logs')
-    .select('*')
-    .order('timestamp', { ascending: false });
+  const { data, error } = await fetchAllRows('stock_audit_logs', {
+    orderColumn: 'timestamp',
+    ascending: false,
+  });
 
   if (error) throw error;
-  if (!data) return [];
+  if (!data || data.length === 0) return [];
 
   return data.map((l: any) => {
-    const combined = `${l.summary || ''} ${l.details || ''} ${l.reason || ''}`;
+    const detailsText = String(l.details || '');
+    const summaryText = String(l.summary || '');
+    const combined = `${summaryText} ${detailsText} ${l.reason || ''}`;
     const numMatch = combined.match(/SPS-[A-Za-z0-9-]+/i);
     const bookingNum = l.booking_number || (numMatch ? numMatch[0].toUpperCase() : undefined);
     const isOrder = Boolean(bookingNum) || l.action?.includes('booking') || combined.toLowerCase().includes('booking');
+
+    // Parse variant size/color & counts from details text if explicit columns weren't present
+    const qtyMatch =
+      detailsText.match(/adjusted from (\d+) to (\d+) units/i) ||
+      detailsText.match(/stock changed from (\d+) to (\d+) units/i) ||
+      detailsText.match(/(\d+)\s*→\s*(\d+)/);
+    const totalMatch = detailsText.match(/Total units changed from (\d+) to (\d+)/i);
+    const sizeColorMatch = detailsText.match(/(?:Size\s+([^\s(]+)|Standard Size)(?:\s*\(([^)]+)\))?/i);
+    const reasonMatch = detailsText.match(/Reason:\s*([^.\n]+)/i);
+
+    const parsedOldQty =
+      l.old_quantity !== null && l.old_quantity !== undefined
+        ? Number(l.old_quantity)
+        : qtyMatch
+        ? Number(qtyMatch[1])
+        : undefined;
+    const parsedNewQty =
+      l.new_quantity !== null && l.new_quantity !== undefined
+        ? Number(l.new_quantity)
+        : qtyMatch
+        ? Number(qtyMatch[2])
+        : undefined;
+    const parsedDelta =
+      l.delta !== null && l.delta !== undefined
+        ? Number(l.delta)
+        : parsedOldQty !== undefined && parsedNewQty !== undefined
+        ? parsedNewQty - parsedOldQty
+        : undefined;
+    const parsedTotalBefore =
+      l.total_quantity_before !== null && l.total_quantity_before !== undefined
+        ? Number(l.total_quantity_before)
+        : totalMatch
+        ? Number(totalMatch[1])
+        : undefined;
+    const parsedTotalAfter =
+      l.total_quantity_after !== null && l.total_quantity_after !== undefined
+        ? Number(l.total_quantity_after)
+        : totalMatch
+        ? Number(totalMatch[2])
+        : undefined;
+
+    const parsedSize =
+      l.variant_size ||
+      (sizeColorMatch
+        ? detailsText.includes('Standard Size')
+          ? 'Standard Size'
+          : sizeColorMatch[1]
+        : undefined);
+    const parsedColor = l.variant_color || (sizeColorMatch && sizeColorMatch[2] ? sizeColorMatch[2] : undefined);
+    const parsedReason =
+      l.reason ||
+      (reasonMatch ? reasonMatch[1].trim() : undefined) ||
+      (isOrder && bookingNum ? `Making Order #${bookingNum}` : isOrder ? 'Making Order' : undefined);
 
     return {
       id: l.id,
@@ -757,16 +870,25 @@ export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
       details: l.details || undefined,
       productId: l.product_id || undefined,
       productName: l.product_name || undefined,
+      productImage: l.product_image || undefined,
+      variantSize: parsedSize,
+      variantColor: parsedColor,
+      oldQuantity: parsedOldQty,
+      newQuantity: parsedNewQty,
+      delta: parsedDelta,
+      totalQuantityBefore: parsedTotalBefore,
+      totalQuantityAfter: parsedTotalAfter,
+      note: l.note || undefined,
       bookingNumber: bookingNum,
       bookingId: l.booking_id || undefined,
-      reason: l.reason || (isOrder && bookingNum ? `Making Order #${bookingNum}` : isOrder ? 'Making Order' : undefined),
+      reason: parsedReason,
     };
   });
 }
 
 export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
   try {
-    const payload: Record<string, any> = {
+    const corePayload: Record<string, any> = {
       id: log.id,
       timestamp: log.timestamp,
       action: log.action,
@@ -778,10 +900,30 @@ export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
       product_name: log.productName || null,
     };
 
-    let { error } = await supabase.from('stock_audit_logs').insert(payload);
+    const fullPayload: Record<string, any> = {
+      ...corePayload,
+      reason: log.reason || null,
+      variant_size: log.variantSize || null,
+      variant_color: log.variantColor || null,
+      old_quantity: log.oldQuantity !== undefined ? log.oldQuantity : null,
+      new_quantity: log.newQuantity !== undefined ? log.newQuantity : null,
+      delta: log.delta !== undefined ? log.delta : null,
+      total_quantity_before: log.totalQuantityBefore !== undefined ? log.totalQuantityBefore : null,
+      total_quantity_after: log.totalQuantityAfter !== undefined ? log.totalQuantityAfter : null,
+      note: log.note || null,
+      booking_id: log.bookingId || null,
+      booking_number: log.bookingNumber || null,
+    };
 
-    // If foreign key constraint on product_id fails (race condition or missing FK in remote DB),
-    // retry inserting without product_id so audit history is never lost
+    let { error } = await supabase.from('stock_audit_logs').insert(fullPayload);
+
+    // If extended columns don't exist in remote table yet, fallback cleanly to core payload
+    if (error && (error.code === 'PGRST204' || error.message?.includes('column'))) {
+      const retryCore = await supabase.from('stock_audit_logs').insert(corePayload);
+      error = retryCore.error;
+    }
+
+    // If foreign key constraint on product_id fails, retry without product_id so audit history is never lost
     if (
       error &&
       (error.code === '23503' ||
@@ -789,16 +931,12 @@ export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
         error.message?.includes('stock_audit_logs_product_id_fkey') ||
         error.message?.includes('product_id'))
     ) {
-      payload.product_id = null;
-      const retry = await supabase.from('stock_audit_logs').insert(payload);
+      corePayload.product_id = null;
+      const retry = await supabase.from('stock_audit_logs').insert(corePayload);
       error = retry.error;
     }
-
-    if (error && !error.message?.includes('row-level security')) {
-      // Non-blocking telemetry
-    }
   } catch (_err) {
-    // Non-blocking telemetry
+    // Non-blocking
   }
 }
 
@@ -823,21 +961,19 @@ export async function clearAuditLogsInDb(): Promise<void> {
 
 export async function fetchBookingsFromDb(): Promise<Booking[]> {
   try {
-    const { data: bookingsData, error: bookingsError } = await supabase
-      .from('bookings')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data: bookingsData, error: bookingsError } = await fetchAllRows('bookings', {
+      orderColumn: 'created_at',
+      ascending: false,
+    });
 
-    if (bookingsError || !bookingsData) {
+    if (bookingsError || !bookingsData || bookingsData.length === 0) {
       if (bookingsError && !bookingsError.message?.includes('does not exist')) {
         console.warn('Notice fetching bookings from DB:', bookingsError.message);
       }
       return [];
     }
 
-    const { data: itemsData, error: itemsError } = await supabase
-      .from('booking_items')
-      .select('*');
+    const { data: itemsData, error: itemsError } = await fetchAllRows('booking_items');
 
     if (itemsError && !itemsError.message?.includes('does not exist')) {
       console.warn('Notice fetching booking items from DB:', itemsError.message);
@@ -871,6 +1007,7 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
         id: b.id,
         bookingNumber: b.booking_number,
         clientName: b.client_name,
+        troopGroup: b.troop_group || undefined,
         clientPhone: b.client_phone || 'N/A',
         notes: b.notes || undefined,
         items: lineItems,
@@ -905,10 +1042,11 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
 
 export async function insertBookingInDb(booking: Booking): Promise<void> {
   try {
-    const bookingPayload = {
+    const bookingPayload: Record<string, any> = {
       id: booking.id,
       booking_number: booking.bookingNumber,
       client_name: booking.clientName,
+      troop_group: booking.troopGroup || null,
       client_phone: booking.clientPhone || 'N/A',
       notes: booking.notes || null,
       subtotal: booking.subtotal,
@@ -934,7 +1072,16 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       updated_at: booking.updatedAt,
     };
 
-    const { error: bookingErr } = await supabase.from('bookings').upsert(bookingPayload);
+    let { error: bookingErr } = await supabase.from('bookings').upsert(bookingPayload);
+    if (
+      bookingErr &&
+      (bookingErr.message?.includes('troop_group') || bookingErr.details?.includes('troop_group'))
+    ) {
+      delete bookingPayload.troop_group;
+      const retry = await supabase.from('bookings').upsert(bookingPayload);
+      bookingErr = retry.error;
+    }
+
     if (bookingErr) {
       console.warn('Notice inserting booking in Supabase:', bookingErr.message);
       throw bookingErr;
@@ -983,6 +1130,7 @@ export async function updateBookingInDb(
     };
 
     if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.troopGroup !== undefined) payload.troop_group = updates.troopGroup;
     if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
     if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
     if (updates.depositPercentage !== undefined) payload.deposit_percentage = updates.depositPercentage;
@@ -999,7 +1147,12 @@ export async function updateBookingInDb(
     if (updates.discount !== undefined) payload.discount = updates.discount;
     if (updates.total !== undefined) payload.total = updates.total;
 
-    const { error } = await supabase.from('bookings').update(payload).eq('id', bookingId);
+    let { error } = await supabase.from('bookings').update(payload).eq('id', bookingId);
+    if (error && (error.message?.includes('troop_group') || error.details?.includes('troop_group'))) {
+      delete payload.troop_group;
+      const retry = await supabase.from('bookings').update(payload).eq('id', bookingId);
+      error = retry.error;
+    }
     if (error) {
       console.warn('Notice updating booking in Supabase:', error.message);
     }

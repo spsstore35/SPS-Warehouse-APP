@@ -106,10 +106,10 @@ export function formatAuditLogReason(log: AuditLogEntry): string {
     return `Variant Removed: ${log.productName || 'Garment Variant'}`;
   }
 
-  // 7. Stock adjustments (defaults to "Stock Adjustment: {Item Name}")
+  // 7. Stock adjustments (defaults to 'Stock Adjustment: "Item Name"')
   if (log.action === 'stock_adjusted' || log.action === 'request_approved' || log.delta !== undefined) {
     const prodName = log.productName || 'Inventory';
-    return `Stock Adjustment: ${prodName}`;
+    return `Stock Adjustment: "${prodName}"`;
   }
 
   // 8. Explicit reason if provided and not generic
