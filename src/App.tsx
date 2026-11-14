@@ -1866,8 +1866,62 @@ export default function App() {
       console.warn('Notice updating booking in Supabase:', err?.message);
     });
 
-    const oldUnits = existing.items.reduce((sum, it) => sum + it.quantity, 0);
-    const newUnits = editedBooking.items.reduce((sum, it) => sum + it.quantity, 0);
+    const changes: string[] = [];
+    if (existing.clientName.trim() !== editedBooking.clientName.trim()) {
+      changes.push(`Client Name: "${existing.clientName}" → "${editedBooking.clientName}"`);
+    }
+    if ((existing.troopGroup || '') !== (editedBooking.troopGroup || '')) {
+      changes.push(`Troop: "${existing.troopGroup || 'Unassigned'}" → "${editedBooking.troopGroup || 'Unassigned'}"`);
+    }
+    if ((existing.clientPhone || 'N/A') !== (editedBooking.clientPhone || 'N/A')) {
+      changes.push(`Phone: "${existing.clientPhone || 'N/A'}" → "${editedBooking.clientPhone || 'N/A'}"`);
+    }
+    if ((existing.notes || '').trim() !== (editedBooking.notes || '').trim()) {
+      changes.push(`Notes: "${existing.notes?.trim() || 'None'}" → "${editedBooking.notes?.trim() || 'None'}"`);
+    }
+    if (existing.discount !== editedBooking.discount) {
+      changes.push(`Discount: ${existing.discount.toFixed(2)} EGP → ${editedBooking.discount.toFixed(2)} EGP`);
+    }
+
+    const oldPct = existing.depositPercentage ?? Math.round((existing.depositRate || 0.5) * 100);
+    const newPct = editedBooking.depositPercentage ?? Math.round((editedBooking.depositRate || 0.5) * 100);
+    if (oldPct !== newPct) {
+      changes.push(`Advance Deposit: ${oldPct}% → ${newPct}%`);
+    }
+
+    // Track line-item additions, removals, and quantity adjustments
+    const oldItemMap = new Map(existing.items.map((it) => [it.id, it]));
+    const newItemMap = new Map(editedBooking.items.map((it) => [it.id, it]));
+
+    editedBooking.items.forEach((it) => {
+      const prevIt = oldItemMap.get(it.id);
+      const sizeLabel = !it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard Size' : it.size;
+      if (!prevIt) {
+        changes.push(`Added "${it.productName}" (${it.colorName}, ${sizeLabel}): ${it.quantity} pcs`);
+      } else if (prevIt.quantity !== it.quantity || prevIt.unitPrice !== it.unitPrice) {
+        const parts: string[] = [];
+        if (prevIt.quantity !== it.quantity) parts.push(`${prevIt.quantity} → ${it.quantity} pcs`);
+        if (prevIt.unitPrice !== it.unitPrice) parts.push(`${prevIt.unitPrice} → ${it.unitPrice} EGP/pc`);
+        changes.push(`Updated "${it.productName}" (${it.colorName}, ${sizeLabel}): ${parts.join(', ')}`);
+      }
+    });
+
+    existing.items.forEach((it) => {
+      if (!newItemMap.has(it.id)) {
+        const sizeLabel = !it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard Size' : it.size;
+        changes.push(`Removed "${it.productName}" (${it.colorName}, ${sizeLabel}, ${it.quantity} pcs)`);
+      }
+    });
+
+    if (existing.total !== editedBooking.total) {
+      changes.push(`Total: ${existing.total.toFixed(2)} EGP → ${editedBooking.total.toFixed(2)} EGP`);
+    }
+
+    const detailsText =
+      changes.length > 0
+        ? `Admin updated Order #${editedBooking.bookingNumber}: ${changes.join(' • ')}.`
+        : `Admin saved Order #${editedBooking.bookingNumber} (no field changes).`;
+
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -1879,7 +1933,7 @@ export default function App() {
       bookingItems: editedBooking.items,
       reason: `Updated Order #${editedBooking.bookingNumber}`,
       summary: `Edited unpaid booking #${editedBooking.bookingNumber} for "${editedBooking.clientName}"`,
-      details: `Admin updated Order #${editedBooking.bookingNumber}: Items ${existing.items.length} → ${editedBooking.items.length}, Units ${oldUnits} → ${newUnits}, Total ${existing.total.toFixed(2)} EGP → ${editedBooking.total.toFixed(2)} EGP (while awaiting payment).`,
+      details: detailsText,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
     insertAuditLogInDb(newLog).catch(() => {});

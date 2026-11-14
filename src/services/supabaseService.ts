@@ -807,54 +807,67 @@ export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
     const bookingNum = l.booking_number || (numMatch ? numMatch[0].toUpperCase() : undefined);
     const isOrder = Boolean(bookingNum) || l.action?.includes('booking') || combined.toLowerCase().includes('booking');
 
-    // Parse variant size/color & counts from details text if explicit columns weren't present
-    const qtyMatch =
-      detailsText.match(/adjusted from (\d+) to (\d+) units/i) ||
-      detailsText.match(/stock changed from (\d+) to (\d+) units/i) ||
-      detailsText.match(/(\d+)\s*→\s*(\d+)/);
-    const totalMatch = detailsText.match(/Total units changed from (\d+) to (\d+)/i);
-    const sizeColorMatch = detailsText.match(/(?:Size\s+([^\s(]+)|Standard Size)(?:\s*\(([^)]+)\))?/i);
+    // Parse variant size/color & counts from details text only for inventory/stock logs (never for order/booking records)
+    const qtyMatch = !isOrder
+      ? detailsText.match(/adjusted from (\d+) to (\d+) units/i) ||
+        detailsText.match(/stock changed from (\d+) to (\d+) units/i) ||
+        detailsText.match(/(\d+)\s*→\s*(\d+)/)
+      : null;
+    const totalMatch = !isOrder
+      ? detailsText.match(/Total units changed from (\d+) to (\d+)/i)
+      : null;
+    const sizeColorMatch = !isOrder
+      ? detailsText.match(/(?:Size\s+([^\s(]+)|Standard Size)(?:\s*\(([^)]+)\))?/i)
+      : null;
     const reasonMatch = detailsText.match(/Reason:\s*([^.\n]+)/i);
 
-    const parsedOldQty =
-      l.old_quantity !== null && l.old_quantity !== undefined
-        ? Number(l.old_quantity)
-        : qtyMatch
-        ? Number(qtyMatch[1])
-        : undefined;
-    const parsedNewQty =
-      l.new_quantity !== null && l.new_quantity !== undefined
-        ? Number(l.new_quantity)
-        : qtyMatch
-        ? Number(qtyMatch[2])
-        : undefined;
-    const parsedDelta =
-      l.delta !== null && l.delta !== undefined
-        ? Number(l.delta)
-        : parsedOldQty !== undefined && parsedNewQty !== undefined
-        ? parsedNewQty - parsedOldQty
-        : undefined;
-    const parsedTotalBefore =
-      l.total_quantity_before !== null && l.total_quantity_before !== undefined
-        ? Number(l.total_quantity_before)
-        : totalMatch
-        ? Number(totalMatch[1])
-        : undefined;
-    const parsedTotalAfter =
-      l.total_quantity_after !== null && l.total_quantity_after !== undefined
-        ? Number(l.total_quantity_after)
-        : totalMatch
-        ? Number(totalMatch[2])
-        : undefined;
+    const parsedOldQty = isOrder
+      ? undefined
+      : l.old_quantity !== null && l.old_quantity !== undefined
+      ? Number(l.old_quantity)
+      : qtyMatch
+      ? Number(qtyMatch[1])
+      : undefined;
+    const parsedNewQty = isOrder
+      ? undefined
+      : l.new_quantity !== null && l.new_quantity !== undefined
+      ? Number(l.new_quantity)
+      : qtyMatch
+      ? Number(qtyMatch[2])
+      : undefined;
+    const parsedDelta = isOrder
+      ? undefined
+      : l.delta !== null && l.delta !== undefined
+      ? Number(l.delta)
+      : parsedOldQty !== undefined && parsedNewQty !== undefined
+      ? parsedNewQty - parsedOldQty
+      : undefined;
+    const parsedTotalBefore = isOrder
+      ? undefined
+      : l.total_quantity_before !== null && l.total_quantity_before !== undefined
+      ? Number(l.total_quantity_before)
+      : totalMatch
+      ? Number(totalMatch[1])
+      : undefined;
+    const parsedTotalAfter = isOrder
+      ? undefined
+      : l.total_quantity_after !== null && l.total_quantity_after !== undefined
+      ? Number(l.total_quantity_after)
+      : totalMatch
+      ? Number(totalMatch[2])
+      : undefined;
 
-    const parsedSize =
-      l.variant_size ||
-      (sizeColorMatch
-        ? detailsText.includes('Standard Size')
-          ? 'Standard Size'
-          : sizeColorMatch[1]
-        : undefined);
-    const parsedColor = l.variant_color || (sizeColorMatch && sizeColorMatch[2] ? sizeColorMatch[2] : undefined);
+    const parsedSize = isOrder
+      ? undefined
+      : l.variant_size ||
+        (sizeColorMatch
+          ? detailsText.includes('Standard Size')
+            ? 'Standard Size'
+            : sizeColorMatch[1]
+          : undefined);
+    const parsedColor = isOrder
+      ? undefined
+      : l.variant_color || (sizeColorMatch && sizeColorMatch[2] ? sizeColorMatch[2] : undefined);
     const parsedReason =
       l.reason ||
       (reasonMatch ? reasonMatch[1].trim() : undefined) ||

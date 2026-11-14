@@ -491,6 +491,8 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
 
               const hasProductImage = !isOrder && !isAccount && Boolean(itemImage);
               const hasStockDiff =
+                !isOrder &&
+                !isAccount &&
                 log.oldQuantity !== undefined &&
                 log.oldQuantity !== null &&
                 log.newQuantity !== undefined &&

@@ -405,7 +405,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
           {/* Visual Stock Metrics Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {/* Box 1: Variant Count Transition */}
-            {log.oldQuantity !== undefined && log.oldQuantity !== null && log.newQuantity !== undefined && log.newQuantity !== null && (
+            {!isOrderOrBooking && !isAccountActivity && log.oldQuantity !== undefined && log.oldQuantity !== null && log.newQuantity !== undefined && log.newQuantity !== null && (
               <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Size Stock</div>
                 <div className="flex items-center gap-2 mt-1">
@@ -435,7 +435,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
             )}
 
             {/* Box 2: Total Product Stock */}
-            {log.totalQuantityAfter !== undefined && log.totalQuantityAfter !== null && (
+            {!isOrderOrBooking && !isAccountActivity && log.totalQuantityAfter !== undefined && log.totalQuantityAfter !== null && (
               <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Total Item Stock</div>
                 <div className="flex items-baseline gap-1 mt-1">
