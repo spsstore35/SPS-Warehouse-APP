@@ -27,6 +27,7 @@ interface BookingModalProps {
   onClose: () => void;
   products: Product[];
   initialProduct?: Product;
+  bookingToEdit?: Booking | null;
   currentUser: User;
   existingBookings?: Booking[];
   onSaveBooking: (booking: Booking, autoAdvanceToPreparing?: boolean) => void;
@@ -83,25 +84,65 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onClose,
   products,
   initialProduct,
+  bookingToEdit,
   currentUser,
   existingBookings = [],
   onSaveBooking,
 }) => {
   const isUserAdmin = currentUser.role === 'admin';
+  const isEditMode = Boolean(bookingToEdit);
+
+  const initialEditDepositPct = bookingToEdit
+    ? bookingToEdit.depositPercentage ??
+      (bookingToEdit.depositRate ? Math.round(bookingToEdit.depositRate * 100) : 50)
+    : 50;
+  const initialIsCustomDeposit = bookingToEdit
+    ? ![50, 70, 100].includes(initialEditDepositPct)
+    : false;
 
   // Client Info
-  const [clientName, setClientName] = useState('');
-  const [troopGroup, setTroopGroup] = useState('');
-  const [clientPhone, setClientPhone] = useState('');
-  const [notes, setNotes] = useState('');
-  const [discount, setDiscount] = useState<number | ''>('');
-  const [depositPct, setDepositPct] = useState<number>(50);
-  const [customPctInput, setCustomPctInput] = useState<string>('');
-  const [isCustomMode, setIsCustomMode] = useState<boolean>(false);
+  const [clientName, setClientName] = useState(bookingToEdit?.clientName || '');
+  const [troopGroup, setTroopGroup] = useState(bookingToEdit?.troopGroup || '');
+  const [clientPhone, setClientPhone] = useState(
+    bookingToEdit?.clientPhone && bookingToEdit.clientPhone !== 'N/A' ? bookingToEdit.clientPhone : ''
+  );
+  const [notes, setNotes] = useState(bookingToEdit?.notes || '');
+  const [discount, setDiscount] = useState<number | ''>(
+    bookingToEdit && bookingToEdit.discount > 0 ? bookingToEdit.discount : ''
+  );
+  const [depositPct, setDepositPct] = useState<number>(initialEditDepositPct);
+  const [customPctInput, setCustomPctInput] = useState<string>(
+    initialIsCustomDeposit ? String(initialEditDepositPct) : ''
+  );
+  const [isCustomMode, setIsCustomMode] = useState<boolean>(initialIsCustomDeposit);
   const [markDepositPaidImmediately, setMarkDepositPaidImmediately] = useState(false);
 
   // Items in this booking
   const [items, setItems] = useState<BookingItem[]>(() => {
+    if (bookingToEdit && bookingToEdit.items) {
+      return bookingToEdit.items.map((it) => {
+        const liveProd = products.find((p) => p.id === it.productId);
+        const liveVariant = liveProd?.variants.find((v) => v.id === it.variantId);
+        const avail = liveVariant ? liveVariant.quantity || 0 : it.availableStock || 0;
+        const threshold = liveVariant?.minThreshold ?? it.minThreshold ?? 5;
+        const deficit = Math.max(0, it.quantity - avail);
+        const recProd =
+          deficit > 0
+            ? deficit + threshold
+            : avail - it.quantity < threshold
+            ? Math.max(0, threshold - (avail - it.quantity))
+            : 0;
+        return {
+          ...it,
+          productImage: it.productImage || liveProd?.image,
+          availableStock: avail,
+          deficitQuantity: deficit,
+          minThreshold: threshold,
+          recommendedProduction: recProd,
+          totalPrice: it.quantity * it.unitPrice,
+        };
+      });
+    }
     if (initialProduct && initialProduct.variants.length > 0) {
       const v = initialProduct.variants[0];
       const avail = v.quantity || 0;
@@ -376,12 +417,52 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
+
+    if (bookingToEdit) {
+      if (!isUserAdmin) {
+        setFormError('Only Admins can edit existing bookings.');
+        return;
+      }
+      if (bookingToEdit.status !== 'pending' || bookingToEdit.depositPaid) {
+        setFormError('Cannot edit a booking after payment has been confirmed.');
+        return;
+      }
+    }
+
     if (!clientName.trim()) {
       setFormError('Please enter client or organization name.');
       return;
     }
     if (items.length === 0) {
       setFormError('Please add at least one item to this booking order.');
+      return;
+    }
+
+    if (bookingToEdit) {
+      const updatedBooking: Booking = {
+        ...bookingToEdit,
+        clientName: clientName.trim(),
+        troopGroup: troopGroup.trim() || undefined,
+        clientPhone: clientPhone.trim() || 'N/A',
+        notes: notes.trim(),
+        items,
+        subtotal,
+        discount: discountNumeric,
+        total,
+        depositRate,
+        depositPercentage: activeDepositPct,
+        pendingDepositPercentage: undefined,
+        pendingDepositPercentageBy: undefined,
+        pendingDepositPercentageAt: undefined,
+        depositRequired,
+        depositPaid: false,
+        depositPaidAmount: 0,
+        status: 'pending',
+        inventoryDeducted: false,
+        updatedAt: new Date().toISOString(),
+      };
+      onSaveBooking(updatedBooking, false);
+      onClose();
       return;
     }
 
@@ -424,15 +505,24 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         {/* Sticky Header */}
         <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
-              <CalendarCheck className="w-5 h-5" />
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-xs ${
+              isEditMode ? 'bg-amber-400 text-slate-950' : 'bg-blue-600 text-white'
+            }`}>
+              {isEditMode ? <Edit3 className="w-5 h-5" /> : <CalendarCheck className="w-5 h-5" />}
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-black tracking-tight text-slate-900">
-                New Client Booking & Quotation
+              <h2 className="text-base sm:text-lg font-black tracking-tight text-slate-900 flex items-center gap-2 flex-wrap">
+                <span>{isEditMode ? 'Edit Client Booking' : 'New Client Booking & Quotation'}</span>
+                {isEditMode && bookingToEdit && (
+                  <span className="font-mono text-xs px-2.5 py-0.5 rounded-lg bg-slate-900 text-white">
+                    {bookingToEdit.bookingNumber}
+                  </span>
+                )}
               </h2>
               <p className="text-[11px] text-slate-500 font-medium hidden sm:block">
-                Serial Format: <span className="font-mono font-bold text-blue-700">SPS-DDMMYYXX</span> (e.g. SPS-01112601) • All Currency in EGP
+                {isEditMode
+                  ? 'Admin Only — Add items, remove items, or adjust quantities while payment is unpaid • All Currency in EGP'
+                  : <>Serial Format: <span className="font-mono font-bold text-blue-700">SPS-DDMMYYXX</span> (e.g. SPS-01112601) • All Currency in EGP</>}
               </p>
             </div>
           </div>
@@ -1258,8 +1348,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             </div>
 
-            {/* Admin option to mark deposit paid immediately */}
-            {isUserAdmin && (
+            {/* Admin option to mark deposit paid immediately (New Booking only) */}
+            {!isEditMode && isUserAdmin && (
               <div className="mt-4 pt-3 border-t border-slate-200">
                 <label className="flex items-center gap-2.5 text-xs font-bold text-slate-800 cursor-pointer bg-white/70 p-2.5 rounded-xl border border-slate-200/80 hover:bg-white transition-colors">
                   <input
@@ -1282,7 +1372,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-xs text-amber-950 font-medium leading-relaxed">
             <strong>Stock Rule Note:</strong> This booking starts in <strong>Pending</strong> status.
             Inventory stock units will <strong>NOT</strong> be deducted until the upfront payment ({activeDepositPct}%) is
-            marked as paid and the booking advances to <strong>Preparing</strong>.
+            marked as paid and the booking advances to <strong>Preparing</strong>. Once paid, quantities cannot be reduced or deleted.
           </div>
 
           {/* Sticky Modal Footer */}
@@ -1307,11 +1397,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <button
                 type="submit"
                 disabled={items.length === 0}
-                className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-50 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
+                className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl active:scale-95 disabled:opacity-50 text-xs shadow-md transition-all flex items-center justify-center gap-2 ${
+                  isEditMode
+                    ? 'bg-amber-400 hover:bg-amber-500 text-slate-950 font-black'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white font-bold'
+                }`}
               >
-                <CalendarCheck className="w-4 h-4" />
+                {isEditMode ? <Check className="w-4 h-4 stroke-[2.5]" /> : <CalendarCheck className="w-4 h-4" />}
                 <span>
-                  {markDepositPaidImmediately
+                  {isEditMode
+                    ? 'Save Booking Changes'
+                    : markDepositPaidImmediately
                     ? 'Create & Start Preparing'
                     : (activeDepositPct === 100 ? 'Create Booking (Pending 100%)' : `Create Booking (Pending ${activeDepositPct}%)`)}
                 </span>

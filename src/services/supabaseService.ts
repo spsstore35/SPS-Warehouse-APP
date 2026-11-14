@@ -1087,6 +1087,15 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       throw bookingErr;
     }
 
+    // Cleanly replace line items so any removed items during an Admin edit are removed in DB
+    const { error: delItemsErr } = await supabase
+      .from('booking_items')
+      .delete()
+      .eq('booking_id', booking.id);
+    if (delItemsErr) {
+      console.warn('Notice clearing old booking items in Supabase:', delItemsErr.message);
+    }
+
     if (booking.items && booking.items.length > 0) {
       const itemsPayload = booking.items.map((it) => ({
         id: it.id,
@@ -1130,6 +1139,8 @@ export async function updateBookingInDb(
     };
 
     if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.clientName !== undefined) payload.client_name = updates.clientName;
+    if (updates.clientPhone !== undefined) payload.client_phone = updates.clientPhone;
     if (updates.troopGroup !== undefined) payload.troop_group = updates.troopGroup;
     if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
     if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
@@ -1144,6 +1155,7 @@ export async function updateBookingInDb(
     if (updates.finalPaidAmount !== undefined) payload.final_paid_amount = updates.finalPaidAmount;
     if (updates.finalPaidAt !== undefined) payload.final_paid_at = updates.finalPaidAt;
     if (updates.notes !== undefined) payload.notes = updates.notes;
+    if (updates.subtotal !== undefined) payload.subtotal = updates.subtotal;
     if (updates.discount !== undefined) payload.discount = updates.discount;
     if (updates.total !== undefined) payload.total = updates.total;
 

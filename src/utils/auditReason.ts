@@ -65,7 +65,13 @@ export function formatAuditLogReason(log: AuditLogEntry): string {
     return 'User Role & Permissions Update';
   }
 
-  // 4. Order creation (Matches user example: "Making Order #SPS-09112601")
+  // 4. Order creation / update / deletion
+  if (log.action === 'booking_updated') {
+    return bookingNum ? `Order #${bookingNum} Updated` : 'Order Updated';
+  }
+  if (log.action === 'booking_deleted') {
+    return bookingNum ? `Order #${bookingNum} Deleted` : 'Order Deleted';
+  }
   if (
     log.action === 'booking_created' ||
     combined.includes('booking created') ||

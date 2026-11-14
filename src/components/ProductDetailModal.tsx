@@ -382,27 +382,21 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     key={variant.id}
                     className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-slate-50 border border-slate-200 hover:border-slate-300 transition-colors gap-3"
                   >
-                    {/* Left: Size Name only */}
+                    {/* Left: Size Name with single color dot (no written color text) */}
                     <div className="flex items-center gap-3">
-                      {!isStandardItem && (
+                      {variant.colorHex && (variant.colorName !== 'Standard' || !isStandardItem) && (
                         <span
-                          className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0"
+                          className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0 shadow-2xs"
                           style={{ backgroundColor: variant.colorHex }}
+                          title={variant.colorName || 'Color'}
                         />
                       )}
                       <div>
                         <div className="flex items-center gap-2">
-                          {variant.colorName && variant.colorName !== 'Standard' && isStandardItem && (
-                            <span
-                              className="w-3.5 h-3.5 rounded-full border border-slate-300 shrink-0"
-                              style={{ backgroundColor: variant.colorHex }}
-                            />
-                          )}
                           <span className="text-sm font-black text-slate-900">
                             {!variant.size || variant.size === 'One Size' || variant.size === 'Standard'
                               ? 'Standard Size'
                               : `Size ${variant.size}`}
-                            {variant.colorName && variant.colorName !== 'Standard' ? ` · ${variant.colorName}` : ''}
                           </span>
                           {isLow && (
                             <span className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-1">

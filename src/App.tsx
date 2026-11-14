@@ -99,6 +99,11 @@ import {
   FolderPlus,
   ChevronRight,
   Eye,
+  Pencil,
+  Trash2,
+  Check,
+  ArrowLeft,
+  Folder,
 } from 'lucide-react';
 
 export default function App() {
@@ -124,48 +129,250 @@ export default function App() {
   const [selectedAudience, setSelectedAudience] = useState<string>('All');
   const [filterLowStockOnly, setFilterLowStockOnly] = useState(false);
 
-  // Others Category Sub-Folders
+  // Others Category Sub-Folders & Sub-Sub-Folders ("Parent / Child")
+  const normalizeFolderPath = (raw: string): string =>
+    raw
+      .split('/')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(' / ');
+
+  const getFolderParts = (raw?: string): { parent: string; child?: string } => {
+    if (!raw) return { parent: '' };
+    const parts = raw
+      .split('/')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (parts.length <= 1) return { parent: parts[0] || '' };
+    return { parent: parts[0], child: parts.slice(1).join(' / ') };
+  };
+
   const [customFolders, setCustomFolders] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('sps_others_folders');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.map((f: string) => (f === 'All Folders' ? 'All Items' : f));
+          return Array.from(
+            new Set(
+              parsed
+                .map((f: string) => (f === 'All Folders' ? 'All Items' : normalizeFolderPath(String(f))))
+                .filter((f: string) => Boolean(f) && f !== 'All Items')
+            )
+          );
         }
       }
     } catch {}
-    return ['All Items', 'Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'];
+    return ['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'];
   });
   const [selectedOtherFolder, setSelectedOtherFolder] = useState<string>('All Items');
   const [showNewFolderModal, setShowNewFolderModal] = useState<boolean>(false);
   const [newFolderNameInput, setNewFolderNameInput] = useState<string>('');
+  const [newFolderParentInput, setNewFolderParentInput] = useState<string>('');
+  const [showEditFoldersModal, setShowEditFoldersModal] = useState<boolean>(false);
+  const [renamingFolderPath, setRenamingFolderPath] = useState<string | null>(null);
+  const [renameFolderInput, setRenameFolderInput] = useState<string>('');
+  const [confirmDeleteFolderPath, setConfirmDeleteFolderPath] = useState<string | null>(null);
 
-  // Combine saved folders with any folders attached to products
-  const othersFolders = React.useMemo(() => {
-    const merged = [...customFolders];
-    products.forEach((p) => {
-      if (p.folder && !merged.some((f) => f.toLowerCase() === p.folder!.toLowerCase())) {
-        merged.push(p.folder);
+  // All folder paths (top-level + nested "Parent / Child"), excluding 'All Items'
+  const allFolderPaths = React.useMemo(() => {
+    const merged: string[] = [];
+    const pushUnique = (val: string) => {
+      const norm = normalizeFolderPath(val);
+      if (!norm || norm.toLowerCase() === 'all items') return;
+      // Ensure parent top-level folder exists if nested
+      const { parent } = getFolderParts(norm);
+      if (parent && !merged.some((f) => f.toLowerCase() === parent.toLowerCase())) {
+        merged.push(parent);
       }
+      if (!merged.some((f) => f.toLowerCase() === norm.toLowerCase())) {
+        merged.push(norm);
+      }
+    };
+    customFolders.forEach(pushUnique);
+    products.forEach((p) => {
+      if (p.folder) pushUnique(p.folder);
     });
     return merged;
   }, [customFolders, products]);
 
-  const handleCreateNewFolder = (folderName: string) => {
-    const trimmed = folderName.trim();
-    if (!trimmed) return;
-    if (!customFolders.some((f) => f.toLowerCase() === trimmed.toLowerCase())) {
-      const nextFolders = [...customFolders, trimmed];
-      setCustomFolders(nextFolders);
-      try {
-        localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
-      } catch {}
+  // Top-level chips for the Others Sub-Folders bar
+  const topLevelOthersFolders = React.useMemo(() => {
+    const tops: string[] = ['All Items'];
+    allFolderPaths.forEach((p) => {
+      if (!p.includes(' / ') && !tops.some((t) => t.toLowerCase() === p.toLowerCase())) {
+        tops.push(p);
+      }
+    });
+    return tops;
+  }, [allFolderPaths]);
+
+  const handleCreateNewFolder = (folderName: string, parentPath?: string) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admins can create folders.');
+      return;
     }
-    setSelectedOtherFolder(trimmed);
+    const cleanLeaf = folderName.replace(/\//g, '-').trim();
+    if (!cleanLeaf) return;
+    const cleanParent = parentPath && parentPath !== 'All Items' ? getFolderParts(parentPath).parent : '';
+    const fullPath = cleanParent ? `${cleanParent} / ${cleanLeaf}` : cleanLeaf;
+
+    const nextFolders = [...allFolderPaths];
+    if (cleanParent && !nextFolders.some((f) => f.toLowerCase() === cleanParent.toLowerCase())) {
+      nextFolders.push(cleanParent);
+    }
+    if (!nextFolders.some((f) => f.toLowerCase() === fullPath.toLowerCase())) {
+      nextFolders.push(fullPath);
+    }
+    setCustomFolders(nextFolders);
+    try {
+      localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
+    } catch {}
+
+    // If creating a sub-sub-folder inside a parent, stay inside parent so user immediately sees its Folder Card
+    setSelectedOtherFolder(cleanParent || fullPath);
     setShowNewFolderModal(false);
     setNewFolderNameInput('');
-    showToast(`Folder "${trimmed}" created in Others.`);
+    setNewFolderParentInput('');
+    showToast(
+      cleanParent
+        ? `Sub-folder "${cleanLeaf}" created inside "${cleanParent}".`
+        : `Folder "${cleanLeaf}" created in Others.`
+    );
+  };
+
+  const handleRenameFolder = (oldPath: string, newLeafName: string) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admins can edit or rename folders.');
+      return;
+    }
+    const cleanLeaf = newLeafName.replace(/\//g, '-').trim();
+    if (!cleanLeaf || oldPath === 'All Items') return;
+    const isNested = oldPath.includes(' / ');
+    const parent = isNested ? getFolderParts(oldPath).parent : '';
+    const newPath = isNested ? `${parent} / ${cleanLeaf}` : cleanLeaf;
+    if (newPath.toLowerCase() === oldPath.toLowerCase()) {
+      setRenamingFolderPath(null);
+      setRenameFolderInput('');
+      return;
+    }
+
+    const oldLower = oldPath.toLowerCase();
+    const oldPrefix = `${oldLower} / `;
+
+    const updatedFolderList = Array.from(
+      new Set(
+        allFolderPaths.map((f) => {
+          const fLower = f.toLowerCase();
+          if (fLower === oldLower) return newPath;
+          if (!isNested && fLower.startsWith(oldPrefix)) {
+            const sub = f.slice(oldPath.length + 3);
+            return `${newPath} / ${sub}`;
+          }
+          return f;
+        })
+      )
+    );
+    setCustomFolders(updatedFolderList);
+    try {
+      localStorage.setItem('sps_others_folders', JSON.stringify(updatedFolderList));
+    } catch {}
+
+    const modifiedProducts: Product[] = [];
+    const nextProducts = products.map((p) => {
+      if (!p.folder) return p;
+      const pf = normalizeFolderPath(p.folder);
+      const pfLower = pf.toLowerCase();
+      let updatedFolder: string | undefined;
+      if (pfLower === oldLower) {
+        updatedFolder = newPath;
+      } else if (!isNested && pfLower.startsWith(oldPrefix)) {
+        updatedFolder = `${newPath} / ${pf.slice(oldPath.length + 3)}`;
+      }
+      if (updatedFolder) {
+        const up = { ...p, folder: updatedFolder, updatedAt: new Date().toISOString() };
+        modifiedProducts.push(up);
+        return up;
+      }
+      return p;
+    });
+
+    if (modifiedProducts.length > 0) {
+      setProducts(nextProducts);
+      saveStoredProducts(nextProducts);
+      modifiedProducts.forEach((mp) => {
+        upsertProductToDb(mp).catch((err) => console.warn('Supabase folder rename notice:', err?.message));
+      });
+    }
+
+    if (selectedOtherFolder.toLowerCase() === oldLower) {
+      setSelectedOtherFolder(newPath);
+    } else if (!isNested && selectedOtherFolder.toLowerCase().startsWith(oldPrefix)) {
+      setSelectedOtherFolder(`${newPath} / ${selectedOtherFolder.slice(oldPath.length + 3)}`);
+    }
+
+    setRenamingFolderPath(null);
+    setRenameFolderInput('');
+    showToast(`Renamed folder to "${cleanLeaf}".`);
+  };
+
+  const handleDeleteFolder = (targetPath: string) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admins can delete folders.');
+      return;
+    }
+    if (targetPath === 'All Items') return;
+    const isNested = targetPath.includes(' / ');
+    const parent = isNested ? getFolderParts(targetPath).parent : '';
+    const targetLower = targetPath.toLowerCase();
+    const targetPrefix = `${targetLower} / `;
+
+    const updatedFolderList = allFolderPaths.filter((f) => {
+      const fLower = f.toLowerCase();
+      if (fLower === targetLower) return false;
+      if (!isNested && fLower.startsWith(targetPrefix)) return false;
+      return true;
+    });
+    setCustomFolders(updatedFolderList);
+    try {
+      localStorage.setItem('sps_others_folders', JSON.stringify(updatedFolderList));
+    } catch {}
+
+    const modifiedProducts: Product[] = [];
+    const nextProducts = products.map((p) => {
+      if (!p.folder) return p;
+      const pf = normalizeFolderPath(p.folder);
+      const pfLower = pf.toLowerCase();
+      if (pfLower === targetLower || (!isNested && pfLower.startsWith(targetPrefix))) {
+        const up: Product = {
+          ...p,
+          // If deleting a sub-sub-folder, move its items to parent folder; if deleting a top-level folder, unassign folder
+          folder: isNested && parent ? parent : undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        modifiedProducts.push(up);
+        return up;
+      }
+      return p;
+    });
+
+    if (modifiedProducts.length > 0) {
+      setProducts(nextProducts);
+      saveStoredProducts(nextProducts);
+      modifiedProducts.forEach((mp) => {
+        upsertProductToDb(mp).catch((err) => console.warn('Supabase folder delete notice:', err?.message));
+      });
+    }
+
+    if (
+      selectedOtherFolder.toLowerCase() === targetLower ||
+      (!isNested && selectedOtherFolder.toLowerCase().startsWith(targetPrefix))
+    ) {
+      setSelectedOtherFolder(isNested && parent ? parent : 'All Items');
+    }
+
+    setConfirmDeleteFolderPath(null);
+    showToast(`Deleted folder "${isNested ? getFolderParts(targetPath).child : targetPath}".`);
   };
 
   // Modals
@@ -206,6 +413,7 @@ export default function App() {
   // Bookings state
   const [bookings, setBookings] = useState<Booking[]>(() => getStoredBookings());
   const [bookingModalProduct, setBookingModalProduct] = useState<Product | undefined>(undefined);
+  const [bookingToEdit, setBookingToEdit] = useState<Booking | null>(null);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [printBooking, setPrintBooking] = useState<Booking | null>(null);
   const [printDocType, setPrintDocType] = useState<'quotation' | 'production'>('quotation');
@@ -1547,36 +1755,45 @@ export default function App() {
   // Booking Management Handlers
   const handleSaveBooking = (newBooking: Booking, autoAdvanceToPreparing = false) => {
     let nextProducts = [...products];
+    const variantDbUpdates: { variantId: string; newQty: number }[] = [];
 
-    // INVENTORY RULE: If created directly in preparing (50% deposit confirmed upfront), deduct in-stock reserved units!
+    // INVENTORY RULE: If created directly in preparing (deposit confirmed upfront), reserve & deduct available stock!
     // Otherwise, booking remains in 'pending' and inventory stock is NOT touched.
     if (autoAdvanceToPreparing) {
       newBooking.items.forEach((item) => {
         const prodIndex = nextProducts.findIndex((p) => p.id === item.productId);
         if (prodIndex >= 0) {
           const prod = nextProducts[prodIndex];
-          const deductUnits = Math.min(item.quantity, item.availableStock);
-          if (deductUnits > 0) {
-            const nextVariants = prod.variants.map((v) => {
-              if (v.id === item.variantId) {
-                return {
-                  ...v,
-                  quantity: Math.max(0, v.quantity - deductUnits),
-                };
+          const nextVariants = prod.variants.map((v) => {
+            if (v.id === item.variantId) {
+              const deductUnits = Math.min(item.quantity, Math.max(0, v.quantity));
+              const updatedQty = Math.max(0, v.quantity - deductUnits);
+              if (deductUnits > 0) {
+                variantDbUpdates.push({ variantId: v.id, newQty: updatedQty });
               }
-              return v;
-            });
-            const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
-            nextProducts[prodIndex] = {
-              ...prod,
-              variants: nextVariants,
-              totalQuantity: nextTotal,
-              updatedAt: new Date().toISOString(),
-            };
-          }
+              return {
+                ...v,
+                quantity: updatedQty,
+              };
+            }
+            return v;
+          });
+          const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
+          nextProducts[prodIndex] = {
+            ...prod,
+            variants: nextVariants,
+            totalQuantity: nextTotal,
+            updatedAt: new Date().toISOString(),
+          };
         }
       });
       setProducts(nextProducts);
+      saveStoredProducts(nextProducts);
+      variantDbUpdates.forEach((u) => {
+        updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
+          console.warn('Notice deducting booking stock in Supabase:', err?.message);
+        });
+      });
       newBooking.inventoryDeducted = true;
     }
 
@@ -1607,8 +1824,8 @@ export default function App() {
 
     showToast(
       autoAdvanceToPreparing
-        ? `Booking ${newBooking.bookingNumber} created & in preparation (stock deducted).`
-        : `Booking ${newBooking.bookingNumber} created (Pending 50% deposit - stock untouched).`,
+        ? `Booking ${newBooking.bookingNumber} created & stock reserved and deducted.`
+        : `Booking ${newBooking.bookingNumber} created (Awaiting deposit - stock untouched).`,
       newLog
     );
   };
@@ -1629,8 +1846,50 @@ export default function App() {
     });
   };
 
+  const handleSaveEditedBooking = (editedBooking: Booking) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admins can edit existing bookings.');
+      return;
+    }
+    const existing = bookings.find((b) => b.id === editedBooking.id);
+    if (!existing) return;
+    if (existing.status !== 'pending' || existing.depositPaid) {
+      showToast('Cannot edit this booking because payment has already been confirmed.');
+      return;
+    }
+
+    const nextBookings = bookings.map((b) => (b.id === editedBooking.id ? editedBooking : b));
+    setBookings(nextBookings);
+    saveStoredBookings(nextBookings);
+
+    insertBookingInDb(editedBooking).catch((err) => {
+      console.warn('Notice updating booking in Supabase:', err?.message);
+    });
+
+    const oldUnits = existing.items.reduce((sum, it) => sum + it.quantity, 0);
+    const newUnits = editedBooking.items.reduce((sum, it) => sum + it.quantity, 0);
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_updated',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: currentUser?.role || 'admin',
+      bookingId: editedBooking.id,
+      bookingNumber: editedBooking.bookingNumber,
+      bookingItems: editedBooking.items,
+      reason: `Updated Order #${editedBooking.bookingNumber}`,
+      summary: `Edited unpaid booking #${editedBooking.bookingNumber} for "${editedBooking.clientName}"`,
+      details: `Admin updated Order #${editedBooking.bookingNumber}: Items ${existing.items.length} → ${editedBooking.items.length}, Units ${oldUnits} → ${newUnits}, Total ${existing.total.toFixed(2)} EGP → ${editedBooking.total.toFixed(2)} EGP (while awaiting payment).`,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Booking ${editedBooking.bookingNumber} updated successfully.`, newLog);
+  };
+
   const handleAdvanceBookingStatus = (bookingId: string, nextStatus: BookingStatus) => {
-    let nextProducts = [...products];
+    const nextProducts = [...products];
+    const variantDbUpdates: { variantId: string; newQty: number }[] = [];
     let affectedBooking: Booking | undefined;
 
     const updatedBookings = bookings.map((b) => {
@@ -1640,32 +1899,34 @@ export default function App() {
       const isAdvancingToPreparing = (b.status === 'pending' && nextStatus === 'preparing');
       let inventoryDeducted = b.inventoryDeducted;
 
-      // CRITICAL INVENTORY DEDUCTION RULE:
-      // Deduct stock ONLY when transitioning to 'preparing' after 50% deposit is paid!
+      // CRITICAL INVENTORY DEDUCTION & RESERVATION RULE:
+      // Reserve & deduct available warehouse stock when transitioning from Awaiting Deposit ('pending') -> 'preparing'!
       if (isAdvancingToPreparing && !inventoryDeducted) {
         b.items.forEach((item) => {
           const prodIndex = nextProducts.findIndex((p) => p.id === item.productId);
           if (prodIndex >= 0) {
             const prod = nextProducts[prodIndex];
-            const deductUnits = Math.min(item.quantity, item.availableStock);
-            if (deductUnits > 0) {
-              const nextVariants = prod.variants.map((v) => {
-                if (v.id === item.variantId) {
-                  return {
-                    ...v,
-                    quantity: Math.max(0, v.quantity - deductUnits),
-                  };
+            const nextVariants = prod.variants.map((v) => {
+              if (v.id === item.variantId) {
+                const deductUnits = Math.min(item.quantity, Math.max(0, v.quantity));
+                const updatedQty = Math.max(0, v.quantity - deductUnits);
+                if (deductUnits > 0) {
+                  variantDbUpdates.push({ variantId: v.id, newQty: updatedQty });
                 }
-                return v;
-              });
-              const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
-              nextProducts[prodIndex] = {
-                ...prod,
-                variants: nextVariants,
-                totalQuantity: nextTotal,
-                updatedAt: new Date().toISOString(),
-              };
-            }
+                return {
+                  ...v,
+                  quantity: updatedQty,
+                };
+              }
+              return v;
+            });
+            const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
+            nextProducts[prodIndex] = {
+              ...prod,
+              variants: nextVariants,
+              totalQuantity: nextTotal,
+              updatedAt: new Date().toISOString(),
+            };
           }
         });
         inventoryDeducted = true;
@@ -1694,6 +1955,15 @@ export default function App() {
 
     if (affectedBooking) {
       setProducts(nextProducts);
+      saveStoredProducts(nextProducts);
+
+      // Persist all deducted variant quantities to Supabase
+      variantDbUpdates.forEach((u) => {
+        updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
+          console.warn('Notice updating reserved variant stock in Supabase:', err?.message);
+        });
+      });
+
       setBookings(updatedBookings);
       saveStoredBookings(updatedBookings);
 
@@ -1702,7 +1972,7 @@ export default function App() {
       let reasonText = '';
 
       if (nextStatus === 'preparing') {
-        actionText = `${pct}% Deposit Confirmed & Stock Deducted`;
+        actionText = `${pct}% Deposit Confirmed & Stock Reserved/Deducted`;
         reasonText = `Stock Reservation - Order #${affectedBooking.bookingNumber}`;
       } else if (nextStatus === 'delivered') {
         actionText = 'Delivered to Client';
@@ -1732,38 +2002,16 @@ export default function App() {
   };
 
   const handleDeleteBooking = (bookingId: string) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admins can delete bookings.');
+      return;
+    }
     const target = bookings.find((b) => b.id === bookingId);
     if (!target) return;
 
-    // Restore deducted stock if deleted while in 'preparing'
-    if (target.inventoryDeducted && target.status === 'preparing') {
-      const nextProducts = [...products];
-      target.items.forEach((item) => {
-        const prodIndex = nextProducts.findIndex((p) => p.id === item.productId);
-        if (prodIndex >= 0) {
-          const prod = nextProducts[prodIndex];
-          const restoreUnits = Math.min(item.quantity, item.availableStock);
-          if (restoreUnits > 0) {
-            const nextVariants = prod.variants.map((v) => {
-              if (v.id === item.variantId) {
-                return {
-                  ...v,
-                  quantity: v.quantity + restoreUnits,
-                };
-              }
-              return v;
-            });
-            const nextTotal = nextVariants.reduce((sum, v) => sum + v.quantity, 0);
-            nextProducts[prodIndex] = {
-              ...prod,
-              variants: nextVariants,
-              totalQuantity: nextTotal,
-              updatedAt: new Date().toISOString(),
-            };
-          }
-        }
-      });
-      setProducts(nextProducts);
+    if (target.status !== 'pending' || target.depositPaid) {
+      showToast('Cannot delete a booking after payment has been confirmed.');
+      return;
     }
 
     const nextBookings = bookings.filter((b) => b.id !== bookingId);
@@ -1775,7 +2023,23 @@ export default function App() {
       console.warn('Notice deleting booking in Supabase:', err?.message);
     });
 
-    showToast(`Booking ${target.bookingNumber} deleted.`);
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_deleted',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: currentUser?.role || 'admin',
+      bookingId: target.id,
+      bookingNumber: target.bookingNumber,
+      bookingItems: target.items,
+      reason: `Deleted Order #${target.bookingNumber}`,
+      summary: `Deleted unpaid booking #${target.bookingNumber} for "${target.clientName}"`,
+      details: `Admin permanently deleted unpaid booking #${target.bookingNumber} (${target.items.length} items, ${target.total.toFixed(2)} EGP).`,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    showToast(`Booking ${target.bookingNumber} deleted.`, newLog);
   };
 
   // Refresh data from Supabase
@@ -1934,11 +2198,30 @@ export default function App() {
       if (selectedCategory.toLowerCase() !== 'others') return true;
       if (selectedOtherFolder === 'All Items') return true;
       if (selectedOtherFolder === 'Uncategorized') return !p.folder;
-      return (p.folder || '').toLowerCase() === selectedOtherFolder.toLowerCase();
+      const pf = normalizeFolderPath(p.folder || '').toLowerCase();
+      const target = normalizeFolderPath(selectedOtherFolder).toLowerCase();
+      // If user is searching by keyword inside a top-level folder, include sub-sub-folder matches
+      if (searchQuery.trim() && !target.includes(' / ')) {
+        return pf === target || pf.startsWith(`${target} / `);
+      }
+      return pf === target;
     })();
 
     return matchesSearch && matchesCategory && matchesAudience && matchesLowStock && matchesFolder;
   });
+
+  // Sub-sub-folders visible as large item-sized Folder Cards in the main grid when browsing a top-level Others sub-folder
+  const visibleSubSubFolders = React.useMemo(() => {
+    if (selectedCategory.toLowerCase() !== 'others') return [];
+    if (selectedOtherFolder === 'All Items' || selectedOtherFolder.includes(' / ')) return [];
+    if (searchQuery.trim()) return [];
+    const parentLower = selectedOtherFolder.toLowerCase();
+    return allFolderPaths.filter((path) => {
+      if (!path.includes(' / ')) return false;
+      const { parent } = getFolderParts(path);
+      return parent.toLowerCase() === parentLower;
+    });
+  }, [selectedCategory, selectedOtherFolder, searchQuery, allFolderPaths]);
 
   // KPI Calculations
   const activeProducts = products.filter((p) => isUserAdmin(currentUser) || p.status !== 'pending');
@@ -2169,27 +2452,60 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setShowNewFolderModal(true)}
-                    className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-                  >
-                    <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                    <span>+ New Folder</span>
-                  </button>
+                  {isAdmin && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRenamingFolderPath(null);
+                          setRenameFolderInput('');
+                          setConfirmDeleteFolderPath(null);
+                          setShowEditFoldersModal(true);
+                        }}
+                        className="px-3 py-1.5 bg-amber-400 hover:bg-amber-500 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-xs border border-amber-500/70 transition-all flex items-center gap-1.5"
+                      >
+                        <Pencil className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span>Edit Folders</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const activeTop = selectedOtherFolder !== 'All Items' ? getFolderParts(selectedOtherFolder).parent : '';
+                          setNewFolderParentInput(activeTop);
+                          setNewFolderNameInput('');
+                          setShowNewFolderModal(true);
+                        }}
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>
+                          {selectedOtherFolder !== 'All Items' && !selectedOtherFolder.includes(' / ')
+                            ? '+ New Sub-Folder'
+                            : '+ New Folder'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
+                {/* Top-Level Sub-Folder Selector Chips */}
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                  {othersFolders.map((f) => {
-                    const isSelected = selectedOtherFolder === f;
+                  {topLevelOthersFolders.map((f) => {
+                    const activeParent = getFolderParts(selectedOtherFolder).parent;
+                    const isSelected =
+                      f === 'All Items'
+                        ? selectedOtherFolder === 'All Items'
+                        : activeParent.toLowerCase() === f.toLowerCase();
                     const count =
                       f === 'All Items'
                         ? products.filter((p) => p.category?.toLowerCase() === 'others').length
-                        : products.filter(
-                            (p) =>
-                              p.category?.toLowerCase() === 'others' &&
-                              (p.folder || '').toLowerCase() === f.toLowerCase()
-                          ).length;
+                        : products.filter((p) => {
+                            if (p.category?.toLowerCase() !== 'others') return false;
+                            const pf = normalizeFolderPath(p.folder || '').toLowerCase();
+                            const target = f.toLowerCase();
+                            return pf === target || pf.startsWith(`${target} / `);
+                          }).length;
                     return (
                       <button
                         key={f}
@@ -2213,10 +2529,33 @@ export default function App() {
                     );
                   })}
                 </div>
+
+                {/* Breadcrumb bar when drilled into a Sub-Sub-Folder */}
+                {selectedOtherFolder.includes(' / ') && (() => {
+                  const { parent, child } = getFolderParts(selectedOtherFolder);
+                  return (
+                    <div className="pt-2 border-t border-amber-200/80 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-amber-950">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOtherFolder(parent)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100 border border-amber-300 text-slate-800 text-xs font-bold transition-colors"
+                        >
+                          <ArrowLeft className="w-3.5 h-3.5" />
+                          <span>Back to {parent}</span>
+                        </button>
+                        <span className="text-amber-700 mx-1">›</span>
+                        <span className="px-2.5 py-1 rounded-lg bg-sky-100 text-sky-900 border border-sky-200 font-black">
+                          📁 {child}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
-            {/* Product Grid or Clean Empty State */}
+            {/* Product Grid (including Large Sub-Sub-Folder Cards) or Clean Empty State */}
             {products.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-md mx-auto my-12 shadow-sm">
                 <Package className="w-10 h-10 text-slate-300 mx-auto mb-3" />
@@ -2237,7 +2576,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-            ) : filteredProducts.length === 0 ? (
+            ) : filteredProducts.length === 0 && visibleSubSubFolders.length === 0 ? (
               <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center max-w-md mx-auto my-8 shadow-sm">
                 <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                 <h3 className="text-base font-bold text-slate-900">No items match filters</h3>
@@ -2250,6 +2589,7 @@ export default function App() {
                     setSelectedCategory('All');
                     setSelectedAudience('All');
                     setFilterLowStockOnly(false);
+                    setSelectedOtherFolder('All Items');
                   }}
                   className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-xs font-bold text-white rounded-xl shadow-sm"
                 >
@@ -2258,6 +2598,123 @@ export default function App() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {visibleSubSubFolders.map((subPath) => {
+                  const { parent, child } = getFolderParts(subPath);
+                  const leafName = child || subPath;
+                  const subCount = products.filter(
+                    (p) =>
+                      p.category?.toLowerCase() === 'others' &&
+                      normalizeFolderPath(p.folder || '').toLowerCase() === subPath.toLowerCase()
+                  ).length;
+
+                  return (
+                    <div
+                      key={subPath}
+                      onClick={() => setSelectedOtherFolder(subPath)}
+                      className="rounded-2xl overflow-hidden shadow-sm transition-all flex flex-col group bg-white border border-slate-200/90 hover:shadow-md hover:border-sky-300 cursor-pointer"
+                    >
+                      {/* Clean Blue Rounded Folder Visual Box Matching Item Card Aspect */}
+                      <div className="relative aspect-[4/3] bg-slate-50/70 border-b border-slate-100 flex flex-col items-center justify-center p-6">
+                        <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-white/95 border border-slate-200 text-[11px] font-bold text-slate-700 shadow-2xs flex items-center gap-1.5">
+                          <Folder className="w-3.5 h-3.5 text-sky-600" />
+                          <span>Sub-Folder</span>
+                        </div>
+
+                        {isAdmin && (
+                          <div
+                            className="absolute top-3 right-3 flex items-center gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmDeleteFolderPath(null);
+                                setRenamingFolderPath(subPath);
+                                setRenameFolderInput(leafName);
+                                setShowEditFoldersModal(true);
+                              }}
+                              className="p-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-950 border border-amber-500/70 shadow-xs transition-all"
+                              title={`Rename "${leafName}"`}
+                            >
+                              <Pencil className="w-3.5 h-3.5 stroke-[2.5]" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRenamingFolderPath(null);
+                                setConfirmDeleteFolderPath(subPath);
+                                setShowEditFoldersModal(true);
+                              }}
+                              className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 shadow-xs transition-all"
+                              title={`Delete "${leafName}"`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Large Sky-Blue Rounded Folder Illustration */}
+                        <svg
+                          viewBox="0 0 120 96"
+                          className="w-36 h-28 drop-shadow-sm group-hover:scale-105 transition-transform duration-300"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M10 18C10 12.477 14.477 8 20 8H42.5C45.8 8 48.9 9.6 50.8 12.3L54.2 17H100C105.523 17 110 21.477 110 27V38H10V18Z"
+                            fill="#0284C7"
+                          />
+                          <rect
+                            x="6"
+                            y="26"
+                            width="108"
+                            height="62"
+                            rx="14"
+                            fill="#0EA5E9"
+                          />
+                          <rect
+                            x="6"
+                            y="26"
+                            width="108"
+                            height="10"
+                            rx="5"
+                            fill="#38BDF8"
+                            fillOpacity="0.45"
+                          />
+                        </svg>
+                      </div>
+
+                      {/* Folder Metadata Footer Matching ProductCard Spacing */}
+                      <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1.5 font-medium">
+                            <span className="font-mono text-sky-700 font-bold">FOLDER</span>
+                            <span aria-hidden="true">·</span>
+                            <span>Others</span>
+                            <span aria-hidden="true">›</span>
+                            <span className="font-bold text-slate-700">{parent}</span>
+                          </div>
+                          <h3 className="text-base sm:text-lg font-bold text-slate-900 group-hover:text-sky-700 transition-colors line-clamp-1">
+                            {leafName}
+                          </h3>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Click to view items inside {leafName}
+                          </p>
+                        </div>
+
+                        <div className="pt-3.5 mt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold font-mono tabular-nums text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                            {subCount} {subCount === 1 ? 'item' : 'items'}
+                          </span>
+                          <span className="px-3 py-1.5 rounded-xl bg-sky-50 text-sky-700 group-hover:bg-sky-600 group-hover:text-white text-xs font-bold transition-colors flex items-center gap-1">
+                            <span>Open</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
                 {filteredProducts.map((product) => (
                   <ProductCard
                     key={product.id}
@@ -2364,6 +2821,20 @@ export default function App() {
             currentUser={currentUser}
             onOpenNewBookingModal={() => {
               setBookingModalProduct(undefined);
+              setBookingToEdit(null);
+              setIsBookingModalOpen(true);
+            }}
+            onEditBooking={(booking) => {
+              if (!isUserAdmin(currentUser)) {
+                showToast('Only Admins can edit bookings.');
+                return;
+              }
+              if (booking.status !== 'pending' || booking.depositPaid) {
+                showToast('Cannot edit booking after payment has been confirmed.');
+                return;
+              }
+              setBookingModalProduct(undefined);
+              setBookingToEdit(booking);
               setIsBookingModalOpen(true);
             }}
             onOpenPrintModal={(booking, docType) => {
@@ -2449,7 +2920,7 @@ export default function App() {
         <AddProductModal
           currentUser={currentUser}
           categories={categories}
-          availableFolders={othersFolders.filter((f) => f !== 'All Items')}
+          availableFolders={allFolderPaths}
           productToEdit={productToEdit}
           onClose={() => {
             setShowAddModal(false);
@@ -2457,6 +2928,11 @@ export default function App() {
           }}
           onSaveProduct={handleSaveProduct}
           onManageCategories={() => setShowManageCategoriesModal(true)}
+          onOpenDirectAdjust={(prod, variant) => {
+            setShowAddModal(false);
+            setProductToEdit(undefined);
+            setAdjustmentTarget({ product: prod, variant });
+          }}
         />
       )}
 
@@ -2511,19 +2987,27 @@ export default function App() {
         />
       )}
 
-      {/* MODAL 6: Create Client Booking (Quotation & Deficit Calculation) */}
+      {/* MODAL 6: Create / Edit Client Booking (Quotation & Deficit Calculation) */}
       {isBookingModalOpen && (
         <BookingModal
           isOpen={isBookingModalOpen}
           onClose={() => {
             setIsBookingModalOpen(false);
             setBookingModalProduct(undefined);
+            setBookingToEdit(null);
           }}
           products={products}
           initialProduct={bookingModalProduct}
+          bookingToEdit={bookingToEdit}
           currentUser={currentUser}
           existingBookings={bookings}
-          onSaveBooking={handleSaveBooking}
+          onSaveBooking={(savedBooking, autoAdvanceToPreparing) => {
+            if (bookingToEdit) {
+              handleSaveEditedBooking(savedBooking);
+            } else {
+              handleSaveBooking(savedBooking, autoAdvanceToPreparing);
+            }
+          }}
         />
       )}
 
@@ -2578,14 +3062,18 @@ export default function App() {
           </div>
         )}
 
-        {/* Create New Folder inside Others Modal */}
+        {/* Create New Folder / Sub-Folder inside Others Modal */}
         {showNewFolderModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
             <div className="bg-white rounded-2xl max-w-sm w-full p-5 border border-slate-200 shadow-xl space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
                   <FolderPlus className="w-4 h-4 text-amber-600" />
-                  <span>Create New Folder in Others</span>
+                  <span>
+                    {newFolderParentInput
+                      ? `New Sub-Folder in "${newFolderParentInput}"`
+                      : 'Create New Folder in Others'}
+                  </span>
                 </h3>
                 <button
                   type="button"
@@ -2596,24 +3084,50 @@ export default function App() {
                 </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Folder Name
-                </label>
-                <input
-                  type="text"
-                  autoFocus
-                  value={newFolderNameInput}
-                  onChange={(e) => setNewFolderNameInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleCreateNewFolder(newFolderNameInput);
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Parent Folder (Optional)
+                  </label>
+                  <select
+                    value={newFolderParentInput}
+                    onChange={(e) => setNewFolderParentInput(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="">None (Top-Level Folder inside Others)</option>
+                    {topLevelOthersFolders
+                      .filter((f) => f !== 'All Items')
+                      .map((top) => (
+                        <option key={top} value={top}>
+                          Inside "{top}" (Creates Sub-Sub-Folder)
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Folder Name
+                  </label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={newFolderNameInput}
+                    onChange={(e) => setNewFolderNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCreateNewFolder(newFolderNameInput, newFolderParentInput);
+                      }
+                    }}
+                    placeholder={
+                      newFolderParentInput
+                        ? 'e.g. Wa3d Morshedat...'
+                        : 'e.g. Wegla, Pins, Wa3d...'
                     }
-                  }}
-                  placeholder="e.g. Wegla, Pins, Wa3d..."
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
-                />
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center gap-2 pt-2">
@@ -2626,11 +3140,303 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleCreateNewFolder(newFolderNameInput)}
+                  onClick={() => handleCreateNewFolder(newFolderNameInput, newFolderParentInput)}
                   disabled={!newFolderNameInput.trim()}
                   className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs shadow-xs disabled:opacity-50 transition-all"
                 >
                   Create Folder
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit / Rename / Delete Sub-Folders & Sub-Sub-Folders Modal */}
+        {showEditFoldersModal && (
+          <div
+            onClick={() => setShowEditFoldersModal(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-3xl max-w-lg w-full p-5 border border-slate-200 shadow-2xl space-y-4 max-h-[85vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-xs">
+                    <Pencil className="w-4 h-4 stroke-[2.5]" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">
+                      Edit Others Folders & Sub-Folders
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Rename or delete any sub-folder or nested sub-sub-folder
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditFoldersModal(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto space-y-2 pr-1 flex-1">
+                {allFolderPaths.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-500">
+                    No folders created yet. Click "+ New Folder" to create one.
+                  </div>
+                ) : (
+                  topLevelOthersFolders
+                    .filter((f) => f !== 'All Items')
+                    .map((top) => {
+                      const children = allFolderPaths.filter(
+                        (p) => p.includes(' / ') && getFolderParts(p).parent.toLowerCase() === top.toLowerCase()
+                      );
+                      const directCount = products.filter(
+                        (pr) =>
+                          pr.category?.toLowerCase() === 'others' &&
+                          normalizeFolderPath(pr.folder || '').toLowerCase() === top.toLowerCase()
+                      ).length;
+
+                      return (
+                        <div key={top} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 space-y-2">
+                          {/* Top-Level Folder Row */}
+                          <div className="flex items-center justify-between gap-2">
+                            {renamingFolderPath === top ? (
+                              <div className="flex-1 flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  value={renameFolderInput}
+                                  onChange={(e) => setRenameFolderInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleRenameFolder(top, renameFolderInput);
+                                    }
+                                  }}
+                                  className="flex-1 px-2.5 py-1.5 rounded-lg border border-amber-400 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleRenameFolder(top, renameFolderInput)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-1"
+                                >
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                  <span>Save</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRenamingFolderPath(null);
+                                    setRenameFolderInput('');
+                                  }}
+                                  className="px-2 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : confirmDeleteFolderPath === top ? (
+                              <div className="flex-1 flex flex-wrap items-center justify-between gap-2 bg-rose-50 border border-rose-200 rounded-xl p-2">
+                                <span className="text-xs font-bold text-rose-900">
+                                  Delete "{top}"{children.length > 0 ? ` & ${children.length} sub-folder(s)` : ''}?
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteFolderPath(null)}
+                                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 text-slate-700 text-[11px] font-bold"
+                                  >
+                                    No
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteFolder(top)}
+                                    className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black"
+                                  >
+                                    Yes, Delete
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="text-sm font-black text-slate-900 truncate">📁 {top}</span>
+                                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 shrink-0">
+                                    {directCount} direct
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowEditFoldersModal(false);
+                                      setNewFolderParentInput(top);
+                                      setNewFolderNameInput('');
+                                      setShowNewFolderModal(true);
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 text-[11px] font-bold"
+                                    title={`Add sub-folder inside ${top}`}
+                                  >
+                                    + Sub
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfirmDeleteFolderPath(null);
+                                      setRenamingFolderPath(top);
+                                      setRenameFolderInput(top);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-950 border border-amber-500/70"
+                                    title={`Rename "${top}"`}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5 stroke-[2.5]" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRenamingFolderPath(null);
+                                      setConfirmDeleteFolderPath(top);
+                                    }}
+                                    className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200"
+                                    title={`Delete "${top}"`}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Nested Sub-Sub-Folders inside Top Folder */}
+                          {children.length > 0 && (
+                            <div className="pl-4 border-l-2 border-sky-200 space-y-1.5">
+                              {children.map((subPath) => {
+                                const leaf = getFolderParts(subPath).child || subPath;
+                                const subItemCount = products.filter(
+                                  (pr) =>
+                                    pr.category?.toLowerCase() === 'others' &&
+                                    normalizeFolderPath(pr.folder || '').toLowerCase() === subPath.toLowerCase()
+                                ).length;
+
+                                return (
+                                  <div
+                                    key={subPath}
+                                    className="flex items-center justify-between gap-2 bg-white rounded-xl border border-slate-200 px-3 py-2"
+                                  >
+                                    {renamingFolderPath === subPath ? (
+                                      <div className="flex-1 flex items-center gap-2">
+                                        <input
+                                          type="text"
+                                          autoFocus
+                                          value={renameFolderInput}
+                                          onChange={(e) => setRenameFolderInput(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              handleRenameFolder(subPath, renameFolderInput);
+                                            }
+                                          }}
+                                          className="flex-1 px-2.5 py-1 rounded-lg border border-amber-400 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRenameFolder(subPath, renameFolderInput)}
+                                          className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black"
+                                        >
+                                          Save
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setRenamingFolderPath(null);
+                                            setRenameFolderInput('');
+                                          }}
+                                          className="px-2 py-1 rounded-lg bg-slate-200 text-slate-700 text-[11px] font-bold"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : confirmDeleteFolderPath === subPath ? (
+                                      <div className="flex-1 flex items-center justify-between gap-2">
+                                        <span className="text-[11px] font-bold text-rose-800">
+                                          Delete sub-folder "{leaf}"?
+                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmDeleteFolderPath(null)}
+                                            className="px-2 py-1 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-bold"
+                                          >
+                                            No
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteFolder(subPath)}
+                                            className="px-2.5 py-1 rounded-lg bg-rose-600 text-white text-[11px] font-black"
+                                          >
+                                            Yes, Delete
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <Folder className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                                          <span className="text-xs font-bold text-slate-800 truncate">{leaf}</span>
+                                          <span className="text-[10px] font-mono text-slate-500">
+                                            ({subItemCount})
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setConfirmDeleteFolderPath(null);
+                                              setRenamingFolderPath(subPath);
+                                              setRenameFolderInput(leaf);
+                                            }}
+                                            className="p-1 rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-950 border border-amber-500/70"
+                                            title={`Rename "${leaf}"`}
+                                          >
+                                            <Pencil className="w-3 h-3 stroke-[2.5]" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setRenamingFolderPath(null);
+                                              setConfirmDeleteFolderPath(subPath);
+                                            }}
+                                            className="p-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200"
+                                            title={`Delete "${leaf}"`}
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 flex justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowEditFoldersModal(false)}
+                  className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
+                >
+                  Done
                 </button>
               </div>
             </div>

@@ -132,6 +132,8 @@ export interface AuditLogEntry {
     | 'staff_approved'
     | 'staff_rejected'
     | 'booking_created'
+    | 'booking_updated'
+    | 'booking_deleted'
     | 'booking_status_changed'
     | 'booking_deposit_paid';
   actorName: string;

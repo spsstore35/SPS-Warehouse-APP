@@ -32,6 +32,7 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  Pencil,
 } from 'lucide-react';
 
 interface AddProductModalProps {
@@ -42,6 +43,7 @@ interface AddProductModalProps {
   onSaveProduct: (product: Product) => void;
   productToEdit?: Product;
   onManageCategories?: () => void;
+  onOpenDirectAdjust?: (product: Product, variant?: ProductVariant) => void;
 }
 
 const TARGET_AUDIENCES: TargetAudience[] = ['Men', 'Women', 'Kids', 'Unisex'];
@@ -68,6 +70,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   onSaveProduct,
   productToEdit,
   onManageCategories,
+  onOpenDirectAdjust,
 }) => {
   const isEditing = Boolean(productToEdit);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -898,39 +901,89 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       {folder ? `Folder: ${folder}` : 'No folder'}
                     </span>
                   </div>
-                  <input
-                    type="text"
-                    value={folder}
-                    onChange={(e) => setFolder(e.target.value)}
-                    placeholder="Enter or pick folder (e.g. Wegla, Pins & Badges, Wa3d...)"
-                    className="w-full px-3 py-2 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
-                  />
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    <span className="text-[10px] text-amber-900 font-bold uppercase tracking-wider mr-1">Presets:</span>
-                    {mergedFolderPresets.map((f) => (
-                      <button
-                        key={f}
-                        type="button"
-                        onClick={() => setFolder(f)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
-                          folder === f
-                            ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-2xs font-black ring-1 ring-amber-400'
-                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
-                        }`}
-                      >
-                        📁 {f}
-                      </button>
-                    ))}
-                    {folder && (
-                      <button
-                        type="button"
-                        onClick={() => setFolder('')}
-                        className="px-2 py-1 rounded-lg text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
+                  {isAdmin && (
+                    <input
+                      type="text"
+                      value={folder}
+                      onChange={(e) => setFolder(e.target.value)}
+                      placeholder="Enter or pick folder (e.g. Wegla, Pins & Badges, Wa3d...)"
+                      className="w-full px-3 py-2 bg-white border border-amber-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
+                    />
+                  )}
+                  {(() => {
+                    const topFolders = mergedFolderPresets.filter((f) => !f.includes(' / '));
+                    const activeParentFolder = folder ? folder.split(' / ')[0].trim() : '';
+                    const childSubFolders = activeParentFolder
+                      ? mergedFolderPresets.filter(
+                          (f) =>
+                            f.includes(' / ') &&
+                            f.split(' / ')[0].trim().toLowerCase() === activeParentFolder.toLowerCase()
+                        )
+                      : [];
+
+                    return (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] text-amber-900 font-bold uppercase tracking-wider mr-1">
+                            Folders:
+                          </span>
+                          {topFolders.map((f) => {
+                            const isParentActive =
+                              folder === f ||
+                              (activeParentFolder.toLowerCase() === f.toLowerCase() && folder.includes(' / '));
+                            return (
+                              <button
+                                key={f}
+                                type="button"
+                                onClick={() => setFolder(f)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                                  isParentActive
+                                    ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-2xs font-black ring-1 ring-amber-400'
+                                    : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
+                                }`}
+                              >
+                                📁 {f}
+                              </button>
+                            );
+                          })}
+                          {folder && (
+                            <button
+                              type="button"
+                              onClick={() => setFolder('')}
+                              className="px-2 py-1 rounded-lg text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
+
+                        {activeParentFolder && childSubFolders.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-amber-200/80 animate-in fade-in duration-150">
+                            <span className="text-[10px] text-sky-900 font-bold uppercase tracking-wider mr-1">
+                              Sub-Folders in {activeParentFolder}:
+                            </span>
+                            {childSubFolders.map((f) => {
+                              const leafName = f.split(' / ').slice(1).join(' › ');
+                              return (
+                                <button
+                                  key={f}
+                                  type="button"
+                                  onClick={() => setFolder(f)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                                    folder === f
+                                      ? 'bg-sky-600 text-white border-sky-600 shadow-2xs font-black ring-1 ring-sky-400'
+                                      : 'bg-sky-50 text-sky-900 border-sky-200 hover:bg-sky-100 hover:border-sky-300'
+                                  }`}
+                                >
+                                  ↳ 📁 {leafName}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1071,21 +1124,47 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3 animate-in fade-in duration-150">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                      Stock Quantity in Warehouse *
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={standardQty}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setStandardQty(val === '' ? '' : Math.max(0, parseInt(val, 10) || 0));
-                      }}
-                      placeholder="e.g. 50"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-base font-mono font-bold text-slate-900 focus:outline-none focus:border-amber-600"
-                    />
-                    <span className="text-[11px] text-slate-400 mt-0.5 block">Physical units available in stock.</span>
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Stock Quantity in Warehouse *
+                      </label>
+                      {isEditing && productToEdit && onOpenDirectAdjust && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenDirectAdjust(productToEdit, productToEdit.variants[0])}
+                          className="p-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-slate-950 border border-amber-500/80 shadow-2xs flex items-center gap-1 text-[10px] font-black transition-all"
+                          title="Open Direct Stock Adjustment"
+                        >
+                          <Pencil className="w-3 h-3 stroke-[2.5]" />
+                          <span>Adjust</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type={isEditing ? 'text' : 'number'}
+                        min="0"
+                        readOnly={isEditing}
+                        tabIndex={isEditing ? -1 : undefined}
+                        value={standardQty}
+                        onChange={(e) => {
+                          if (isEditing) return;
+                          const val = e.target.value;
+                          setStandardQty(val === '' ? '' : Math.max(0, parseInt(val, 10) || 0));
+                        }}
+                        placeholder="e.g. 50"
+                        className={`flex-1 px-3.5 py-2.5 border rounded-xl text-base font-mono font-bold focus:outline-none ${
+                          isEditing
+                            ? 'bg-slate-100 border-slate-200 text-slate-700 cursor-not-allowed select-none'
+                            : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-600'
+                        }`}
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-400 mt-0.5 block">
+                      {isEditing
+                        ? 'Locked here — click the yellow pencil button to adjust via Direct Stock Adjustment.'
+                        : 'Physical units available in stock.'}
+                    </span>
                   </div>
 
                   <div>
@@ -1447,27 +1526,31 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       </p>
                     </div>
 
-                    {/* Bulk controls for Qty and Alert Threshold */}
+                    {/* Bulk controls for Qty (new item only) and Alert Threshold */}
                     <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto bg-slate-50 p-1.5 rounded-xl border border-slate-200">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] text-slate-600 pl-1 font-bold">Qty:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={bulkQty}
-                          onChange={(e) => setBulkQty(parseInt(e.target.value) || 0)}
-                          className="w-12 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 text-center"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleApplyBulkQty}
-                          className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-[11px] font-bold rounded-lg transition-colors"
-                        >
-                          Set Qty
-                        </button>
-                      </div>
+                      {!isEditing && (
+                        <>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-slate-600 pl-1 font-bold">Qty:</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={bulkQty}
+                              onChange={(e) => setBulkQty(parseInt(e.target.value) || 0)}
+                              className="w-12 px-1.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 text-center"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleApplyBulkQty}
+                              className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 text-[11px] font-bold rounded-lg transition-colors"
+                            >
+                              Set Qty
+                            </button>
+                          </div>
 
-                      <span className="text-slate-300 hidden sm:inline">|</span>
+                          <span className="text-slate-300 hidden sm:inline">|</span>
+                        </>
+                      )}
 
                       <div className="flex items-center gap-1.5">
                         <span className="text-[11px] text-slate-600 pl-1 font-bold">Alert:</span>
@@ -1531,24 +1614,56 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                                     </div>
 
                                     <div className="grid grid-cols-2 gap-2">
-                                      <div>
-                                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-tight mb-1">
-                                          Qty:
-                                        </label>
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          value={qty}
-                                          onChange={(e) => {
-                                            const val = parseInt(e.target.value) || 0;
-                                            setVariantQuantities({
-                                              ...variantQuantities,
-                                              [key]: Math.max(0, val),
-                                            });
-                                          }}
-                                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 focus:outline-none focus:border-amber-600"
-                                        />
-                                      </div>
+                                      {(() => {
+                                        const matchedVariant = isEditing && productToEdit
+                                          ? productToEdit.variants.find(
+                                              (v) =>
+                                                v.size === sz &&
+                                                v.colorName.toLowerCase() === col.name.toLowerCase()
+                                            )
+                                          : undefined;
+                                        const isQtyLocked = Boolean(isEditing && matchedVariant);
+
+                                        return (
+                                          <div>
+                                            <div className="flex items-center justify-between mb-1 gap-1">
+                                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-tight">
+                                                Qty:
+                                              </label>
+                                              {isEditing && productToEdit && onOpenDirectAdjust && matchedVariant && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => onOpenDirectAdjust(productToEdit, matchedVariant)}
+                                                  className="p-1 rounded-md bg-amber-400 hover:bg-amber-500 active:scale-95 text-slate-950 border border-amber-500/80 shadow-2xs transition-all"
+                                                  title={`Open Direct Stock Adjustment for ${!sz || sz === 'One Size' || sz === 'Standard' ? 'Standard Size' : `Size ${sz}`} (${col.name})`}
+                                                >
+                                                  <Pencil className="w-3 h-3 stroke-[2.5]" />
+                                                </button>
+                                              )}
+                                            </div>
+                                            <input
+                                              type={isQtyLocked ? 'text' : 'number'}
+                                              min="0"
+                                              readOnly={isQtyLocked}
+                                              tabIndex={isQtyLocked ? -1 : undefined}
+                                              value={qty}
+                                              onChange={(e) => {
+                                                if (isQtyLocked) return;
+                                                const val = parseInt(e.target.value) || 0;
+                                                setVariantQuantities({
+                                                  ...variantQuantities,
+                                                  [key]: Math.max(0, val),
+                                                });
+                                              }}
+                                              className={`w-full px-2.5 py-1.5 border rounded-lg text-xs font-mono font-bold focus:outline-none ${
+                                                isQtyLocked
+                                                  ? 'bg-slate-100 border-slate-200 text-slate-600 cursor-not-allowed select-none'
+                                                  : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-600'
+                                              }`}
+                                            />
+                                          </div>
+                                        );
+                                      })()}
 
                                       <div>
                                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-tight mb-1">
