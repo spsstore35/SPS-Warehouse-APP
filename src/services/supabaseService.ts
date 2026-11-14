@@ -1197,4 +1197,67 @@ export async function deleteBookingFromDb(bookingId: string): Promise<void> {
   }
 }
 
+/**
+ * OTHERS SUB-FOLDERS & SUB-SUB-FOLDERS
+ */
+export async function fetchOthersFoldersFromDb(): Promise<string[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('others_folders')
+      .select('path')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      // Table not created yet -> signal null so caller uses built-in defaults + local storage
+      return null;
+    }
+
+    if (!data) return [];
+    return data
+      .map((row: any) => String(row.path || '').trim())
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+export async function syncOthersFoldersToDb(folders: string[]): Promise<void> {
+  try {
+    const uniqueFolders = Array.from(
+      new Set(
+        folders
+          .map((f) =>
+            f
+              .split('/')
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .join(' / ')
+          )
+          .filter((f) => Boolean(f) && f.toLowerCase() !== 'all items')
+      )
+    );
+
+    const { error: checkErr } = await supabase.from('others_folders').select('path').limit(1);
+    if (checkErr) {
+      // Table not created yet — fail gracefully without interrupting UX
+      return;
+    }
+
+    const { data: existingRows } = await supabase.from('others_folders').select('path');
+    const existingSet = new Set((existingRows || []).map((r: any) => String(r.path)));
+    const targetSet = new Set(uniqueFolders);
+
+    const toDelete = Array.from(existingSet).filter((p) => !targetSet.has(p));
+    if (toDelete.length > 0) {
+      await supabase.from('others_folders').delete().in('path', toDelete);
+    }
+
+    if (uniqueFolders.length > 0) {
+      const payload = uniqueFolders.map((path) => ({ path }));
+      await supabase.from('others_folders').upsert(payload, { onConflict: 'path' });
+    }
+  } catch (err: any) {
+    console.warn('Notice syncing Others folders to Supabase:', err?.message);
+  }
+}
 

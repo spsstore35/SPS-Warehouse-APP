@@ -33,6 +33,10 @@ interface BookingModalProps {
   onSaveBooking: (booking: Booking, autoAdvanceToPreparing?: boolean) => void;
 }
 
+function formatTitleCaseWords(input: string): string {
+  return input.replace(/(^|\s)([^\s])/g, (_m, space, ch) => `${space}${ch.toUpperCase()}`);
+}
+
 function isLightColor(hex?: string): boolean {
   if (!hex || hex === 'transparent') return true;
   const c = hex.replace('#', '');
@@ -101,7 +105,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     : false;
 
   // Client Info
-  const [clientName, setClientName] = useState(bookingToEdit?.clientName || '');
+  const [clientName, setClientName] = useState(
+    formatTitleCaseWords(bookingToEdit?.clientName || '')
+  );
   const [troopGroup, setTroopGroup] = useState(bookingToEdit?.troopGroup || '');
   const [clientPhone, setClientPhone] = useState(
     bookingToEdit?.clientPhone && bookingToEdit.clientPhone !== 'N/A' ? bookingToEdit.clientPhone : ''
@@ -429,7 +435,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       }
     }
 
-    if (!clientName.trim()) {
+    const normalizedClientName = formatTitleCaseWords(clientName.trim());
+    if (!normalizedClientName) {
       setFormError('Please enter client or organization name.');
       return;
     }
@@ -441,7 +448,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (bookingToEdit) {
       const updatedBooking: Booking = {
         ...bookingToEdit,
-        clientName: clientName.trim(),
+        clientName: normalizedClientName,
         troopGroup: troopGroup.trim() || undefined,
         clientPhone: clientPhone.trim() || 'N/A',
         notes: notes.trim(),
@@ -471,7 +478,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     const newBooking: Booking = {
       id: `bk_${Date.now()}`,
       bookingNumber,
-      clientName: clientName.trim(),
+      clientName: normalizedClientName,
       troopGroup: troopGroup.trim() || undefined,
       clientPhone: clientPhone.trim() || 'N/A',
       notes: notes.trim(),
@@ -561,9 +568,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <input
                   type="text"
                   required
+                  autoCapitalize="words"
                   value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  placeholder="e.g. Leader Mark / Father Youhanna"
+                  onChange={(e) => {
+                    const inputEl = e.target;
+                    const start = inputEl.selectionStart;
+                    const end = inputEl.selectionEnd;
+                    const formatted = formatTitleCaseWords(inputEl.value);
+                    setClientName(formatted);
+                    requestAnimationFrame(() => {
+                      if (typeof start === 'number' && typeof end === 'number') {
+                        try {
+                          inputEl.setSelectionRange(start, end);
+                        } catch {}
+                      }
+                    });
+                  }}
+                  placeholder="e.g. Tony Mohab Samir"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
                 />
               </div>

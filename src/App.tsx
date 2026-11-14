@@ -57,6 +57,8 @@ import {
   insertBookingInDb,
   updateBookingInDb,
   deleteBookingFromDb,
+  fetchOthersFoldersFromDb,
+  syncOthersFoldersToDb,
   CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
@@ -147,23 +149,57 @@ export default function App() {
     return { parent: parts[0], child: parts.slice(1).join(' / ') };
   };
 
+  const DEFAULT_OTHERS_FOLDERS = [
+    'Wegla',
+    'Pins & Badges',
+    'Wa3d',
+    'Accessories',
+    'Souvenirs',
+    'Sharat hewayat',
+    'Sharat hewayat / Ashbal',
+    'Sharat hewayat / Kashafeen',
+    'Sharat hewayat / Zahrat',
+    'Sharat hewayat / Morshedat',
+  ];
+
+  const getDeletedFoldersSet = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem('sps_others_deleted_folders');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr.map((s: string) => String(s).toLowerCase()));
+      }
+    } catch {}
+    return new Set();
+  };
+
   const [customFolders, setCustomFolders] = useState<string[]>(() => {
+    const deletedSet = getDeletedFoldersSet();
+    const initialMerged: string[] = [];
+    const addUnique = (val: string) => {
+      const norm = normalizeFolderPath(val);
+      if (!norm || norm.toLowerCase() === 'all items') return;
+      if (!initialMerged.some((f) => f.toLowerCase() === norm.toLowerCase())) {
+        initialMerged.push(norm);
+      }
+    };
     try {
       const saved = localStorage.getItem('sps_others_folders');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return Array.from(
-            new Set(
-              parsed
-                .map((f: string) => (f === 'All Folders' ? 'All Items' : normalizeFolderPath(String(f))))
-                .filter((f: string) => Boolean(f) && f !== 'All Items')
-            )
-          );
+          parsed.forEach((f: string) => {
+            if (f !== 'All Folders') addUnique(String(f));
+          });
         }
       }
     } catch {}
-    return ['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'];
+    DEFAULT_OTHERS_FOLDERS.forEach((defPath) => {
+      if (!deletedSet.has(defPath.toLowerCase())) {
+        addUnique(defPath);
+      }
+    });
+    return initialMerged;
   });
   const [selectedOtherFolder, setSelectedOtherFolder] = useState<string>('All Items');
   const [showNewFolderModal, setShowNewFolderModal] = useState<boolean>(false);
@@ -227,7 +263,12 @@ export default function App() {
     setCustomFolders(nextFolders);
     try {
       localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
+      const deletedSet = getDeletedFoldersSet();
+      deletedSet.delete(fullPath.toLowerCase());
+      if (cleanParent) deletedSet.delete(cleanParent.toLowerCase());
+      localStorage.setItem('sps_others_deleted_folders', JSON.stringify(Array.from(deletedSet)));
     } catch {}
+    syncOthersFoldersToDb(nextFolders);
 
     // If creating a sub-sub-folder inside a parent, stay inside parent so user immediately sees its Folder Card
     setSelectedOtherFolder(cleanParent || fullPath);
@@ -277,6 +318,7 @@ export default function App() {
     try {
       localStorage.setItem('sps_others_folders', JSON.stringify(updatedFolderList));
     } catch {}
+    syncOthersFoldersToDb(updatedFolderList);
 
     const modifiedProducts: Product[] = [];
     const nextProducts = products.map((p) => {
@@ -336,7 +378,16 @@ export default function App() {
     setCustomFolders(updatedFolderList);
     try {
       localStorage.setItem('sps_others_folders', JSON.stringify(updatedFolderList));
+      const deletedSet = getDeletedFoldersSet();
+      deletedSet.add(targetLower);
+      allFolderPaths.forEach((f) => {
+        if (!isNested && f.toLowerCase().startsWith(targetPrefix)) {
+          deletedSet.add(f.toLowerCase());
+        }
+      });
+      localStorage.setItem('sps_others_deleted_folders', JSON.stringify(Array.from(deletedSet)));
     } catch {}
+    syncOthersFoldersToDb(updatedFolderList);
 
     const modifiedProducts: Product[] = [];
     const nextProducts = products.map((p) => {
@@ -722,16 +773,21 @@ export default function App() {
       setDbStatus(status);
 
       if (status.connected && status.tablesExist) {
-        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs, dbBookings] = await Promise.allSettled([
+        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs, dbBookings, dbFolders] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
           fetchUsersFromDb(),
           fetchCategoriesFromDb(),
           fetchAuditLogsFromDb(),
           fetchBookingsFromDb(),
+          fetchOthersFoldersFromDb(),
         ]);
 
+        let dbProductFolders: string[] = [];
         if (dbProducts.status === 'fulfilled') {
+          dbProductFolders = dbProducts.value
+            .map((p) => (p.folder ? normalizeFolderPath(p.folder) : ''))
+            .filter(Boolean);
           setProducts((prev) => {
             const merged = dbProducts.value.map((p) => {
               const localMatch = prev.find((lp) => lp.id === p.id);
@@ -794,6 +850,39 @@ export default function App() {
             saveStoredBookings(merged);
             return merged;
           });
+        }
+
+        // Sync Others folders, sub-folders & sub-sub-folders from Supabase & products
+        if (dbFolders.status === 'fulfilled') {
+          const remoteFolders = dbFolders.value;
+
+          if (remoteFolders !== null) {
+            if (remoteFolders.length > 0) {
+              const merged = Array.from(new Set([...remoteFolders, ...dbProductFolders]));
+              setCustomFolders(merged);
+              try {
+                localStorage.setItem('sps_others_folders', JSON.stringify(merged));
+              } catch {}
+            } else {
+              // Seed table if newly created and empty
+              setCustomFolders((prev) => {
+                const seedList = Array.from(new Set([...prev, ...DEFAULT_OTHERS_FOLDERS, ...dbProductFolders]));
+                try {
+                  localStorage.setItem('sps_others_folders', JSON.stringify(seedList));
+                } catch {}
+                syncOthersFoldersToDb(seedList);
+                return seedList;
+              });
+            }
+          } else if (dbProductFolders.length > 0) {
+            setCustomFolders((prev) => {
+              const merged = Array.from(new Set([...prev, ...dbProductFolders]));
+              try {
+                localStorage.setItem('sps_others_folders', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
         }
 
         if (notify) {
@@ -909,6 +998,7 @@ export default function App() {
       try {
         localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
       } catch {}
+      syncOthersFoldersToDb(nextFolders);
     }
 
     let updatedProducts: Product[];

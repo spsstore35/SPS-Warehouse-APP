@@ -65,7 +65,18 @@ const PRESET_COLORS: ColorVariant[] = [
 export const AddProductModal: React.FC<AddProductModalProps> = ({
   currentUser,
   categories,
-  availableFolders = ['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs'],
+  availableFolders = [
+    'Wegla',
+    'Pins & Badges',
+    'Wa3d',
+    'Accessories',
+    'Souvenirs',
+    'Sharat hewayat',
+    'Sharat hewayat / Ashbal',
+    'Sharat hewayat / Kashafeen',
+    'Sharat hewayat / Zahrat',
+    'Sharat hewayat / Morshedat',
+  ],
   onClose,
   onSaveProduct,
   productToEdit,
@@ -569,7 +580,19 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   const isAdmin = currentUser.role === 'admin';
   const mergedFolderPresets = Array.from(
-    new Set(['Wegla', 'Pins & Badges', 'Wa3d', 'Accessories', 'Souvenirs', ...availableFolders])
+    new Set([
+      'Wegla',
+      'Pins & Badges',
+      'Wa3d',
+      'Accessories',
+      'Souvenirs',
+      'Sharat hewayat',
+      'Sharat hewayat / Ashbal',
+      'Sharat hewayat / Kashafeen',
+      'Sharat hewayat / Zahrat',
+      'Sharat hewayat / Morshedat',
+      ...availableFolders,
+    ])
   );
 
   return (
