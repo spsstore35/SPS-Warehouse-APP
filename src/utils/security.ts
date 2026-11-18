@@ -39,6 +39,18 @@ export async function verifyPassword(
   return false;
 }
 
+import type { Role } from '../types/inventory';
+
+/**
+ * Normalize raw role strings from DB or local storage into strict Role union
+ */
+export function normalizeRole(raw?: string | null): Role {
+  const val = String(raw || '').trim().toLowerCase();
+  if (val === 'admin' || val.includes('admin')) return 'admin';
+  if (val === 'leader' || val.includes('leader')) return 'leader';
+  return 'worker';
+}
+
 /**
  * Universal case-insensitive and alias-aware check for admin authority
  */
@@ -48,3 +60,23 @@ export function isUserAdmin(user?: { role?: string; requestedRole?: string } | n
   const req = String(user.requestedRole || '').trim().toLowerCase();
   return role === 'admin' || role.includes('admin') || req === 'admin' || req.includes('admin');
 }
+
+export function isUserLeader(user?: { role?: string; requestedRole?: string } | null): boolean {
+  if (!user || isUserAdmin(user)) return false;
+  const role = String(user.role || '').trim().toLowerCase();
+  const req = String(user.requestedRole || '').trim().toLowerCase();
+  return role === 'leader' || role.includes('leader') || req === 'leader' || req.includes('leader');
+}
+
+export function isUserStaff(user?: { role?: string; requestedRole?: string } | null): boolean {
+  if (!user) return false;
+  return !isUserAdmin(user) && !isUserLeader(user);
+}
+
+export function getRoleDisplayName(role?: Role | string): string {
+  const norm = normalizeRole(role);
+  if (norm === 'admin') return 'Warehouse Admin';
+  if (norm === 'leader') return 'Scout Leader (Read-Only)';
+  return 'Warehouse Staff';
+}
+

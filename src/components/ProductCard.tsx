@@ -26,6 +26,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const [imageError, setImageError] = useState(false);
   const [activeImgIdx, setActiveImgIdx] = useState(0);
   const isAdmin = userRole === 'admin';
+  const isLeader = userRole === 'leader';
 
   // Gather all photos available
   const allCardImages = (product.images && product.images.length > 0)
@@ -327,7 +328,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   </button>
                 )}
               </div>
-            ) : (
+            ) : !isLeader ? (
               <div className="flex items-center gap-1.5 w-full">
                 <button
                   type="button"
@@ -338,7 +339,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   <span>Request Count Adjustment</span>
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

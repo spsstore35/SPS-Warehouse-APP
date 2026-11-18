@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'worker';
+export type Role = 'admin' | 'worker' | 'leader';
 export type UserStatus = 'active' | 'pending' | 'rejected';
 
 export interface User {
@@ -135,7 +135,8 @@ export interface AuditLogEntry {
     | 'booking_updated'
     | 'booking_deleted'
     | 'booking_status_changed'
-    | 'booking_deposit_paid';
+    | 'booking_deposit_paid'
+    | 'booking_payment_verification_requested';
   actorName: string;
   actorRole: Role;
   summary: string;
@@ -200,6 +201,10 @@ export interface Booking {
   depositPaidAt?: string;
   finalPaidAmount?: number;
   finalPaidAt?: string;
+  paymentVerificationRequested?: boolean;
+  paymentVerificationRequestedBy?: string;
+  paymentVerificationRequestedAt?: string;
+  paymentVerificationNote?: string;
   status: BookingStatus;
   inventoryDeducted: boolean;
   createdById: string;

@@ -648,9 +648,17 @@ export async function fetchUsersFromDb(): Promise<User[]> {
 
   return data.map((u: any) => {
     const rawRole = String(u.role || u.requested_role || '').trim().toLowerCase();
-    const normalizedRole: Role = rawRole.includes('admin') ? 'admin' : 'worker';
+    const normalizedRole: Role = rawRole.includes('admin')
+      ? 'admin'
+      : rawRole.includes('leader')
+      ? 'leader'
+      : 'worker';
     const rawReqRole = String(u.requested_role || u.role || '').trim().toLowerCase();
-    const normalizedReqRole: Role = rawReqRole.includes('admin') ? 'admin' : 'worker';
+    const normalizedReqRole: Role = rawReqRole.includes('admin')
+      ? 'admin'
+      : rawReqRole.includes('leader')
+      ? 'leader'
+      : 'worker';
 
     return {
       id: u.id,
@@ -693,7 +701,12 @@ export async function registerUserInDb(data: {
     requestedRole: data.requestedRole,
     status: 'pending', // Awaiting Admin Approval
     employeeId: `WH-REG-${Math.floor(100 + Math.random() * 900)}`,
-    avatarColor: data.requestedRole === 'admin' ? '#d97706' : '#0284c7',
+    avatarColor:
+      data.requestedRole === 'admin'
+        ? '#d97706'
+        : data.requestedRole === 'leader'
+        ? '#059669'
+        : '#0284c7',
     createdAt: new Date().toISOString(),
   };
 
@@ -775,7 +788,8 @@ export async function updateUserRoleInDb(
   const updatePayload: Record<string, any> = {
     role: newRole,
     requested_role: newRole,
-    avatar_color: newRole === 'admin' ? '#d97706' : '#0284c7',
+    avatar_color:
+      newRole === 'admin' ? '#d97706' : newRole === 'leader' ? '#059669' : '#0284c7',
   };
 
   const { error } = await supabase
@@ -1038,6 +1052,10 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
         depositPaidAt: b.deposit_paid_at || undefined,
         finalPaidAmount: b.final_paid_amount !== null ? Number(b.final_paid_amount) : undefined,
         finalPaidAt: b.final_paid_at || undefined,
+        paymentVerificationRequested: Boolean(b.payment_verification_requested),
+        paymentVerificationRequestedBy: b.payment_verification_requested_by || undefined,
+        paymentVerificationRequestedAt: b.payment_verification_requested_at || undefined,
+        paymentVerificationNote: b.payment_verification_note || undefined,
         status: (b.status || 'pending') as BookingStatus,
         inventoryDeducted: Boolean(b.inventory_deducted),
         createdById: b.created_by_id,
@@ -1076,6 +1094,10 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       deposit_paid_at: booking.depositPaidAt || null,
       final_paid_amount: booking.finalPaidAmount || 0,
       final_paid_at: booking.finalPaidAt || null,
+      payment_verification_requested: Boolean(booking.paymentVerificationRequested),
+      payment_verification_requested_by: booking.paymentVerificationRequestedBy || null,
+      payment_verification_requested_at: booking.paymentVerificationRequestedAt || null,
+      payment_verification_note: booking.paymentVerificationNote || null,
       status: booking.status,
       inventory_deducted: booking.inventoryDeducted,
       created_by_id: booking.createdById,
@@ -1088,9 +1110,19 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
     let { error: bookingErr } = await supabase.from('bookings').upsert(bookingPayload);
     if (
       bookingErr &&
-      (bookingErr.message?.includes('troop_group') || bookingErr.details?.includes('troop_group'))
+      (bookingErr.message?.includes('troop_group') ||
+        bookingErr.details?.includes('troop_group') ||
+        bookingErr.message?.includes('payment_verification') ||
+        bookingErr.details?.includes('payment_verification') ||
+        bookingErr.code === 'PGRST204')
     ) {
-      delete bookingPayload.troop_group;
+      if (bookingErr.message?.includes('troop_group') || bookingErr.details?.includes('troop_group')) {
+        delete bookingPayload.troop_group;
+      }
+      delete bookingPayload.payment_verification_requested;
+      delete bookingPayload.payment_verification_requested_by;
+      delete bookingPayload.payment_verification_requested_at;
+      delete bookingPayload.payment_verification_note;
       const retry = await supabase.from('bookings').upsert(bookingPayload);
       bookingErr = retry.error;
     }
@@ -1167,14 +1199,39 @@ export async function updateBookingInDb(
     if (updates.depositPaidAt !== undefined) payload.deposit_paid_at = updates.depositPaidAt;
     if (updates.finalPaidAmount !== undefined) payload.final_paid_amount = updates.finalPaidAmount;
     if (updates.finalPaidAt !== undefined) payload.final_paid_at = updates.finalPaidAt;
+    if (updates.paymentVerificationRequested !== undefined) {
+      payload.payment_verification_requested = Boolean(updates.paymentVerificationRequested);
+    }
+    if (updates.paymentVerificationRequestedBy !== undefined) {
+      payload.payment_verification_requested_by = updates.paymentVerificationRequestedBy || null;
+    }
+    if (updates.paymentVerificationRequestedAt !== undefined) {
+      payload.payment_verification_requested_at = updates.paymentVerificationRequestedAt || null;
+    }
+    if (updates.paymentVerificationNote !== undefined) {
+      payload.payment_verification_note = updates.paymentVerificationNote || null;
+    }
     if (updates.notes !== undefined) payload.notes = updates.notes;
     if (updates.subtotal !== undefined) payload.subtotal = updates.subtotal;
     if (updates.discount !== undefined) payload.discount = updates.discount;
     if (updates.total !== undefined) payload.total = updates.total;
 
     let { error } = await supabase.from('bookings').update(payload).eq('id', bookingId);
-    if (error && (error.message?.includes('troop_group') || error.details?.includes('troop_group'))) {
-      delete payload.troop_group;
+    if (
+      error &&
+      (error.message?.includes('troop_group') ||
+        error.details?.includes('troop_group') ||
+        error.message?.includes('payment_verification') ||
+        error.details?.includes('payment_verification') ||
+        error.code === 'PGRST204')
+    ) {
+      if (error.message?.includes('troop_group') || error.details?.includes('troop_group')) {
+        delete payload.troop_group;
+      }
+      delete payload.payment_verification_requested;
+      delete payload.payment_verification_requested_by;
+      delete payload.payment_verification_requested_at;
+      delete payload.payment_verification_note;
       const retry = await supabase.from('bookings').update(payload).eq('id', bookingId);
       error = retry.error;
     }

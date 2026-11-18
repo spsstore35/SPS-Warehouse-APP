@@ -31,7 +31,7 @@ import {
   getStoredBookings,
   saveStoredBookings,
 } from './utils/storage';
-import { isUserAdmin } from './utils/security';
+import { isUserAdmin, isUserLeader, normalizeRole, getRoleDisplayName } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
 import {
   checkSupabaseConnection,
@@ -79,6 +79,7 @@ import { ActivityDetailModal } from './components/ActivityDetailModal';
 import { BookingsView } from './components/BookingsView';
 import { BookingModal } from './components/BookingModal';
 import { BookingPrintModal } from './components/BookingPrintModal';
+import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { MobileNotificationBanner } from './components/MobileNotificationBanner';
 import {
   registerServiceWorker,
@@ -725,7 +726,7 @@ export default function App() {
         ...u,
         role: newRole,
         requestedRole: newRole,
-        avatarColor: newRole === 'admin' ? '#d97706' : '#0284c7',
+        avatarColor: newRole === 'admin' ? '#d97706' : newRole === 'leader' ? '#059669' : '#0284c7',
       };
     });
 
@@ -749,20 +750,21 @@ export default function App() {
       console.warn('Supabase user role update notice:', err?.message);
     }
 
+    const nextRoleLabel = getRoleDisplayName(newRole);
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
       action: 'account_updated' as any,
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
-      reason: `Staff Role Changed: ${oldRole.toUpperCase()} → ${newRole.toUpperCase()}`,
-      summary: `Staff Role Changed: "${targetUser?.name || targetUser?.email || 'User'}" to ${newRole === 'admin' ? 'Admin Authority' : 'Staff'}`,
+      reason: `Account Role Changed: ${oldRole.toUpperCase()} → ${newRole.toUpperCase()}`,
+      summary: `Account Role Changed: "${targetUser?.name || targetUser?.email || 'User'}" to ${nextRoleLabel}`,
       details: `User (${targetUser?.email}) role changed from ${oldRole.toUpperCase()} to ${newRole.toUpperCase()} by Admin.`,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
     insertAuditLogInDb(newLog).catch(() => {});
 
-    showToast(`Role for "${targetUser?.name || 'User'}" updated to ${newRole === 'admin' ? 'Admin Authority' : 'Staff'}.`, newLog);
+    showToast(`Role for "${targetUser?.name || 'User'}" updated to ${nextRoleLabel}.`, newLog);
   };
 
   // Load live data from Supabase - Strict single source of truth across all devices
@@ -842,9 +844,22 @@ export default function App() {
           setBookings((prev) => {
             const merged = dbBookings.value.map((b) => {
               const localMatch = prev.find((lb) => lb.id === b.id);
+              const isPaidNow = Boolean(b.depositPaid || b.status !== 'pending');
               return {
                 ...b,
                 troopGroup: b.troopGroup || localMatch?.troopGroup,
+                paymentVerificationRequested: isPaidNow
+                  ? false
+                  : Boolean(b.paymentVerificationRequested || localMatch?.paymentVerificationRequested),
+                paymentVerificationRequestedBy: isPaidNow
+                  ? undefined
+                  : (b.paymentVerificationRequestedBy || localMatch?.paymentVerificationRequestedBy),
+                paymentVerificationRequestedAt: isPaidNow
+                  ? undefined
+                  : (b.paymentVerificationRequestedAt || localMatch?.paymentVerificationRequestedAt),
+                paymentVerificationNote: isPaidNow
+                  ? undefined
+                  : (b.paymentVerificationNote || localMatch?.paymentVerificationNote),
               };
             });
             saveStoredBookings(merged);
@@ -944,7 +959,7 @@ export default function App() {
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     setActiveView('inventory');
-    showToast(`Signed in as ${user.name} (${user.role === 'admin' ? 'Admin' : 'Staff'})`);
+    showToast(`Signed in as ${user.name} (${getRoleDisplayName(user.role)})`);
   };
 
   const handleLogout = () => {
@@ -1746,7 +1761,7 @@ export default function App() {
         status: 'active',
         requestedRole: data.role,
         createdAt: new Date().toISOString(),
-        avatarColor: data.role === 'admin' ? '#d97706' : '#0284c7',
+        avatarColor: data.role === 'admin' ? '#d97706' : data.role === 'leader' ? '#059669' : '#0284c7',
       };
 
       const { error: insertErr } = await supabase.from('profiles').insert({
@@ -1814,7 +1829,7 @@ export default function App() {
         actorName: currentUser?.name || 'Admin',
         actorRole: 'admin',
         summary: `Created pre-approved account for "${newUser.name}"`,
-        details: `Account for ${newUser.email} (${newUser.role === 'admin' ? 'Warehouse Admin' : 'Staff'}) created directly as Active without approval.`,
+        details: `Account for ${newUser.email} (${getRoleDisplayName(newUser.role)}) created directly as Active without approval.`,
       };
       setAuditLogs((prev) => [newLog, ...prev]);
       insertAuditLogInDb(newLog).catch(() => {});
@@ -2031,7 +2046,99 @@ export default function App() {
     showToast(`Booking ${editedBooking.bookingNumber} updated successfully.`, newLog);
   };
 
+  const handleRequestPaymentVerification = (bookingId: string, note?: string) => {
+    const target = bookings.find((b) => b.id === bookingId);
+    if (!target) return;
+    if (target.status !== 'pending' || target.depositPaid) {
+      showToast('Payment has already been confirmed for this booking.');
+      return;
+    }
+
+    const updatedBooking: Booking = {
+      ...target,
+      paymentVerificationRequested: true,
+      paymentVerificationRequestedBy: currentUser?.name || 'Staff',
+      paymentVerificationRequestedAt: new Date().toISOString(),
+      paymentVerificationNote: note,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextBookings = bookings.map((b) => (b.id === bookingId ? updatedBooking : b));
+    setBookings(nextBookings);
+    saveStoredBookings(nextBookings);
+
+    updateBookingInDb(bookingId, updatedBooking).catch((err) => {
+      console.warn('Notice saving payment verification request to Supabase:', err?.message);
+    });
+
+    const pct = target.depositPercentage || (target.depositRate ? Math.round(target.depositRate * 100) : 50);
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_payment_verification_requested',
+      actorName: currentUser?.name || 'Staff',
+      actorRole: currentUser?.role || 'worker',
+      bookingId: target.id,
+      bookingNumber: target.bookingNumber,
+      bookingItems: target.items,
+      reason: `Payment Verification Requested - Order #${target.bookingNumber}`,
+      summary: `${currentUser?.name || 'Staff'} requested Admin payment verification for Order #${target.bookingNumber}`,
+      details: `Staff requested Admin approval to confirm ${pct}% payment (${target.depositRequired.toFixed(2)} EGP) for "${target.clientName}".${note ? ` Ref note: ${note}` : ''}`,
+      note,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+    showToast(`Payment verification request sent for Order #${target.bookingNumber}. Awaiting Admin approval.`, newLog);
+  };
+
+  const handleDeclinePaymentVerification = (bookingId: string) => {
+    if (!isUserAdmin(currentUser)) {
+      showToast('Only Admins can approve or decline payment verification requests.');
+      return;
+    }
+    const target = bookings.find((b) => b.id === bookingId);
+    if (!target) return;
+
+    const updatedBooking: Booking = {
+      ...target,
+      paymentVerificationRequested: false,
+      paymentVerificationRequestedBy: undefined,
+      paymentVerificationRequestedAt: undefined,
+      paymentVerificationNote: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextBookings = bookings.map((b) => (b.id === bookingId ? updatedBooking : b));
+    setBookings(nextBookings);
+    saveStoredBookings(nextBookings);
+
+    updateBookingInDb(bookingId, updatedBooking).catch((err) => {
+      console.warn('Notice declining payment verification in Supabase:', err?.message);
+    });
+
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: 'booking_updated',
+      actorName: currentUser?.name || 'Admin',
+      actorRole: 'admin',
+      bookingId: target.id,
+      bookingNumber: target.bookingNumber,
+      bookingItems: target.items,
+      reason: `Payment Verification Declined - Order #${target.bookingNumber}`,
+      summary: `Admin declined payment verification request for Order #${target.bookingNumber}`,
+      details: `Order #${target.bookingNumber} (${target.clientName}) remains Awaiting Deposit. Payment verification request cleared by Admin.`,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+    insertAuditLogInDb(newLog).catch(() => {});
+    showToast(`Payment verification request declined for Order #${target.bookingNumber}.`, newLog);
+  };
+
   const handleAdvanceBookingStatus = (bookingId: string, nextStatus: BookingStatus) => {
+    if (nextStatus === 'preparing' && !isUserAdmin(currentUser)) {
+      showToast('Only Admins can confirm payment. Please submit a Payment Verification Request.');
+      return;
+    }
     const nextProducts = [...products];
     const variantDbUpdates: { variantId: string; newQty: number }[] = [];
     let affectedBooking: Booking | undefined;
@@ -2086,6 +2193,10 @@ export default function App() {
         depositPaidAt: nextStatus === 'preparing' && !b.depositPaidAt ? new Date().toISOString() : b.depositPaidAt,
         finalPaidAmount: isDone ? (b.total - b.depositRequired) : b.finalPaidAmount,
         finalPaidAt: isDone ? new Date().toISOString() : b.finalPaidAt,
+        paymentVerificationRequested: nextStatus !== 'pending' ? false : b.paymentVerificationRequested,
+        paymentVerificationRequestedBy: nextStatus !== 'pending' ? undefined : b.paymentVerificationRequestedBy,
+        paymentVerificationRequestedAt: nextStatus !== 'pending' ? undefined : b.paymentVerificationRequestedAt,
+        paymentVerificationNote: nextStatus !== 'pending' ? undefined : b.paymentVerificationNote,
         updatedAt: new Date().toISOString(),
       };
 
@@ -2199,7 +2310,11 @@ export default function App() {
   const pendingCount = isUserAdmin(currentUser) 
     ? (pendingRequestsCount + pendingUsersCount + pendingProductsCount) 
     : pendingRequestsCount;
-  const pendingStaffBookingRequestsCount = bookings.filter((b) => Boolean(b.pendingDepositPercentage)).length;
+  const pendingStaffBookingRequestsCount = bookings.filter(
+    (b) =>
+      Boolean(b.pendingDepositPercentage) ||
+      Boolean(b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending')
+  ).length;
 
   // Real-Time System Notification Triggers for EVERY Stock Audit Log Entry
   useEffect(() => {
@@ -2273,8 +2388,19 @@ export default function App() {
     prevPendingAccountsRef.current = pendingUsersCount;
   }, [pendingUsersCount, users]);
 
-  // Navigation handler supporting direct routing to Account Approvals & Stock Approvals
+  // Navigation handler supporting direct routing & RBAC enforcement
   const handleNavigate = (view: string) => {
+    if (isUserLeader(currentUser)) {
+      if (view !== 'inventory') {
+        showToast('Scout Leader accounts have read-only access to the Catalog & Prices.');
+      }
+      setActiveView('inventory');
+      return;
+    }
+    if (view === 'analytics' && !isUserAdmin(currentUser)) {
+      showToast('Only Admins can access the Analytics & Production Dashboard.');
+      return;
+    }
     if (view === 'add-product') {
       setProductToEdit(undefined);
       setShowAddModal(true);
@@ -2380,6 +2506,12 @@ export default function App() {
   }
 
   const isAdmin = isUserAdmin(currentUser);
+  const isLeader = isUserLeader(currentUser);
+  const effectiveView = isLeader
+    ? 'inventory'
+    : activeView === 'analytics' && !isAdmin
+    ? 'inventory'
+    : activeView;
 
   return (
     <>
@@ -2387,14 +2519,14 @@ export default function App() {
         {/* Top Bar Header */}
         <Header
         currentUser={currentUser}
-        activeView={activeView}
+        activeView={effectiveView}
         onNavigate={handleNavigate}
         onSwitchRole={handleSwitchRole}
         onLogout={handleLogout}
         pendingCount={pendingCount}
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
-        pendingBookingsCount={bookings.filter((b) => b.status === 'pending' || Boolean(b.pendingDepositPercentage)).length}
+        pendingBookingsCount={bookings.filter((b) => b.status === 'pending' || Boolean(b.pendingDepositPercentage) || Boolean(b.paymentVerificationRequested && !b.depositPaid)).length}
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         approvalsTab={approvalsTab}
       />
@@ -2402,17 +2534,25 @@ export default function App() {
       {/* Main View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-7 flex-1 w-full">
         {/* VIEW 1: CATALOG & INVENTORY */}
-        {activeView === 'inventory' && (
+        {effectiveView === 'inventory' && (
           <div className="space-y-6">
+            {isLeader && (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 text-xs text-emerald-950 font-semibold">
+                  <Eye className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <span>Scout Leader Read-Only Catalog — Browse uniform models, sizes, and unit prices.</span>
+                </div>
+              </div>
+            )}
 
             {/* KPI Metric Strip in Clean Light Mode */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className={`grid grid-cols-2 ${isLeader ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-3`}>
               <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                   Total Items
                 </div>
                 <div className="text-2xl font-black font-mono tabular-nums text-slate-900 mt-1">
-                  {products.length}
+                  {activeProducts.length}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">Active catalogue items</div>
               </div>
@@ -2427,34 +2567,36 @@ export default function App() {
                 <div className="text-[11px] text-slate-500 mt-0.5">Sum of all size/colors</div>
               </div>
 
-              {/* Account Approvals KPI Card */}
-              <div
-                onClick={() => handleNavigate(isAdmin ? 'account-approvals' : 'worker-requests')}
-                className={`p-4 rounded-2xl border shadow-sm cursor-pointer transition-all ${
-                  (isAdmin ? pendingUsersCount : pendingRequestsCount) > 0
-                    ? 'bg-amber-50 border-amber-300 hover:border-amber-400'
-                    : 'bg-white border-slate-200/90 hover:border-slate-300'
-                }`}
-              >
-                <div className="text-[10px] font-bold text-amber-800 uppercase tracking-wider flex items-center justify-between">
-                  <span>{isAdmin ? 'Account Approvals' : 'My Requests'}</span>
-                  {(isAdmin ? pendingUsersCount : pendingRequestsCount) > 0 && (
-                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                  )}
+              {/* Account Approvals / My Requests KPI Card (Hidden for Leaders) */}
+              {!isLeader && (
+                <div
+                  onClick={() => handleNavigate(isAdmin ? 'account-approvals' : 'worker-requests')}
+                  className={`p-4 rounded-2xl border shadow-sm cursor-pointer transition-all ${
+                    (isAdmin ? pendingUsersCount : pendingRequestsCount) > 0
+                      ? 'bg-amber-50 border-amber-300 hover:border-amber-400'
+                      : 'bg-white border-slate-200/90 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold text-amber-800 uppercase tracking-wider flex items-center justify-between">
+                    <span>{isAdmin ? 'Account Approvals' : 'My Requests'}</span>
+                    {(isAdmin ? pendingUsersCount : pendingRequestsCount) > 0 && (
+                      <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                    )}
+                  </div>
+                  <div className="text-2xl font-black font-mono tabular-nums text-amber-900 mt-1">
+                    {isAdmin ? pendingUsersCount : pendingRequestsCount}
+                  </div>
+                  <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
+                    {isAdmin
+                      ? pendingUsersCount > 0
+                        ? `${pendingUsersCount} staff account${pendingUsersCount > 1 ? 's' : ''} awaiting approval`
+                        : 'All accounts active • 0 pending'
+                      : pendingRequestsCount > 0
+                      ? `${pendingRequestsCount} awaiting review`
+                      : 'All requests processed'}
+                  </div>
                 </div>
-                <div className="text-2xl font-black font-mono tabular-nums text-amber-900 mt-1">
-                  {isAdmin ? pendingUsersCount : pendingRequestsCount}
-                </div>
-                <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
-                  {isAdmin
-                    ? pendingUsersCount > 0
-                      ? `${pendingUsersCount} staff account${pendingUsersCount > 1 ? 's' : ''} awaiting approval`
-                      : 'All accounts active • 0 pending'
-                    : pendingRequestsCount > 0
-                    ? `${pendingRequestsCount} awaiting review`
-                    : 'All requests processed'}
-                </div>
-              </div>
+              )}
 
               {/* Low Stock KPI */}
               <div
@@ -2503,20 +2645,22 @@ export default function App() {
                 )}
               </div>
 
-              {/* Action buttons */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setProductToEdit(undefined);
-                    setShowAddModal(true);
-                  }}
-                  className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm transition-all min-h-[44px]"
-                  title={isAdmin ? 'Add New Item to Catalog' : 'Submit New Item for Approval'}
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{isAdmin ? 'Add New Item' : '+ Add New Item'}</span>
-                </button>
-              </div>
+              {/* Action buttons (Hidden for Read-Only Leaders) */}
+              {!isLeader && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setProductToEdit(undefined);
+                      setShowAddModal(true);
+                    }}
+                    className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm transition-all min-h-[44px]"
+                    title={isAdmin ? 'Add New Item to Catalog' : 'Submit New Item for Approval'}
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{isAdmin ? 'Add New Item' : '+ Add New Item'}</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Department / Audience Filter Pills (Men, Women, Kids, Unisex) */}
@@ -2568,14 +2712,16 @@ export default function App() {
                 ))}
               </div>
 
-              <button
-                onClick={() => setShowManageCategoriesModal(true)}
-                className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0 shadow-2xs hover:border-slate-300 ml-auto"
-                title="Manage Categories"
-              >
-                <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
-                <span className="hidden sm:inline">Manage Categories</span>
-              </button>
+              {!isLeader && (
+                <button
+                  onClick={() => setShowManageCategoriesModal(true)}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0 shadow-2xs hover:border-slate-300 ml-auto"
+                  title="Manage Categories"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-amber-700" />
+                  <span className="hidden sm:inline">Manage Categories</span>
+                </button>
+              )}
             </div>
 
             {/* Sub-Folders inside Others Category */}
@@ -2863,16 +3009,24 @@ export default function App() {
                   <ProductCard
                     key={product.id}
                     product={product}
-                    userRole={isUserAdmin(currentUser) ? 'admin' : 'worker'}
+                    userRole={normalizeRole(currentUser.role)}
                     onOpenDetails={(p) => setDetailProduct(p)}
-                    onRequestAdjustment={(p, variant) => setAdjustmentTarget({ product: p, variant })}
+                    onRequestAdjustment={(p, variant) => {
+                      if (isLeader) return;
+                      setAdjustmentTarget({ product: p, variant });
+                    }}
                     onEditProduct={(p) => {
+                      if (isLeader) return;
                       setProductToEdit(p);
                       setShowAddModal(true);
                     }}
-                    onDeleteProduct={(p) => setProductToDelete(p)}
+                    onDeleteProduct={(p) => {
+                      if (!isAdmin) return;
+                      setProductToDelete(p);
+                    }}
                     onApproveProduct={handleApproveProduct}
                     onOpenBooking={(p) => {
+                      if (isLeader) return;
                       setBookingModalProduct(p);
                       setIsBookingModalOpen(true);
                     }}
@@ -2883,8 +3037,18 @@ export default function App() {
           </div>
         )}
 
+        {/* VIEW 1B: ADMIN ANALYTICS & PRODUCTION DASHBOARD (Strictly Admin Only) */}
+        {effectiveView === 'analytics' && isAdmin && (
+          <AdminAnalyticsView
+            bookings={bookings}
+            products={products}
+            currentUser={currentUser}
+            onShowToast={showToast}
+          />
+        )}
+
         {/* VIEW 2A: STOCK APPROVALS (Stock adjustments queue + New item submissions) */}
-        {(activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')) && (
+        {(effectiveView === 'stock-approvals' || (effectiveView === 'approvals' && approvalsTab !== 'staff')) && isAdmin && (
           <ApprovalsView
             mode="stock"
             requests={requests}
@@ -2906,7 +3070,7 @@ export default function App() {
         )}
 
         {/* VIEW 2B: ACCOUNT APPROVALS (Dedicated Staff Accounts & Registration Approvals) */}
-        {(activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')) && (
+        {(effectiveView === 'account-approvals' || (effectiveView === 'approvals' && approvalsTab === 'staff')) && isAdmin && (
           <ApprovalsView
             mode="accounts"
             requests={requests}
@@ -2928,7 +3092,7 @@ export default function App() {
         )}
 
         {/* VIEW 3: WORKER REQUESTS */}
-        {activeView === 'worker-requests' && (
+        {effectiveView === 'worker-requests' && !isLeader && (
           <WorkerRequestsView
             requests={requests}
             currentUser={currentUser}
@@ -2937,7 +3101,7 @@ export default function App() {
         )}
 
         {/* VIEW 4: AUDIT LOG */}
-        {activeView === 'audit-log' && (
+        {effectiveView === 'audit-log' && !isLeader && (
           <div className="space-y-6">
             <MobileNotificationBanner
               permission={notificationPermission}
@@ -2959,7 +3123,7 @@ export default function App() {
         )}
 
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
-        {activeView === 'bookings' && (
+        {effectiveView === 'bookings' && !isLeader && (
           <BookingsView
             bookings={bookings}
             currentUser={currentUser}
@@ -2987,6 +3151,8 @@ export default function App() {
               setIsPrintModalOpen(true);
             }}
             onAdvanceStatus={handleAdvanceBookingStatus}
+            onRequestPaymentVerification={handleRequestPaymentVerification}
+            onDeclinePaymentVerification={handleDeclinePaymentVerification}
             onDeleteBooking={handleDeleteBooking}
             onUpdateBooking={handleUpdateBooking}
             onLogActivity={(log) => {
@@ -3008,7 +3174,7 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <BottomNav
         currentUser={currentUser}
-        activeView={activeView}
+        activeView={effectiveView}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
         pendingCount={pendingCount}
@@ -3017,10 +3183,12 @@ export default function App() {
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         approvalsTab={approvalsTab}
         onOpenAddProduct={() => {
+          if (isLeader) return;
           setProductToEdit(undefined);
           setShowAddModal(true);
         }}
         onOpenNewBooking={() => {
+          if (isLeader) return;
           setBookingModalProduct(undefined);
           setIsBookingModalOpen(true);
         }}
@@ -3030,15 +3198,17 @@ export default function App() {
       {detailProduct && (
         <ProductDetailModal
           product={detailProduct}
-          userRole={isUserAdmin(currentUser) ? 'admin' : 'worker'}
+          userRole={normalizeRole(currentUser.role)}
           onClose={() => setDetailProduct(null)}
           onRequestAdjustment={(p, variant) => {
+            if (isLeader) return;
             setDetailProduct(null);
             setAdjustmentTarget({ product: p, variant });
           }}
           onDeleteProduct={handleDeleteProduct}
           onDeleteVariant={handleDeleteVariant}
           onEditProduct={(p) => {
+            if (!isAdmin) return;
             setDetailProduct(null);
             setProductToEdit(p);
             setShowAddModal(true);
@@ -3048,7 +3218,7 @@ export default function App() {
       )}
 
       {/* MODAL 2: Stock Adjustment (Worker Request or Admin Direct) */}
-      {adjustmentTarget && (
+      {adjustmentTarget && !isLeader && (
         <AdjustmentModal
           product={adjustmentTarget.product}
           initialVariant={adjustmentTarget.variant}
@@ -3059,8 +3229,8 @@ export default function App() {
         />
       )}
 
-      {/* MODAL 3: Add / Edit Product (Admin) */}
-      {showAddModal && (
+      {/* MODAL 3: Add / Edit Product (Admin/Staff only) */}
+      {showAddModal && !isLeader && (
         <AddProductModal
           currentUser={currentUser}
           categories={categories}
@@ -3081,7 +3251,7 @@ export default function App() {
       )}
 
       {/* MODAL 4: Manage Categories (Dedicated SQL Table & FK) */}
-      {showManageCategoriesModal && (
+      {showManageCategoriesModal && !isLeader && (
         <ManageCategoriesModal
           categories={categories}
           currentUser={currentUser}
@@ -3110,7 +3280,7 @@ export default function App() {
       />
 
       {/* MODAL 5: Detailed Activity Breakdown Modal */}
-      {selectedActivityLog && (
+      {selectedActivityLog && !isLeader && (
         <ActivityDetailModal
           log={selectedActivityLog}
           product={products.find(
@@ -3132,7 +3302,7 @@ export default function App() {
       )}
 
       {/* MODAL 6: Create / Edit Client Booking (Quotation & Deficit Calculation) */}
-      {isBookingModalOpen && (
+      {isBookingModalOpen && !isLeader && (
         <BookingModal
           isOpen={isBookingModalOpen}
           onClose={() => {

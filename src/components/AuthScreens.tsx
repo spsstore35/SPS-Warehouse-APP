@@ -104,9 +104,17 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
         }
 
         const rawRole = String(profile.role || profile.requested_role || '').trim().toLowerCase();
-        const normalizedRole: Role = rawRole.includes('admin') ? 'admin' : 'worker';
+        const normalizedRole: Role = rawRole.includes('admin')
+          ? 'admin'
+          : rawRole.includes('leader')
+          ? 'leader'
+          : 'worker';
         const rawReqRole = String(profile.requested_role || profile.role || '').trim().toLowerCase();
-        const normalizedReqRole: Role = rawReqRole.includes('admin') ? 'admin' : 'worker';
+        const normalizedReqRole: Role = rawReqRole.includes('admin')
+          ? 'admin'
+          : rawReqRole.includes('leader')
+          ? 'leader'
+          : 'worker';
 
         const userObj: User = {
           id: profile.id,
@@ -367,7 +375,15 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   Registration Received — Pending Approval
                 </h3>
                 <p className="text-xs text-amber-800 leading-relaxed font-medium">
-                  Welcome <strong>{signUpSuccess.name}</strong>! Your account request for <strong>{signUpSuccess.requestedRole === 'admin' ? 'Warehouse Admin' : 'Staff'}</strong> has been submitted.
+                  Welcome <strong>{signUpSuccess.name}</strong>! Your account request for{' '}
+                  <strong>
+                    {signUpSuccess.requestedRole === 'admin'
+                      ? 'Warehouse Admin'
+                      : signUpSuccess.requestedRole === 'leader'
+                      ? 'Scout Leader (Read-Only)'
+                      : 'Staff'}
+                  </strong>{' '}
+                  has been submitted.
                 </p>
                 <div className="p-3 bg-white/80 rounded-xl border border-amber-200 text-left text-xs text-slate-700 space-y-1">
                   <div><strong>Email:</strong> {signUpSuccess.email}</div>
@@ -457,7 +473,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                     Requested Role / Position:
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => setSignUpRole('worker')}
@@ -468,11 +484,29 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                       }`}
                     >
                       <div className="font-bold flex items-center gap-1.5">
-                        <Package className="w-3.5 h-3.5 text-sky-600" />
-                        <span>Warehouse Staff</span>
+                        <Package className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                        <span>Staff</span>
                       </div>
                       <div className="text-[11px] font-normal text-slate-500 mt-1">
-                        Count and inspect stock
+                        Orders & stock counts
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSignUpRole('leader')}
+                      className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                        signUpRole === 'leader'
+                          ? 'border-emerald-500 bg-emerald-50 text-emerald-950 font-bold shadow-sm'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="font-bold flex items-center gap-1.5">
+                        <UserIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Leader</span>
+                      </div>
+                      <div className="text-[11px] font-normal text-slate-500 mt-1">
+                        View items & prices
                       </div>
                     </button>
 
@@ -486,11 +520,11 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                       }`}
                     >
                       <div className="font-bold flex items-center gap-1.5">
-                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Warehouse Admin</span>
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>Admin</span>
                       </div>
                       <div className="text-[11px] font-normal text-slate-500 mt-1">
-                        Approvals & management
+                        Full store control
                       </div>
                     </button>
                   </div>

@@ -27,6 +27,8 @@ import {
   Users,
 } from 'lucide-react';
 
+import { isUserAdmin } from '../utils/security';
+
 interface BookingsViewProps {
   bookings: Booking[];
   currentUser: User;
@@ -34,6 +36,8 @@ interface BookingsViewProps {
   onEditBooking?: (booking: Booking) => void;
   onOpenPrintModal: (booking: Booking, docType: 'quotation' | 'production') => void;
   onAdvanceStatus: (bookingId: string, nextStatus: BookingStatus) => void;
+  onRequestPaymentVerification?: (bookingId: string, note?: string) => void;
+  onDeclinePaymentVerification?: (bookingId: string) => void;
   onDeleteBooking: (bookingId: string) => void;
   onUpdateBooking?: (booking: Booking) => void;
   onLogActivity?: (log: any) => void;
@@ -49,6 +53,8 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onEditBooking,
   onOpenPrintModal,
   onAdvanceStatus,
+  onRequestPaymentVerification,
+  onDeclinePaymentVerification,
   onDeleteBooking,
   onUpdateBooking,
   onLogActivity,
@@ -56,7 +62,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   initialSelectedBookingId,
   onClearSelectedBookingId,
 }) => {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isUserAdmin(currentUser);
   const canAdminModifyUnpaidBooking = (b: Booking) =>
     isAdmin && b.status === 'pending' && !b.depositPaid;
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,6 +81,8 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [waLanguage, setWaLanguage] = useState<'en' | 'ar'>('en');
   const [pendingPctChange, setPendingPctChange] = useState<number | null>(null);
   const [showConfirmDepositModal, setShowConfirmDepositModal] = useState<boolean>(false);
+  const [showRequestPaymentModal, setShowRequestPaymentModal] = useState<boolean>(false);
+  const [paymentRequestNote, setPaymentRequestNote] = useState<string>('');
   const [bookingToDelete, setBookingToDelete] = useState<Booking | null>(null);
   const [bookingToConfirmEdit, setBookingToConfirmEdit] = useState<Booking | null>(null);
   const [pendingStatusConfirm, setPendingStatusConfirm] = useState<{
@@ -692,6 +700,13 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                           <span>Req {b.pendingDepositPercentage}% Pending</span>
                         </span>
                       )}
+
+                      {b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending' && (
+                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span>Payment Verification Requested</span>
+                        </span>
+                      )}
                     </div>
 
                     {/* Total Amount & Items Count - Visible on both Mobile & Desktop */}
@@ -1129,20 +1144,91 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                   </div>
                 )}
 
-                {/* Status Workflow Action Button */}
+                {/* Staff Payment Verification Banner & Status Workflow Action Button */}
+                {activeBooking.status === 'pending' && activeBooking.paymentVerificationRequested && (
+                  <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <div className="font-black text-emerald-950 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Payment Verification Requested</span>
+                      </div>
+                      <div className="text-[11px] text-emerald-900">
+                        Submitted by <strong>{activeBooking.paymentVerificationRequestedBy || 'Staff'}</strong>
+                        {activeBooking.paymentVerificationRequestedAt
+                          ? ` on ${new Date(activeBooking.paymentVerificationRequestedAt).toLocaleString()}`
+                          : ''}
+                      </div>
+                      {activeBooking.paymentVerificationNote && (
+                        <div className="text-[11px] text-slate-700 bg-white/90 px-2.5 py-1.5 rounded-lg border border-emerald-200 font-medium">
+                          Note: {activeBooking.paymentVerificationNote}
+                        </div>
+                      )}
+                    </div>
+
+                    {isAdmin ? (
+                      <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmDepositModal(true)}
+                          className="flex-1 sm:flex-none px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl flex items-center justify-center gap-1.5 min-h-[44px] transition-colors"
+                        >
+                          <Check className="w-4 h-4 stroke-[3]" />
+                          <span>Approve &amp; Confirm Payment</span>
+                        </button>
+                        {onDeclinePaymentVerification && (
+                          <button
+                            type="button"
+                            onClick={() => onDeclinePaymentVerification(activeBooking.id)}
+                            className="px-3.5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl min-h-[44px] transition-colors"
+                          >
+                            Decline
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-[11px] font-bold text-emerald-900 bg-white px-3 py-1.5 rounded-lg border border-emerald-300 shrink-0">
+                        Awaiting Admin Payment Approval
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {activeBooking.status === 'pending' && (
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmDepositModal(true)}
-                    className="w-full p-3.5 sm:p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-600/20 transition-all"
-                  >
-                    <Check className="w-5 h-5 stroke-[3]" />
-                    <span>
-                      {activeDepositPct === 100
-                        ? 'Confirm Full Payment (100%) & Reserve Stock'
-                        : `Confirm ${activeDepositPct}% Deposit & Reserve Stock`}
-                    </span>
-                  </button>
+                  isAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmDepositModal(true)}
+                      className="w-full p-3.5 sm:p-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-600/20 transition-all min-h-[44px]"
+                    >
+                      <Check className="w-5 h-5 stroke-[3]" />
+                      <span>
+                        {activeDepositPct === 100
+                          ? 'Confirm Full Payment (100%) & Reserve Stock'
+                          : `Confirm ${activeDepositPct}% Deposit & Reserve Stock`}
+                      </span>
+                    </button>
+                  ) : activeBooking.paymentVerificationRequested ? (
+                    <div className="w-full p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 font-bold text-xs sm:text-sm flex items-center justify-center gap-2">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Payment Verification Sent — Only Admins Can Confirm Payment</span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentRequestNote('');
+                        setShowRequestPaymentModal(true);
+                      }}
+                      className="w-full p-3.5 sm:p-4 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md transition-all min-h-[44px]"
+                    >
+                      <ShieldCheck className="w-5 h-5 stroke-[2.5]" />
+                      <span>
+                        {activeDepositPct === 100
+                          ? 'Request Payment Verification (100% Payment)'
+                          : `Request Payment Verification (${activeDepositPct}% Deposit)`}
+                      </span>
+                    </button>
+                  )
                 )}
 
                 {activeBooking.status === 'preparing' && (
@@ -1680,6 +1766,80 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
               >
                 <Check className="w-4 h-4 stroke-[3]" />
                 <span>Yes, Edit Order</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: STAFF REQUEST PAYMENT VERIFICATION */}
+      {showRequestPaymentModal && activeBooking && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto">
+              <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base sm:text-lg font-black text-slate-900">
+                Request Payment Verification
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Notify Administrators that client{' '}
+                <strong className="text-slate-900">{activeBooking.clientName}</strong> (Order{' '}
+                <strong className="font-mono text-slate-900">{activeBooking.bookingNumber}</strong>) has submitted their payment. An Admin must approve before inventory stock is reserved.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between text-slate-600">
+                <span>Required Amount ({activeDepositPct}%):</span>
+                <span className="font-mono font-black text-slate-900">
+                  {activeBooking.depositRequired.toFixed(2)} EGP
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Total Order Value:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {activeBooking.total.toFixed(2)} EGP
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Payment Reference / Transfer Note (Optional)
+              </label>
+              <input
+                type="text"
+                value={paymentRequestNote}
+                onChange={(e) => setPaymentRequestNote(e.target.value)}
+                placeholder="e.g. InstaPay ref #1234, cash handed to office..."
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowRequestPaymentModal(false)}
+                className="py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs transition-all min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetId = activeBooking.id;
+                  const note = paymentRequestNote.trim() || undefined;
+                  setShowRequestPaymentModal(false);
+                  setPaymentRequestNote('');
+                  onRequestPaymentVerification?.(targetId, note);
+                }}
+                className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs transition-all flex items-center justify-center gap-1.5 min-h-[44px]"
+              >
+                <Check className="w-4 h-4 stroke-[3]" />
+                <span>Send Request</span>
               </button>
             </div>
           </div>

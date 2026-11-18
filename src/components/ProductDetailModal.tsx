@@ -39,6 +39,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onApproveProduct,
 }) => {
   const isAdmin = userRole === 'admin';
+  const isLeader = userRole === 'leader';
 
   // Images list
   const allImages = product.images && product.images.length > 0
@@ -420,18 +421,20 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         <span className="text-xs text-slate-500 ml-1 font-medium">units</span>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => onRequestAdjustment(product, variant)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors min-h-[38px] ${
-                          isAdmin
-                            ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm'
-                            : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm'
-                        }`}
-                      >
-                        <SlidersHorizontal className="w-3.5 h-3.5" />
-                        <span>{isAdmin ? 'Direct Adjust' : 'Request Count'}</span>
-                      </button>
+                      {!isLeader && (
+                        <button
+                          type="button"
+                          onClick={() => onRequestAdjustment(product, variant)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors min-h-[38px] ${
+                            isAdmin
+                              ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm'
+                              : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm'
+                          }`}
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          <span>{isAdmin ? 'Direct Adjust' : 'Request Count'}</span>
+                        </button>
+                      )}
 
                       {/* Admin-only delete variant size button */}
                       {isAdmin && cleanVariants.length > 1 && onDeleteVariant && (

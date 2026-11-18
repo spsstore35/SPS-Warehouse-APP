@@ -56,7 +56,12 @@ export function registerNewUser(data: {
     requestedRole: data.requestedRole,
     status: 'pending', // Pending admin approval as requested!
     employeeId: `WH-REG-${Math.floor(100 + Math.random() * 900)}`,
-    avatarColor: data.requestedRole === 'admin' ? '#d97706' : '#0284c7',
+    avatarColor:
+      data.requestedRole === 'admin'
+        ? '#d97706'
+        : data.requestedRole === 'leader'
+        ? '#059669'
+        : '#0284c7',
     createdAt: new Date().toISOString(),
   };
 

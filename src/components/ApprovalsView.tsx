@@ -24,6 +24,7 @@ import {
   ChevronRight,
   Edit3,
   ShieldAlert,
+  Eye,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -81,7 +82,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [activeTab, setActiveTab] = useState<'stock' | 'staff' | 'items'>(effectiveInitialTab);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [staffStatusFilter, setStaffStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
-  const [staffRoleFilter, setStaffRoleFilter] = useState<'all' | 'worker' | 'admin'>('all');
+  const [staffRoleFilter, setStaffRoleFilter] = useState<'all' | 'worker' | 'leader' | 'admin'>('all');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
 
@@ -236,10 +237,14 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       if (staffStatusFilter === 'pending' && u.status !== 'pending') return false;
       if (staffStatusFilter === 'active' && u.status !== 'active') return false;
 
-      // Role filtering (all / worker / admin)
+      // Role filtering (all / worker / leader / admin)
       if (staffRoleFilter === 'worker') {
         const isWorker = u.role === 'worker' || (u.status === 'pending' && u.requestedRole === 'worker');
         if (!isWorker) return false;
+      }
+      if (staffRoleFilter === 'leader') {
+        const isLeader = u.role === 'leader' || (u.status === 'pending' && u.requestedRole === 'leader');
+        if (!isLeader) return false;
       }
       if (staffRoleFilter === 'admin') {
         const isAdmin = u.role === 'admin' || (u.status === 'pending' && u.requestedRole === 'admin');
@@ -819,7 +824,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {/* Staff Access Filter Card */}
               <button
                 type="button"
@@ -858,10 +863,56 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     </span>
                   </div>
                   <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
-                    Can browse garments, count stock, submit new garments (pending Admin approval), and submit stock adjustment requests with verification notes.
+                    Count stock, create client orders, request payment verification, and submit new items or count adjustments for Admin approval.
                   </p>
                   <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-sky-700">
                     {staffRoleFilter === 'worker' ? '• Click to reset' : '• Click to filter staff'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Scout Leader Read-Only Access Filter Card */}
+              <button
+                type="button"
+                onClick={() => setStaffRoleFilter((prev) => (prev === 'leader' ? 'all' : 'leader'))}
+                className={`p-3.5 rounded-2xl flex items-start gap-3 text-left transition-all cursor-pointer ${
+                  staffRoleFilter === 'leader'
+                    ? 'bg-emerald-50/90 border-2 border-emerald-500 shadow-md ring-2 ring-emerald-400/25'
+                    : 'bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-300 shadow-xs'
+                }`}
+                title="Click to filter by Scout Leader"
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    staffRoleFilter === 'leader'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-100 border border-emerald-200 text-emerald-700'
+                  }`}
+                >
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                      Leader View
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+                        staffRoleFilter === 'leader'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      {staffRoleFilter === 'leader'
+                        ? '✓ Active Filter'
+                        : `Leaders (${allStaffUsers.filter((u) => u.role === 'leader' || u.requestedRole === 'leader').length})`}
+                    </span>
+                  </div>
+                  <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                    Strict read-only access to browse the uniform catalog and prices. Restricted from orders, stock edits, and analytics.
+                  </p>
+                  <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-emerald-700">
+                    {staffRoleFilter === 'leader' ? '• Click to reset' : '• Click to filter leaders'}
                   </span>
                 </div>
               </button>
@@ -889,7 +940,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-black text-amber-950 uppercase tracking-wider">
-                      Admin Authority Access
+                      Admin Authority
                     </span>
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
@@ -904,7 +955,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     </span>
                   </div>
                   <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
-                    Full warehouse control: direct stock overrides, approving or rejecting submissions, managing categories, and deleting items, sizes, or accounts.
+                    Full control: exclusive analytics &amp; procurement, confirming payments, direct stock edits, approvals, and deletions.
                   </p>
                   <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-amber-700">
                     {staffRoleFilter === 'admin' ? '• Click to reset' : '• Click to filter admins'}
@@ -921,7 +972,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <Users className="w-8 h-8 text-slate-300 mx-auto" />
                 <h4 className="text-sm font-bold text-slate-700">
                   {staffRoleFilter !== 'all'
-                    ? `No ${staffRoleFilter === 'worker' ? 'Staff' : 'Admin Authority'} accounts match this selection`
+                    ? `No ${staffRoleFilter === 'worker' ? 'Staff' : staffRoleFilter === 'leader' ? 'Scout Leader' : 'Admin Authority'} accounts match this selection`
                     : staffStatusFilter === 'pending'
                     ? 'No pending account approvals'
                     : 'No staff accounts match this filter'}
@@ -992,13 +1043,17 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              user.requestedRole === 'admin' || user.role === 'admin'
+                              user.role === 'admin' || user.requestedRole === 'admin'
                                 ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                : user.role === 'leader' || user.requestedRole === 'leader'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                                 : 'bg-sky-50 text-sky-800 border-sky-300'
                             }`}
                           >
-                            {user.requestedRole === 'admin' || user.role === 'admin'
+                            {user.role === 'admin' || user.requestedRole === 'admin'
                               ? 'Admin Authority'
+                              : user.role === 'leader' || user.requestedRole === 'leader'
+                              ? 'Scout Leader'
                               : 'Staff'}
                           </span>
                         </div>
@@ -1388,7 +1443,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
                   REQUESTED ROLE / POSITION:
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setNewUserRole('worker')}
@@ -1400,10 +1455,28 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   >
                     <div className="font-bold flex items-center gap-1.5">
                       <Package className="w-3.5 h-3.5 text-sky-600" />
-                      <span>Warehouse Staff</span>
+                      <span>Staff</span>
                     </div>
                     <div className="text-[11px] font-normal text-slate-500 mt-1">
-                      Count and inspect stock
+                      Stock &amp; Orders
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewUserRole('leader')}
+                    className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                      newUserRole === 'leader'
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-950 font-bold shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center gap-1.5">
+                      <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Leader</span>
+                    </div>
+                    <div className="text-[11px] font-normal text-slate-500 mt-1">
+                      Read-only catalog
                     </div>
                   </button>
 
@@ -1418,10 +1491,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   >
                     <div className="font-bold flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Warehouse Admin</span>
+                      <span>Admin</span>
                     </div>
                     <div className="text-[11px] font-normal text-slate-500 mt-1">
-                      Approvals & management
+                      Full authority
                     </div>
                   </button>
                 </div>
@@ -1498,11 +1571,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 Assign System Role & Permissions:
               </label>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <button
                   type="button"
                   onClick={() => setNewSelectedRole('worker')}
-                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
                     newSelectedRole === 'worker'
                       ? 'border-sky-500 bg-sky-50/70 text-sky-950 ring-2 ring-sky-500/20'
                       : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
@@ -1513,14 +1586,32 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     <span>Staff</span>
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
-                    Staff role: Request stock adjustments, view inventory & orders.
+                    Request stock edits, create bookings &amp; request payment confirmation.
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setNewSelectedRole('leader')}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
+                    newSelectedRole === 'leader'
+                      ? 'border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <div className="font-bold text-xs flex items-center gap-1.5">
+                    <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Scout Leader</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Read-only view of catalog items &amp; prices only.
                   </div>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setNewSelectedRole('admin')}
-                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
                     newSelectedRole === 'admin'
                       ? 'border-amber-500 bg-amber-50/70 text-amber-950 ring-2 ring-amber-500/20'
                       : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
@@ -1528,10 +1619,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 >
                   <div className="font-bold text-xs flex items-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Admin Authority</span>
+                    <span>Admin</span>
                   </div>
                   <div className="text-[11px] text-slate-500 mt-1">
-                    Admin role: Full authority to approve, delete, and publish directly.
+                    Full authority including analytics, approvals &amp; direct edits.
                   </div>
                 </button>
               </div>

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BellRing } from 'lucide-react';
-import { isUserAdmin } from '../utils/security';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3 } from 'lucide-react';
+import { isUserAdmin, isUserLeader } from '../utils/security';
 import {
   getNotificationPermissionState,
   requestNotificationPermission,
@@ -35,6 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
   approvalsTab = 'stock',
 }) => {
   const isAdmin = isUserAdmin(currentUser);
+  const isLeader = isUserLeader(currentUser);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
@@ -80,10 +81,12 @@ export const Header: React.FC<HeaderProps> = ({
               className={`hidden sm:inline-block text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
                 isAdmin
                   ? 'bg-amber-50 text-amber-900 border-amber-300'
+                  : isLeader
+                  ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                   : 'bg-sky-50 text-sky-900 border-sky-300'
               }`}
             >
-              {isAdmin ? 'Admin Portal' : 'Staff'}
+              {isAdmin ? 'Admin Portal' : isLeader ? 'Leader View' : 'Staff'}
             </span>
           </div>
 
@@ -98,27 +101,41 @@ export const Header: React.FC<HeaderProps> = ({
               Inventory Catalog
             </button>
 
-            {/* Bookings navigation item */}
-            <button
-              onClick={() => onNavigate('bookings')}
-              className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                activeView === 'bookings'
-                  ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
-                  : ''
-              }`}
-              title="Client bookings, quotations and 50% deposit tracking"
-            >
-              <CalendarCheck className="w-4 h-4 text-blue-600" />
-              <span>Bookings</span>
-              {pendingBookingsCount > 0 && (
-                <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
-                  {pendingBookingsCount}
-                </span>
-              )}
-            </button>
+            {!isLeader && (
+              <button
+                onClick={() => onNavigate('bookings')}
+                className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  activeView === 'bookings'
+                    ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
+                    : ''
+                }`}
+                title="Client bookings, quotations and deposit tracking"
+              >
+                <CalendarCheck className="w-4 h-4 text-blue-600" />
+                <span>Bookings</span>
+                {pendingBookingsCount > 0 && (
+                  <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
+                    {pendingBookingsCount}
+                  </span>
+                )}
+              </button>
+            )}
 
-            {isAdmin ? (
+            {isAdmin && (
               <>
+                <button
+                  onClick={() => onNavigate('analytics')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'analytics'
+                      ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
+                      : ''
+                  }`}
+                  title="Admin sales analytics, branch demand & production aggregator"
+                >
+                  <BarChart3 className="w-4 h-4 text-emerald-600" />
+                  <span>Analytics</span>
+                </button>
+
                 {/* 1. Dedicated Stock Approvals */}
                 <button
                   onClick={() => onNavigate('stock-approvals')}
@@ -167,7 +184,9 @@ export const Header: React.FC<HeaderProps> = ({
                   Add New Item
                 </button>
               </>
-            ) : (
+            )}
+
+            {!isAdmin && !isLeader && (
               <>
                 <button
                   onClick={() => onNavigate('worker-requests')}
@@ -195,19 +214,21 @@ export const Header: React.FC<HeaderProps> = ({
               </>
             )}
 
-            <button
-              onClick={() => onNavigate('audit-log')}
-              className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-              }`}
-            >
-              <span>Stock Audit Log</span>
-              {pendingAuditNotificationsCount > 0 && (
-                <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
-                  {pendingAuditNotificationsCount}
-                </span>
-              )}
-            </button>
+            {!isLeader && (
+              <button
+                onClick={() => onNavigate('audit-log')}
+                className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                  activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                }`}
+              >
+                <span>Stock Audit Log</span>
+                {pendingAuditNotificationsCount > 0 && (
+                  <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                    {pendingAuditNotificationsCount}
+                  </span>
+                )}
+              </button>
+            )}
           </nav>
 
           {/* Zone 3: Interactive User Profile Avatar (without mobile alert icons) */}
@@ -218,7 +239,7 @@ export const Header: React.FC<HeaderProps> = ({
                 type="button"
                 onClick={() => setIsProfileOpen((prev) => !prev)}
                 className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center text-sm font-black text-white shrink-0 shadow-sm transition-transform active:scale-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 hover:opacity-95 cursor-pointer select-none"
-                style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : '#0284c7') }}
+                style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : isLeader ? '#059669' : '#0284c7') }}
                 title={`${currentUser.name} - Click for profile & navigation`}
                 aria-label="User account menu"
                 aria-expanded={isProfileOpen}
@@ -233,7 +254,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
                     <div
                       className="w-10 h-10 rounded-xl flex items-center justify-center text-base font-black text-white shrink-0 shadow-sm"
-                      style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : '#0284c7') }}
+                      style={{ backgroundColor: currentUser.avatarColor || (isAdmin ? '#d97706' : isLeader ? '#059669' : '#0284c7') }}
                     >
                       {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
                     </div>
@@ -256,10 +277,12 @@ export const Header: React.FC<HeaderProps> = ({
                       className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                         isAdmin
                           ? 'bg-amber-50 text-amber-900 border-amber-300'
+                          : isLeader
+                          ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                           : 'bg-sky-50 text-sky-900 border-sky-300'
                       }`}
                     >
-                      {isAdmin ? 'Warehouse Administrator' : 'Warehouse Staff'}
+                      {isAdmin ? 'Warehouse Administrator' : isLeader ? 'Scout Leader (Read-Only)' : 'Warehouse Staff'}
                     </span>
                   </div>
 
@@ -279,22 +302,38 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsProfileOpen(false);
-                        onNavigate('add-product');
-                      }}
-                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      <span className="flex items-center gap-2">
-                        <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
-                        <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
-                      </span>
-                    </button>
+                    {!isLeader && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('add-product');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
+                          <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
+                        </span>
+                      </button>
+                    )}
 
                     {isAdmin && (
                       <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('analytics');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-900 bg-emerald-50/70 hover:bg-emerald-100/70 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Analytics & Production</span>
+                          </span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => {
@@ -335,49 +374,53 @@ export const Header: React.FC<HeaderProps> = ({
                       </>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsProfileOpen(false);
-                        onNavigate('audit-log');
-                      }}
-                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                    >
-                      <span className="flex items-center gap-2">
-                        <History className="w-3.5 h-3.5 text-slate-500" />
-                        <span>Stock Audit Log</span>
-                      </span>
-                      {pendingAuditNotificationsCount > 0 && (
-                        <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
-                          {pendingAuditNotificationsCount}
-                        </span>
-                      )}
-                    </button>
+                    {!isLeader && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('audit-log');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <History className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Stock Audit Log</span>
+                          </span>
+                          {pendingAuditNotificationsCount > 0 && (
+                            <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                              {pendingAuditNotificationsCount}
+                            </span>
+                          )}
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const perm = getNotificationPermissionState();
-                        if (perm !== 'granted') {
-                          const res = await requestNotificationPermission();
-                          if (res === 'granted') {
-                            await sendTestNotification();
-                          }
-                        } else {
-                          await sendTestNotification();
-                        }
-                      }}
-                      className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-900 bg-amber-50/60 hover:bg-amber-100/60 transition-colors"
-                      title="Send a live test alert to your phone"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Bell className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Phone Alerts & Test</span>
-                      </span>
-                      <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
-                        Test Alert
-                      </span>
-                    </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const perm = getNotificationPermissionState();
+                            if (perm !== 'granted') {
+                              const res = await requestNotificationPermission();
+                              if (res === 'granted') {
+                                await sendTestNotification();
+                              }
+                            } else {
+                              await sendTestNotification();
+                            }
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-900 bg-amber-50/60 hover:bg-amber-100/60 transition-colors"
+                          title="Send a live test alert to your phone"
+                        >
+                          <span className="flex items-center gap-2">
+                            <Bell className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Phone Alerts & Test</span>
+                          </span>
+                          <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
+                            Test Alert
+                          </span>
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   {/* Red Logout Button */}

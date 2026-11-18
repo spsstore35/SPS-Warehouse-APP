@@ -81,7 +81,15 @@ export function formatAuditLogReason(log: AuditLogEntry): string {
     return bookingNum ? `Making Order #${bookingNum}` : 'Making Order';
   }
 
-  // 5. Booking status change (delivered, handover, preparing)
+  // 5. Booking status change & payment verification requests
+  if (
+    log.action === 'booking_payment_verification_requested' ||
+    combined.includes('payment verification request')
+  ) {
+    return bookingNum
+      ? `Payment Verification Request - Order #${bookingNum}`
+      : 'Payment Verification Request';
+  }
   if (
     log.action === 'booking_status_changed' ||
     log.action === 'booking_deposit_paid' ||
