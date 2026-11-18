@@ -88,6 +88,8 @@ import {
   requestNotificationPermission,
   sendSystemNotification,
   sendTestNotification,
+  subscribeToPushNotifications,
+  isBackgroundPushActive,
   NotificationPermissionState,
 } from './services/notificationService';
 import { formatAuditLogReason } from './utils/auditReason';
@@ -960,6 +962,10 @@ export default function App() {
             const known = new Set(prev.map((l) => l.id));
             const fresh = snap.recentLogs.filter((l) => !known.has(l.id));
             if (fresh.length === 0) return prev;
+            // This device already got these as background push alerts - don't alert twice.
+            if (isBackgroundPushActive() && seenAuditLogIdsRef.current) {
+              fresh.forEach((l) => seenAuditLogIdsRef.current!.add(l.id));
+            }
             const merged = [...fresh, ...prev].sort(
               (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
             );
@@ -974,7 +980,7 @@ export default function App() {
         const rose = (remote: number | null, prevRemote: number | null | undefined, local: number | null) =>
           remote !== null && prevRemote !== null && prevRemote !== undefined && remote > prevRemote && remote > (local ?? 0);
 
-        if (last) {
+        if (last && !isBackgroundPushActive()) {
           if (rose(snap.pendingBookingRequests, last.bookings, prevStaffBookingPendingRef.current)) {
             sendSystemNotification('Staff Request: Deposit Terms Approval', {
               body: 'Staff member requested changing the upfront deposit percentage on a client order. Reload to see it.',
@@ -1015,6 +1021,14 @@ export default function App() {
       clearInterval(checkInterval);
     };
   }, [currentUser?.id]);
+
+  // Register this device for background push (alerts while the app is closed),
+  // tagged with the signed-in user so they aren't alerted about their own actions.
+  useEffect(() => {
+    if (currentUser?.email && notificationPermission === 'granted') {
+      subscribeToPushNotifications(currentUser.email).catch(() => {});
+    }
+  }, [currentUser?.email, notificationPermission]);
 
   // Register Service Worker for Mobile Notifications & Handle Notification Clicks
   useEffect(() => {

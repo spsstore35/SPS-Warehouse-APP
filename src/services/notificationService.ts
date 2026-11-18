@@ -2,6 +2,23 @@
 
 let swRegistration: ServiceWorkerRegistration | null = null;
 
+// Public half of the Web Push (VAPID) key pair. The private half lives only in the
+// Supabase "notify-push" function secrets - never in this repository.
+export const VAPID_PUBLIC_KEY =
+  import.meta.env.VITE_VAPID_PUBLIC_KEY ||
+  'BBp3GSSICglG-mKyUP6B-qAX6RGvwHI3kHr7Xp-HOFI6WNnXW_uuAW900JB0rFeTZ1cx6Zt8evYz5PESVXRkcvw';
+
+// True once this device is registered for background push. Devices with background
+// push get alerts from Supabase, so the in-app check doesn't show them a second time.
+let pushActive = false;
+export const isBackgroundPushActive = () => pushActive;
+
+function sameKey(a: ArrayBuffer | null | undefined, b: Uint8Array): boolean {
+  if (!a) return false;
+  const x = new Uint8Array(a);
+  return x.length === b.length && x.every((v, i) => v === b[i]);
+}
+
 // Base64 helper for VAPID applicationServerKey
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -93,22 +110,15 @@ export const subscribeToPushNotifications = async (userEmail?: string): Promise<
     const reg = await navigator.serviceWorker.ready;
     if (!reg) return false;
 
-    // Fetch server VAPID public key
-    let publicKey = 'BJMQAYWtCOp3egNjp-tbFtWvthIBCtRuDDH64erBwhqxkOecZMvkwt9ybmI2I9MXn2rnTq6ivNDd4w_bjB4338Q';
-    try {
-      const res = await fetch('/api/push/public-key');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.publicKey) publicKey = data.publicKey;
-      }
-    } catch {
-      // Use fallback key
-    }
+    const convertedKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
 
-    // Check existing subscription or create new
+    // Reuse the existing subscription only if it was made with the current key.
     let sub = await reg.pushManager.getSubscription();
+    if (sub && !sameKey(sub.options?.applicationServerKey, convertedKey)) {
+      await sub.unsubscribe().catch(() => {});
+      sub = null;
+    }
     if (!sub) {
-      const convertedKey = urlBase64ToUint8Array(publicKey);
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: convertedKey.buffer as ArrayBuffer,
@@ -116,15 +126,19 @@ export const subscribeToPushNotifications = async (userEmail?: string): Promise<
     }
 
     if (sub) {
-      // Register subscription with server
-      await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subscription: sub.toJSON(),
-          userEmail,
-        }),
+      // Save this device in Supabase so the "notify-push" function can reach it
+      // even when the app is closed.
+      const { supabase } = await import('./supabaseClient');
+      const { error } = await supabase.rpc('register_push_subscription', {
+        p_endpoint: sub.endpoint,
+        p_subscription: sub.toJSON(),
+        p_user_email: userEmail || null,
       });
+      if (error) {
+        console.warn('Could not save push subscription:', error.message);
+        return false;
+      }
+      pushActive = true;
       return true;
     }
   } catch (err) {
@@ -241,21 +255,8 @@ export const sendTestNotification = async (): Promise<boolean> => {
   const alertTitle = 'SPS Warehouse';
   const alertBody = 'This is an Alert Message confirming app notifications are working fine.';
 
-  // 1. Trigger via server Web Push (so it arrives from Google Cloud to Android lockscreen even if minimized)
-  try {
-    await fetch('/api/push/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: alertTitle,
-        body: alertBody,
-      }),
-    });
-  } catch {
-    // If offline, fallback to local dispatch
-  }
-
-  // 2. Also dispatch locally via Service Worker as immediate feedback
+  // Local test alert. (The old /api/push/test server endpoint never ran on Vercel;
+  // background alerts now come from the Supabase "notify-push" function.)
   return sendSystemNotification(alertTitle, {
     body: alertBody,
     tag: 'test-notification-' + Date.now(),

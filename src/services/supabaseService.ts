@@ -352,17 +352,76 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
   });
 }
 
+/**
+ * PRODUCT PHOTOS (Supabase Storage)
+ *
+ * Photos used to be saved as long base64 text inside products.image_url, so every
+ * data load re-downloaded every photo. They are now uploaded once to the public
+ * "product-images" storage bucket and only the short link is saved in the row.
+ * File names are a hash of the photo, so browsers can cache them for a year.
+ */
+export const PRODUCT_IMAGES_BUCKET = 'product-images';
+
+export function isInlineImage(value: string | undefined | null): boolean {
+  return typeof value === 'string' && value.startsWith('data:');
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
+async function sha256Hex(blob: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32);
+}
+
+/** Uploads an inline (data:) photo and returns its public link. Other values are returned unchanged. */
+export async function uploadProductImage(image: string, productId: string): Promise<string> {
+  if (!isInlineImage(image)) return image;
+  const blob = await dataUrlToBlob(image);
+  const contentType = blob.type || 'image/jpeg';
+  const ext = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const safeId = String(productId).replace(/[^A-Za-z0-9_-]/g, '_');
+  const filePath = `products/${safeId}/${await sha256Hex(blob)}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(PRODUCT_IMAGES_BUCKET)
+    .upload(filePath, blob, { contentType, cacheControl: '31536000', upsert: true });
+  if (error) throw error;
+
+  return supabase.storage.from(PRODUCT_IMAGES_BUCKET).getPublicUrl(filePath).data.publicUrl;
+}
+
+/** Uploads every inline photo of a product. If an upload fails, that photo is kept inline so saving never breaks. */
+async function uploadInlineProductImages(images: string[], productId: string): Promise<string[]> {
+  return Promise.all(
+    images.map(async (img) => {
+      try {
+        return await uploadProductImage(img, productId);
+      } catch (err: any) {
+        console.warn('Photo upload to storage failed, keeping inline copy:', err?.message || err);
+        return img;
+      }
+    })
+  );
+}
+
 export async function upsertProductToDb(product: Product): Promise<void> {
-  // 1. Upsert product
-  const imagesToStore = product.images && product.images.length > 0
+  // 1. Upsert product (photos are uploaded to storage first; only links are saved)
+  const rawImages = product.images && product.images.length > 0
     ? product.images
     : product.image
     ? [product.image]
     : [];
+  const imagesToStore = await uploadInlineProductImages(rawImages, product.id);
 
   const storedImageUrl = imagesToStore.length > 1
     ? JSON.stringify(imagesToStore)
-    : (imagesToStore[0] || product.image || '');
+    : (imagesToStore[0] || '');
 
   const productPayload: Record<string, any> = {
     id: product.id,
@@ -598,7 +657,8 @@ export async function createAdjustmentRequestInDb(req: AdjustmentRequest): Promi
     id: req.id,
     product_id: req.productId,
     product_name: req.productName,
-    product_image: req.productImage,
+    // Never store a second full copy of the photo; the app fills it in from the product.
+    product_image: isInlineImage(req.productImage) ? null : req.productImage || null,
     variant_id: req.variantId,
     size: req.size,
     color_name: req.colorName,
@@ -1214,7 +1274,8 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
         product_id: it.productId,
         product_name: it.productName,
         product_sku: it.productSku,
-        product_image: it.productImage || null,
+        // Never store a second full copy of the photo; the app fills it in from the product.
+        product_image: isInlineImage(it.productImage) ? null : it.productImage || null,
         variant_id: it.variantId,
         size: it.size,
         color_name: it.colorName,
