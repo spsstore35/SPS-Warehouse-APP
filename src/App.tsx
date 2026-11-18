@@ -59,6 +59,7 @@ import {
   deleteBookingFromDb,
   fetchOthersFoldersFromDb,
   syncOthersFoldersToDb,
+  fetchActivitySnapshot,
   CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
@@ -802,9 +803,22 @@ export default function App() {
             return merged;
           });
         }
+        // Product photos are downloaded once with the products; requests and order
+        // items no longer download their own copy, so fill them in from here.
+        const productImageById = new Map<string, string>();
+        if (dbProducts.status === 'fulfilled') {
+          dbProducts.value.forEach((p) => {
+            if (p.image) productImageById.set(p.id, p.image);
+          });
+        }
+
         if (dbRequests.status === 'fulfilled') {
-          setRequests(dbRequests.value);
-          saveStoredRequests(dbRequests.value);
+          const withImages = dbRequests.value.map((r) => ({
+            ...r,
+            productImage: r.productImage || productImageById.get(r.productId) || '',
+          }));
+          setRequests(withImages);
+          saveStoredRequests(withImages);
         }
         if (dbUsers.status === 'fulfilled') {
           setUsers(dbUsers.value);
@@ -847,6 +861,10 @@ export default function App() {
               const isPaidNow = Boolean(b.depositPaid || b.status !== 'pending');
               return {
                 ...b,
+                items: b.items.map((it) => ({
+                  ...it,
+                  productImage: it.productImage || productImageById.get(it.productId) || undefined,
+                })),
                 troopGroup: b.troopGroup || localMatch?.troopGroup,
                 paymentVerificationRequested: isPaidNow
                   ? false
@@ -916,21 +934,87 @@ export default function App() {
     }
   };
 
-  // Multi-Device Cloud Synchronization & Polling (Pure HTTP, No WebSockets)
+  // Load all data ONCE when the app opens (or the page is reloaded).
+  // The old 5-second full re-download of every table (including product photos)
+  // used up the Supabase free egress quota, so it was removed.
   useEffect(() => {
-    // 1. Initial fetch
     refreshFromSupabase(false);
-
-    // 2. Periodic Background Sync (every 5 seconds) so changes made anywhere
-    // sync seamlessly without WebSocket overhead or disconnect errors!
-    const syncInterval = setInterval(() => {
-      refreshFromSupabase(false);
-    }, 5000);
-
-    return () => {
-      clearInterval(syncInterval);
-    };
   }, []);
+
+  // Lightweight notification check, once a minute.
+  // Downloads only activity written in the last 30 minutes (usually nothing) and
+  // three pending COUNTS - never the full tables. New activity rows are added to the
+  // activity list, which triggers the existing notification effect below.
+  const remotePendingCountsRef = useRef<{ requests: number | null; accounts: number | null; bookings: number | null } | null>(null);
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+
+    const runCheck = async () => {
+      try {
+        const snap = await fetchActivitySnapshot(30);
+        if (cancelled) return;
+
+        if (snap.recentLogs.length > 0) {
+          setAuditLogs((prev) => {
+            const known = new Set(prev.map((l) => l.id));
+            const fresh = snap.recentLogs.filter((l) => !known.has(l.id));
+            if (fresh.length === 0) return prev;
+            const merged = [...fresh, ...prev].sort(
+              (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+            );
+            saveStoredAuditLogs(merged);
+            return merged;
+          });
+        }
+
+        // Notify only when the remote count went up AND is higher than what this
+        // device already knows (so your own actions don't notify you twice).
+        const last = remotePendingCountsRef.current;
+        const rose = (remote: number | null, prevRemote: number | null | undefined, local: number | null) =>
+          remote !== null && prevRemote !== null && prevRemote !== undefined && remote > prevRemote && remote > (local ?? 0);
+
+        if (last) {
+          if (rose(snap.pendingBookingRequests, last.bookings, prevStaffBookingPendingRef.current)) {
+            sendSystemNotification('Staff Request: Deposit Terms Approval', {
+              body: 'Staff member requested changing the upfront deposit percentage on a client order. Reload to see it.',
+              tag: 'sps-deposit-req-' + Date.now(),
+              data: { view: 'audit-log' },
+            });
+          }
+          if (rose(snap.pendingRequests, last.requests, prevPendingRequestsRef.current)) {
+            sendSystemNotification('Stock Adjustment Request', {
+              body: 'A warehouse staff member submitted a stock adjustment request awaiting review. Reload to see it.',
+              tag: 'sps-stock-req-' + Date.now(),
+              data: { view: 'stock-approvals' },
+            });
+          }
+          if (rose(snap.pendingAccounts, last.accounts, prevPendingAccountsRef.current)) {
+            sendSystemNotification('New Account Registration', {
+              body: 'A new staff member registered and requires administrator approval. Reload to review.',
+              tag: 'sps-staff-req-' + Date.now(),
+              data: { view: 'account-approvals' },
+            });
+          }
+        }
+
+        remotePendingCountsRef.current = {
+          requests: snap.pendingRequests,
+          accounts: snap.pendingAccounts,
+          bookings: snap.pendingBookingRequests,
+        };
+      } catch (err) {
+        console.warn('Activity check skipped:', err);
+      }
+    };
+
+    runCheck();
+    const checkInterval = setInterval(runCheck, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(checkInterval);
+    };
+  }, [currentUser?.id]);
 
   // Register Service Worker for Mobile Notifications & Handle Notification Clicks
   useEffect(() => {

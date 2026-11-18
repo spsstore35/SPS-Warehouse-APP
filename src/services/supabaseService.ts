@@ -556,7 +556,11 @@ export async function updateVariantQuantityInDb(variantId: string, newQuantity: 
  */
 
 export async function fetchAdjustmentRequestsFromDb(): Promise<AdjustmentRequest[]> {
+  // Explicit columns: skips product_image (a full photo copy per row). The photo is
+  // filled in from the product list in App.tsx instead of being downloaded again.
   const { data, error } = await fetchAllRows('adjustment_requests', {
+    select:
+      'id, product_id, product_name, variant_id, size, color_name, color_hex, current_quantity, requested_quantity, delta, reason, worker_note, worker_id, worker_name, status, admin_note, admin_id, admin_name, created_at, reviewed_at',
     orderColumn: 'created_at',
     ascending: false,
   });
@@ -813,7 +817,64 @@ export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
   if (error) throw error;
   if (!data || data.length === 0) return [];
 
-  return data.map((l: any) => {
+  return data.map(mapAuditLogRow);
+}
+
+/**
+ * Lightweight activity check used for notifications (runs once a minute).
+ * Downloads only audit-log rows written in the last `lookbackMinutes` (usually none)
+ * plus three row COUNTS (no row data), instead of re-downloading every table.
+ */
+export interface ActivitySnapshot {
+  recentLogs: AuditLogEntry[];
+  pendingRequests: number | null;
+  pendingAccounts: number | null;
+  pendingBookingRequests: number | null;
+}
+
+export async function fetchActivitySnapshot(lookbackMinutes = 30): Promise<ActivitySnapshot> {
+  const sinceIso = new Date(Date.now() - lookbackMinutes * 60_000).toISOString();
+
+  const countOrNull = async (query: PromiseLike<{ count: number | null; error: any }>) => {
+    try {
+      const { count, error } = await query;
+      return error ? null : count ?? 0;
+    } catch {
+      return null;
+    }
+  };
+
+  const [logsRes, pendingRequests, pendingAccounts, pendingBookingRequests] = await Promise.all([
+    supabase
+      .from('stock_audit_logs')
+      .select('*')
+      .gt('timestamp', sinceIso)
+      .order('timestamp', { ascending: false })
+      .limit(20),
+    countOrNull(
+      supabase.from('adjustment_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending')
+    ),
+    countOrNull(
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'pending')
+    ),
+    countOrNull(
+      supabase
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .not('pending_deposit_percentage', 'is', null)
+    ),
+  ]);
+
+  return {
+    recentLogs: logsRes.error || !logsRes.data ? [] : logsRes.data.map(mapAuditLogRow),
+    pendingRequests,
+    pendingAccounts,
+    pendingBookingRequests,
+  };
+}
+
+function mapAuditLogRow(l: any): AuditLogEntry {
+  {
     const detailsText = String(l.details || '');
     const summaryText = String(l.summary || '');
     const combined = `${summaryText} ${detailsText} ${l.reason || ''}`;
@@ -910,7 +971,7 @@ export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
       bookingId: l.booking_id || undefined,
       reason: parsedReason,
     };
-  });
+  }
 }
 
 export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
@@ -1000,7 +1061,12 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
       return [];
     }
 
-    const { data: itemsData, error: itemsError } = await fetchAllRows('booking_items');
+    // Explicit columns: skips product_image (a full photo copy per line item).
+    // The photo is filled in from the product list in App.tsx instead.
+    const { data: itemsData, error: itemsError } = await fetchAllRows('booking_items', {
+      select:
+        'id, booking_id, product_id, product_name, product_sku, variant_id, size, color_name, color_hex, quantity, unit_price, total_price, available_stock, deficit_quantity, min_threshold, recommended_production',
+    });
 
     if (itemsError && !itemsError.message?.includes('does not exist')) {
       console.warn('Notice fetching booking items from DB:', itemsError.message);
