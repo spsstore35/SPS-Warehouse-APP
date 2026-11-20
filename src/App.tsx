@@ -36,6 +36,9 @@ import {
   saveStoredCalendarEvents,
   getStoredBoardStatusMap,
   saveStoredBoardStatusMap,
+  getUnsyncedCalendarIds,
+  markCalendarIdUnsynced,
+  clearCalendarIdUnsynced,
 } from './utils/storage';
 import { isUserAdmin, isUserLeader, normalizeRole, getRoleDisplayName } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
@@ -940,7 +943,7 @@ export default function App() {
           }
         }
 
-        // Sync Store Calendar Events & Tasks from Supabase
+        // Sync Store Calendar Events & Tasks from Supabase (never drop unsynced local items)
         if (
           dbCalendar.status === 'fulfilled' &&
           dbCalendar.value !== null &&
@@ -948,9 +951,14 @@ export default function App() {
         ) {
           const remoteCalendar = dbCalendar.value;
           const boardMap = getStoredBoardStatusMap();
+          const unsyncedIds = new Set(getUnsyncedCalendarIds());
+          const remoteIds = new Set(remoteCalendar.map((r) => r.id));
+
           setCalendarEvents((prev) => {
-            const merged = remoteCalendar.map((item) => {
+            const mergedRemote = remoteCalendar.map((item) => {
               const localMatch = prev.find((lc) => lc.id === item.id);
+              const preferLocal = unsyncedIds.has(item.id) && localMatch;
+              if (preferLocal) return localMatch!;
               const fallbackStatus = item.completed
                 ? 'done'
                 : (item.boardStatus || localMatch?.boardStatus || boardMap[item.id]);
@@ -962,8 +970,22 @@ export default function App() {
                 assignedToName: item.assignedToName || localMatch?.assignedToName,
               };
             });
-            saveStoredCalendarEvents(merged);
-            return merged;
+
+            // Keep any local calendar items that have not synced to Supabase yet
+            const pendingLocalItems = prev.filter(
+              (lc) => !remoteIds.has(lc.id) && (unsyncedIds.has(lc.id) || remoteCalendar.length === 0)
+            );
+
+            // Retry syncing any unsynced local items cleanly
+            pendingLocalItems.forEach((pendingItem) => {
+              upsertCalendarEventToDb(pendingItem).then((res) => {
+                if (res.ok) clearCalendarIdUnsynced(pendingItem.id);
+              });
+            });
+
+            const finalCalendar = [...pendingLocalItems, ...mergedRemote];
+            saveStoredCalendarEvents(finalCalendar);
+            return finalCalendar;
           });
         }
 
@@ -2480,6 +2502,7 @@ export default function App() {
 
     setCalendarEvents(nextEvents);
     saveStoredCalendarEvents(nextEvents);
+    markCalendarIdUnsynced(normalizedItem.id);
 
     const boardMap = getStoredBoardStatusMap();
     if (normalizedItem.boardStatus) {
@@ -2488,8 +2511,15 @@ export default function App() {
     }
 
     upsertCalendarEventToDb(normalizedItem).then((res) => {
-      if (!res.ok && res.error) {
+      if (res.ok) {
+        clearCalendarIdUnsynced(normalizedItem.id);
+      } else if (res.error) {
         console.warn('Notice saving calendar item to Supabase:', res.error);
+        if (res.error.includes('exceed_egress_quota')) {
+          showToast('Saved locally — Supabase quota restricted (exceed_egress_quota).');
+        } else {
+          showToast(`Saved locally — Supabase calendar sync notice: ${res.error}`);
+        }
       }
     });
 
@@ -2498,11 +2528,31 @@ export default function App() {
   };
 
   const handleDeleteCalendarEvent = (id: string) => {
-    lastCalendarMutationAtRef.current = Date.now();
     const target = calendarEvents.find((ev) => ev.id === id);
+    if (target) {
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const effectiveStage: BoardColumnStatus =
+        target.completed || target.boardStatus === 'done'
+          ? 'done'
+          : target.boardStatus === 'in_progress'
+          ? 'in_progress'
+          : target.boardStatus === 'upcoming'
+          ? 'upcoming'
+          : target.startDate <= todayKey && (target.endDate || target.startDate) >= todayKey
+          ? 'in_progress'
+          : 'upcoming';
+
+      if (effectiveStage === 'in_progress') {
+        showToast('In Progress items cannot be deleted. Move to Done first.');
+        return;
+      }
+    }
+
+    lastCalendarMutationAtRef.current = Date.now();
     const nextEvents = calendarEvents.filter((ev) => ev.id !== id);
     setCalendarEvents(nextEvents);
     saveStoredCalendarEvents(nextEvents);
+    clearCalendarIdUnsynced(id);
 
     const boardMap = getStoredBoardStatusMap();
     if (boardMap[id]) {
@@ -2538,13 +2588,16 @@ export default function App() {
     const nextEvents = calendarEvents.map((ev) => (ev.id === id ? updatedItem : ev));
     setCalendarEvents(nextEvents);
     saveStoredCalendarEvents(nextEvents);
+    markCalendarIdUnsynced(id);
 
     const boardMap = getStoredBoardStatusMap();
     boardMap[id] = nextBoardStatus;
     saveStoredBoardStatusMap(boardMap);
 
     upsertCalendarEventToDb(updatedItem).then((res) => {
-      if (!res.ok && res.error) {
+      if (res.ok) {
+        clearCalendarIdUnsynced(id);
+      } else if (res.error) {
         console.warn('Notice updating task completion in Supabase:', res.error);
       }
     });
@@ -2571,13 +2624,16 @@ export default function App() {
     const nextEvents = calendarEvents.map((ev) => (ev.id === id ? updatedItem : ev));
     setCalendarEvents(nextEvents);
     saveStoredCalendarEvents(nextEvents);
+    markCalendarIdUnsynced(id);
 
     const boardMap = getStoredBoardStatusMap();
     boardMap[id] = nextStatus;
     saveStoredBoardStatusMap(boardMap);
 
     upsertCalendarEventToDb(updatedItem).then((res) => {
-      if (!res.ok && res.error) {
+      if (res.ok) {
+        clearCalendarIdUnsynced(id);
+      } else if (res.error) {
         console.warn('Notice updating board stage in Supabase:', res.error);
       }
     });

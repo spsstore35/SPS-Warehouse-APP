@@ -19,6 +19,7 @@ import {
   ListTodo,
   CalendarPlus,
   UserCheck,
+  Lock,
 } from 'lucide-react';
 
 interface CalendarViewProps {
@@ -234,9 +235,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const [formNotes, setFormNotes] = useState<string>('');
   const [formError, setFormError] = useState<string>('');
 
-  // Detail & Delete Modal state
+  // Detail, Edit Confirm & Delete Modal state
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
+  const [pendingEditItem, setPendingEditItem] = useState<CalendarItem | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const getItemStage = (item: CalendarItem): 'upcoming' | 'in_progress' | 'done' => {
+    if (item.completed || item.boardStatus === 'done') return 'done';
+    if (item.boardStatus === 'in_progress') return 'in_progress';
+    if (item.boardStatus === 'upcoming') return 'upcoming';
+    if (item.startDate <= todayKey && (item.endDate || item.startDate) >= todayKey) {
+      return 'in_progress';
+    }
+    return 'upcoming';
+  };
 
   const detailItem = useMemo(
     () => items.find((i) => i.id === detailItemId) || null,
@@ -380,6 +392,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const openEditModal = (item: CalendarItem) => {
+    if (getItemStage(item) === 'done') return;
     setEditingItem(item);
     setFormTitle(item.title);
     setFormType(item.itemType);
@@ -442,6 +455,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       endTime: formAllDay ? undefined : formEndTime,
       allDay: formAllDay,
       completed: editingItem ? editingItem.completed : false,
+      boardStatus: editingItem
+        ? editingItem.boardStatus || (editingItem.completed ? 'done' : 'upcoming')
+        : 'upcoming',
       team: formTeam || undefined,
       assignedToId: formAssignedToId || undefined,
       assignedToName: trimmedAssignee || undefined,
@@ -1461,6 +1477,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           <div
             onClick={() => {
               setDetailItemId(null);
+              setPendingEditItem(null);
               setConfirmDeleteId(null);
             }}
             className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -1508,6 +1525,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   type="button"
                   onClick={() => {
                     setDetailItemId(null);
+                    setPendingEditItem(null);
                     setConfirmDeleteId(null);
                   }}
                   className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 min-h-[40px] min-w-[40px] flex items-center justify-center shrink-0"
@@ -1614,72 +1632,125 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               </div>
 
               {/* Task toggle + Edit / Delete */}
-              {confirmDeleteId === detailItem.id ? (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-bold text-rose-900">
-                    Are you sure you want to delete this item?
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="px-3 py-1.5 min-h-[38px] rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer"
-                    >
-                      No
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const id = detailItem.id;
-                        setConfirmDeleteId(null);
-                        setDetailItemId(null);
-                        onDeleteItem(id);
-                      }}
-                      className="px-3 py-1.5 min-h-[38px] rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer"
-                    >
-                      Yes, Delete
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                  {detailItem.itemType === 'task' ? (
-                    <button
-                      type="button"
-                      onClick={() => onToggleTaskComplete(detailItem.id)}
-                      className={`px-3.5 py-2 min-h-[42px] rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
-                        detailItem.completed
-                          ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
-                          : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
-                      }`}
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>{detailItem.completed ? 'Reopen Task' : 'Mark Completed'}</span>
-                    </button>
-                  ) : (
-                    <div />
-                  )}
+              {(() => {
+                const detailStage = getItemStage(detailItem);
+                const isDone = detailStage === 'done';
+                const isInProgress = detailStage === 'in_progress';
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(detailItem)}
-                      className="px-3.5 py-2 min-h-[42px] rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(detailItem.id)}
-                      className="px-3.5 py-2 min-h-[42px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete</span>
-                    </button>
+                if (confirmDeleteId === detailItem.id && !isInProgress) {
+                  return (
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-rose-900">
+                        Are you sure you want to delete &quot;{detailItem.title}&quot;?
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-3 py-1.5 min-h-[38px] rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const id = detailItem.id;
+                            setConfirmDeleteId(null);
+                            setDetailItemId(null);
+                            onDeleteItem(id);
+                          }}
+                          className="px-3 py-1.5 min-h-[38px] rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer"
+                        >
+                          Yes, Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (pendingEditItem?.id === detailItem.id && !isDone) {
+                  return (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-amber-950">
+                        Are you sure you want to edit &quot;{detailItem.title}&quot;?
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPendingEditItem(null)}
+                          className="px-3 py-1.5 min-h-[38px] rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-700 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = pendingEditItem;
+                            setPendingEditItem(null);
+                            openEditModal(target);
+                          }}
+                          className="px-3 py-1.5 min-h-[38px] rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold cursor-pointer"
+                        >
+                          Yes, Edit
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                    {detailItem.itemType === 'task' ? (
+                      <button
+                        type="button"
+                        onClick={() => onToggleTaskComplete(detailItem.id)}
+                        className={`px-3.5 py-2 min-h-[42px] rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
+                          detailItem.completed
+                            ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                        }`}
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>{detailItem.completed ? 'Reopen Task' : 'Mark Completed'}</span>
+                      </button>
+                    ) : (
+                      <div />
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!isDone && (
+                        <button
+                          type="button"
+                          onClick={() => setPendingEditItem(detailItem)}
+                          className="px-3.5 py-2 min-h-[42px] rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          <span>Edit</span>
+                        </button>
+                      )}
+
+                      {isInProgress ? (
+                        <span
+                          className="px-3 py-2 min-h-[42px] rounded-xl bg-slate-100 text-slate-500 border border-slate-200 text-xs font-bold inline-flex items-center gap-1.5 cursor-not-allowed"
+                          title="In Progress items cannot be deleted. Move to Done first."
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                          <span>Move to Done to delete</span>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(detailItem.id)}
+                          className="px-3.5 py-2 min-h-[42px] rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         );

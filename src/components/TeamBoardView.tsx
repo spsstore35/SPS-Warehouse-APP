@@ -29,6 +29,7 @@ import {
   Calendar as CalendarIcon,
   ListTodo,
   UserPlus,
+  Lock,
 } from 'lucide-react';
 
 interface TeamBoardViewProps {
@@ -250,9 +251,15 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     getStoredTeamDirectory()
   );
 
-  // Modals: Detail & Form
+  // Modals: Detail, Edit Confirm, Delete Confirm, Stage Confirm, Member Profile & Form
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [pendingEditItem, setPendingEditItem] = useState<CalendarItem | null>(null);
+  const [pendingDeleteItem, setPendingDeleteItem] = useState<CalendarItem | null>(null);
+  const [pendingStageMove, setPendingStageMove] = useState<{
+    item: CalendarItem;
+    nextStatus: BoardColumnStatus;
+  } | null>(null);
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CalendarItem | null>(null);
 
@@ -407,7 +414,24 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     setIsFormOpen(true);
   };
 
+  const requestEditCard = (item: CalendarItem) => {
+    if (getItemColumn(item) === 'done') {
+      onShowToast?.('Completed (Done) cards cannot be edited.');
+      return;
+    }
+    setPendingEditItem(item);
+  };
+
+  const requestDeleteCard = (item: CalendarItem) => {
+    if (getItemColumn(item) === 'in_progress') {
+      onShowToast?.('In Progress cards cannot be deleted. Move to Done first.');
+      return;
+    }
+    setPendingDeleteItem(item);
+  };
+
   const openEditCardModal = (item: CalendarItem) => {
+    if (getItemColumn(item) === 'done') return;
     setEditingItem(item);
     setFormTitle(item.title);
     setFormType(item.itemType);
@@ -491,6 +515,12 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     onShowToast?.('Calendar file downloaded (.ics).');
   };
 
+  // Request confirmation before changing board stage (Upcoming -> In Progress -> Done)
+  const requestStageMove = (item: CalendarItem, nextStatus: BoardColumnStatus) => {
+    if (getItemColumn(item) === nextStatus) return;
+    setPendingStageMove({ item, nextStatus });
+  };
+
   // Drag & drop handlers
   const handleDropOnColumn = (targetCol: BoardColumnStatus) => {
     setDragOverCol(null);
@@ -498,9 +528,38 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     const item = items.find((i) => i.id === draggedItemId);
     setDraggedItemId(null);
     if (!item) return;
-    if (getItemColumn(item) === targetCol) return;
-    onMoveItemStatus(item.id, targetCol);
+    requestStageMove(item, targetCol);
   };
+
+  const selectedMember = useMemo(
+    () => activeMembers.find((m) => m.id === selectedMemberId) || null,
+    [activeMembers, selectedMemberId]
+  );
+
+  const selectedMemberEvents = useMemo(() => {
+    if (!selectedMember) return { current: [] as CalendarItem[], past: [] as CalendarItem[] };
+    const nameLower = selectedMember.name.trim().toLowerCase();
+    const assigned = items
+      .filter(
+        (it) =>
+          (it.assignedToId && it.assignedToId === selectedMember.id) ||
+          (it.assignedToName && it.assignedToName.trim().toLowerCase() === nameLower)
+      )
+      .sort((a, b) => b.startDate.localeCompare(a.startDate));
+
+    const current: CalendarItem[] = [];
+    const past: CalendarItem[] = [];
+    assigned.forEach((it) => {
+      const col = getItemColumn(it);
+      const isPastDate = (it.endDate || it.startDate) < todayKey;
+      if (col === 'done' || isPastDate) {
+        past.push(it);
+      } else {
+        current.push(it);
+      }
+    });
+    return { current, past };
+  }, [selectedMember, items, todayKey]);
 
   // Helper to get per-user stats
   const getUserStats = (user: User, teamFilter?: StoreTeamId) => {
@@ -897,8 +956,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      onMoveItemStatus(
-                                        item.id,
+                                      requestStageMove(
+                                        item,
                                         BOARD_COLUMNS[colIndex - 1].id
                                       )
                                     }
@@ -912,8 +971,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      onMoveItemStatus(
-                                        item.id,
+                                      requestStageMove(
+                                        item,
                                         BOARD_COLUMNS[colIndex + 1].id
                                       )
                                     }
@@ -1072,9 +1131,14 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                             return (
                               <div
                                 key={member.id}
-                                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-2"
+                                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-blue-300 flex items-center justify-between gap-2 transition-colors"
                               >
-                                <div className="flex items-center gap-2.5 min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedMemberId(member.id)}
+                                  className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
+                                  title={`Open ${member.name}'s account & event history`}
+                                >
                                   <span
                                     className="w-8 h-8 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0"
                                     style={{
@@ -1087,14 +1151,14 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                     {getInitials(member.name)}
                                   </span>
                                   <div className="min-w-0">
-                                    <div className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                                    <div className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-blue-700 truncate transition-colors">
                                       {member.name}
                                     </div>
                                     <div className="text-[11px] text-slate-500 font-mono tabular-nums">
                                       {stats.upcoming} upcoming · {stats.inProgress} active · {stats.done} done
                                     </div>
                                   </div>
-                                </div>
+                                </button>
 
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button
@@ -1180,7 +1244,12 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col justify-between gap-4"
                     >
                       <div className="space-y-3">
-                        <div className="flex items-start justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMemberId(member.id)}
+                          className="w-full flex items-start justify-between gap-3 text-left group cursor-pointer"
+                          title={`Open ${member.name}'s account & event history`}
+                        >
                           <div className="flex items-center gap-3 min-w-0">
                             <span
                               className="w-11 h-11 rounded-full text-white text-sm font-black flex items-center justify-center shrink-0"
@@ -1194,13 +1263,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               {getInitials(member.name)}
                             </span>
                             <div className="min-w-0">
-                              <h3 className="text-sm sm:text-base font-black text-slate-900 truncate">
+                              <h3 className="text-sm sm:text-base font-black text-slate-900 group-hover:text-blue-700 truncate transition-colors">
                                 {member.name}
                               </h3>
                               <p className="text-xs text-slate-500 truncate">{member.email}</p>
                             </div>
                           </div>
-                        </div>
+                        </button>
 
                         {/* Workload Stats */}
                         <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
@@ -1648,7 +1717,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       <button
                         key={col.id}
                         type="button"
-                        onClick={() => onMoveItemStatus(detailItem.id, col.id)}
+                        onClick={() => requestStageMove(detailItem, col.id)}
                         className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition-colors ${
                           isCurrent
                             ? col.id === 'done'
@@ -1736,61 +1805,447 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               </div>
             </div>
 
-            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => openEditCardModal(detailItem)}
-                  className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold flex items-center gap-1.5"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                  <span>Edit</span>
-                </button>
+            {(() => {
+              const detailStage = getItemColumn(detailItem);
+              const isDone = detailStage === 'done';
+              const isInProgress = detailStage === 'in_progress';
 
-                {confirmDeleteId === detailItem.id ? (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onDeleteItem(detailItem.id);
-                        setConfirmDeleteId(null);
-                        setDetailItemId(null);
-                      }}
-                      className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
-                    >
-                      Confirm Delete
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="px-2.5 py-2 rounded-xl bg-slate-200 text-slate-700 text-xs font-bold"
-                    >
-                      Cancel
-                    </button>
+              return (
+                <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!isDone && (
+                      <button
+                        type="button"
+                        onClick={() => requestEditCard(detailItem)}
+                        className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold flex items-center gap-1.5"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                    )}
+
+                    {isInProgress ? (
+                      <span
+                        className="px-3 py-2 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 text-xs font-bold inline-flex items-center gap-1.5 cursor-not-allowed"
+                        title="In Progress cards cannot be deleted. Move to Done first."
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Move to Done to delete</span>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => requestDeleteCard(detailItem)}
+                        className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    )}
                   </div>
-                ) : (
+
                   <button
                     type="button"
-                    onClick={() => setConfirmDeleteId(detailItem.id)}
-                    className="px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5"
+                    onClick={() => setDetailItemId(null)}
+                    className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete</span>
+                    Close
                   </button>
-                )}
-              </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
+      {/* ================================================================
+          MODAL: CONFIRM EDIT CARD
+      ================================================================ */}
+      {pendingEditItem && (
+        <div
+          onClick={() => setPendingEditItem(null)}
+          className="fixed inset-0 z-[60] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4"
+          >
+            <div className="space-y-1.5">
+              <h3 className="text-base font-black text-slate-900">Edit Card?</h3>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Are you sure you want to edit{' '}
+                <strong className="text-slate-900">"{pendingEditItem.title}"</strong>?
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setDetailItemId(null)}
-                className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold"
+                onClick={() => setPendingEditItem(null)}
+                className="px-4 py-2.5 min-h-[42px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold"
               >
-                Close
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = pendingEditItem;
+                  setPendingEditItem(null);
+                  openEditCardModal(target);
+                }}
+                className="px-4 py-2.5 min-h-[42px] rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs sm:text-sm font-bold"
+              >
+                Yes, Edit
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ================================================================
+          MODAL: CONFIRM DELETE CARD
+      ================================================================ */}
+      {pendingDeleteItem && (
+        <div
+          onClick={() => setPendingDeleteItem(null)}
+          className="fixed inset-0 z-[60] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4"
+          >
+            <div className="space-y-1.5">
+              <h3 className="text-base font-black text-rose-700">Delete Card?</h3>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Are you sure you want to permanently delete{' '}
+                <strong className="text-slate-900">"{pendingDeleteItem.title}"</strong>?
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteItem(null)}
+                className="px-4 py-2.5 min-h-[42px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = pendingDeleteItem.id;
+                  setPendingDeleteItem(null);
+                  setDetailItemId(null);
+                  onDeleteItem(id);
+                }}
+                className="px-4 py-2.5 min-h-[42px] rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs sm:text-sm font-bold"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================
+          MODAL: CONFIRM STAGE CHANGE (Upcoming -> In Progress -> Done)
+      ================================================================ */}
+      {pendingStageMove && (() => {
+        const currentCol = getItemColumn(pendingStageMove.item);
+        const currentLabel =
+          BOARD_COLUMNS.find((c) => c.id === currentCol)?.title || 'Upcoming';
+        const targetLabel =
+          BOARD_COLUMNS.find((c) => c.id === pendingStageMove.nextStatus)?.title ||
+          'In Progress';
+
+        return (
+          <div
+            onClick={() => setPendingStageMove(null)}
+            className="fixed inset-0 z-[60] bg-slate-950/65 backdrop-blur-xs flex items-center justify-center p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4"
+            >
+              <div className="space-y-1.5">
+                <h3 className="text-base font-black text-slate-900">
+                  Move Card to {targetLabel}?
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                  Are you sure you want to move{' '}
+                  <strong className="text-slate-900">"{pendingStageMove.item.title}"</strong> from{' '}
+                  <strong className="text-slate-800">{currentLabel}</strong> to{' '}
+                  <strong
+                    className={
+                      pendingStageMove.nextStatus === 'done'
+                        ? 'text-emerald-700'
+                        : pendingStageMove.nextStatus === 'in_progress'
+                        ? 'text-blue-700'
+                        : 'text-slate-900'
+                    }
+                  >
+                    {targetLabel}
+                  </strong>
+                  ?
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPendingStageMove(null)}
+                  className="px-4 py-2.5 min-h-[42px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onMoveItemStatus(pendingStageMove.item.id, pendingStageMove.nextStatus);
+                    setPendingStageMove(null);
+                  }}
+                  className={`px-4 py-2.5 min-h-[42px] rounded-xl text-white text-xs sm:text-sm font-bold ${
+                    pendingStageMove.nextStatus === 'done'
+                      ? 'bg-emerald-600 hover:bg-emerald-700'
+                      : pendingStageMove.nextStatus === 'in_progress'
+                      ? 'bg-blue-600 hover:bg-blue-700'
+                      : 'bg-slate-900 hover:bg-slate-800'
+                  }`}
+                >
+                  Yes, Move to {targetLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ================================================================
+          MODAL: MEMBER ACCOUNT & CURRENT / PAST EVENTS HISTORY
+      ================================================================ */}
+      {selectedMember && (() => {
+        const memberTeams = Array.from(
+          effectiveUserTeams.get(selectedMember.id) || new Set<StoreTeamId>()
+        );
+        return (
+          <div
+            onClick={() => setSelectedMemberId(null)}
+            className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-xl bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+            >
+              {/* Header */}
+              <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <span
+                    className="w-12 h-12 rounded-full text-white text-base font-black flex items-center justify-center shrink-0"
+                    style={{
+                      backgroundColor: getAvatarColor(
+                        selectedMember.name,
+                        selectedMember.avatarColor
+                      ),
+                    }}
+                  >
+                    {getInitials(selectedMember.name)}
+                  </span>
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-black text-slate-900 truncate">
+                      {selectedMember.name}
+                    </h2>
+                    <p className="text-xs text-slate-500 truncate">{selectedMember.email}</p>
+                    {memberTeams.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {memberTeams.map((tid) => {
+                          const tm = getTeamMeta(tid);
+                          if (!tm) return null;
+                          return (
+                            <span
+                              key={tid}
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tid]}`}
+                            >
+                              {tm.shortLabel}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMemberId(null)}
+                  className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-5 overflow-y-auto space-y-5 flex-1">
+                {/* Summary Strip */}
+                <div className="grid grid-cols-3 gap-2.5 text-center">
+                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
+                    <div className="text-lg font-black font-mono tabular-nums text-blue-900">
+                      {selectedMemberEvents.current.length}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase text-blue-700">
+                      Current Events
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                    <div className="text-lg font-black font-mono tabular-nums text-emerald-900">
+                      {selectedMemberEvents.past.length}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase text-emerald-700">
+                      Past / Completed
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="text-lg font-black font-mono tabular-nums text-slate-900">
+                      {selectedMemberEvents.current.length + selectedMemberEvents.past.length}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase text-slate-600">
+                      Total Handled
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 1: Currently Handling */}
+                <div className="space-y-2.5">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                    Currently Handling ({selectedMemberEvents.current.length})
+                  </h3>
+                  {selectedMemberEvents.current.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500 text-center">
+                      No active or upcoming events assigned right now.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedMemberEvents.current.map((ev) => {
+                        const col = getItemColumn(ev);
+                        const tm = getTeamMeta(ev.team);
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedMemberId(null);
+                              setDetailItemId(ev.id);
+                            }}
+                            className="w-full text-left p-3.5 rounded-xl bg-white border border-slate-200 hover:border-blue-300 transition-colors space-y-1.5"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {tm && (
+                                  <span
+                                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tm.id]}`}
+                                  >
+                                    {tm.shortLabel}
+                                  </span>
+                                )}
+                                <span
+                                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                                    col === 'in_progress'
+                                      ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                      : 'bg-slate-100 text-slate-700 border border-slate-200'
+                                  }`}
+                                >
+                                  {col === 'in_progress' ? 'In Progress' : 'Upcoming'}
+                                </span>
+                              </div>
+                              <span className="text-xs font-mono tabular-nums text-slate-500">
+                                {formatShortDate(ev.startDate)}
+                              </span>
+                            </div>
+                            <div className="text-sm font-bold text-slate-900">{ev.title}</div>
+                            {ev.notes && (
+                              <div className="text-xs text-slate-500 line-clamp-2">{ev.notes}</div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 2: Previously Handled / Completed */}
+                <div className="space-y-2.5">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
+                    Previous &amp; Completed History ({selectedMemberEvents.past.length})
+                  </h3>
+                  {selectedMemberEvents.past.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500 text-center">
+                      No previous or completed events recorded yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedMemberEvents.past.map((ev) => {
+                        const tm = getTeamMeta(ev.team);
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedMemberId(null);
+                              setDetailItemId(ev.id);
+                            }}
+                            className="w-full text-left p-3.5 rounded-xl bg-slate-50 border border-slate-200 hover:border-emerald-300 transition-colors space-y-1.5"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {tm && (
+                                  <span
+                                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tm.id]}`}
+                                  >
+                                    {tm.shortLabel}
+                                  </span>
+                                )}
+                                <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  {getItemColumn(ev) === 'done' ? 'Done' : 'Past Event'}
+                                </span>
+                              </div>
+                              <span className="text-xs font-mono tabular-nums text-slate-500">
+                                {formatShortDate(ev.startDate)}
+                              </span>
+                            </div>
+                            <div className="text-sm font-bold text-slate-800">{ev.title}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = selectedMember;
+                    const firstTeam = memberTeams[0] || 'purchases';
+                    setSelectedMemberId(null);
+                    openCreateCardModal('upcoming', firstTeam, target);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Assign New Event / Task</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMemberId(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

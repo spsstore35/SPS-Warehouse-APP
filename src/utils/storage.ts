@@ -353,5 +353,35 @@ export function saveStoredTeamDirectory(dir: Record<string, StoreTeamId[]>): voi
   } catch {}
 }
 
+const CALENDAR_UNSYNCED_KEY = 'wearhouse_calendar_unsynced_v1';
+
+export function getUnsyncedCalendarIds(): string[] {
+  try {
+    const raw = localStorage.getItem(CALENDAR_UNSYNCED_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function markCalendarIdUnsynced(id: string): void {
+  try {
+    const current = new Set(getUnsyncedCalendarIds());
+    current.add(id);
+    localStorage.setItem(CALENDAR_UNSYNCED_KEY, JSON.stringify(Array.from(current)));
+  } catch {}
+}
+
+export function clearCalendarIdUnsynced(id: string): void {
+  try {
+    const current = new Set(getUnsyncedCalendarIds());
+    if (current.delete(id)) {
+      localStorage.setItem(CALENDAR_UNSYNCED_KEY, JSON.stringify(Array.from(current)));
+    }
+  } catch {}
+}
+
 
 

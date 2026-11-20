@@ -1595,7 +1595,9 @@ export async function upsertCalendarEventToDb(
     // Fallback cleanly if board_status column isn't added yet
     if (
       error &&
-      (error.message?.includes('board_status') || (error as any).code === 'PGRST204')
+      (error.message?.includes('board_status') ||
+        (error as any).code === 'PGRST204' ||
+        (error as any).code === '42703')
     ) {
       const retryTeam = await supabase.from('calendar_events').upsert(withTeamPayload);
       error = retryTeam.error;
@@ -1606,7 +1608,8 @@ export async function upsertCalendarEventToDb(
       error &&
       (error.message?.includes('team') ||
         error.message?.includes('assigned_to') ||
-        (error as any).code === 'PGRST204')
+        (error as any).code === 'PGRST204' ||
+        (error as any).code === '42703')
     ) {
       const retry = await supabase.from('calendar_events').upsert(basePayload);
       error = retry.error;
