@@ -10,6 +10,8 @@ import {
   Category,
   Booking,
   BookingStatus,
+  CalendarItem,
+  BoardColumnStatus,
 } from './types/inventory';
 import {
   getStoredProducts,
@@ -30,6 +32,10 @@ import {
   clearStoredAuditLogs,
   getStoredBookings,
   saveStoredBookings,
+  getStoredCalendarEvents,
+  saveStoredCalendarEvents,
+  getStoredBoardStatusMap,
+  saveStoredBoardStatusMap,
 } from './utils/storage';
 import { isUserAdmin, isUserLeader, normalizeRole, getRoleDisplayName } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
@@ -59,6 +65,9 @@ import {
   deleteBookingFromDb,
   fetchOthersFoldersFromDb,
   syncOthersFoldersToDb,
+  fetchCalendarEventsFromDb,
+  upsertCalendarEventToDb,
+  deleteCalendarEventFromDb,
   fetchActivitySnapshot,
   CATEGORY_MAP,
   DbConnectionStatus,
@@ -81,6 +90,8 @@ import { BookingsView } from './components/BookingsView';
 import { BookingModal } from './components/BookingModal';
 import { BookingPrintModal } from './components/BookingPrintModal';
 import { AdminAnalyticsView } from './components/AdminAnalyticsView';
+import { CalendarView } from './components/CalendarView';
+import { TeamBoardView } from './components/TeamBoardView';
 import { MobileNotificationBanner } from './components/MobileNotificationBanner';
 import {
   registerServiceWorker,
@@ -475,6 +486,10 @@ export default function App() {
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [selectedBookingForDetails, setSelectedBookingForDetails] = useState<string | null>(null);
 
+  // Store Calendar & Tasks state
+  const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>(() => getStoredCalendarEvents());
+  const lastCalendarMutationAtRef = useRef<number>(0);
+
   const handleOpenBookingDetails = (bookingNumberOrId: string) => {
     const cleanQuery = bookingNumberOrId.trim().toLowerCase();
     const match = bookings.find(
@@ -517,6 +532,10 @@ export default function App() {
   useEffect(() => {
     saveStoredBookings(bookings);
   }, [bookings]);
+
+  useEffect(() => {
+    saveStoredCalendarEvents(calendarEvents);
+  }, [calendarEvents]);
 
   // Category handlers
   const handleAddCategory = async (name: string, description?: string) => {
@@ -778,7 +797,7 @@ export default function App() {
       setDbStatus(status);
 
       if (status.connected && status.tablesExist) {
-        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs, dbBookings, dbFolders] = await Promise.allSettled([
+        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs, dbBookings, dbFolders, dbCalendar] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
           fetchUsersFromDb(),
@@ -786,6 +805,7 @@ export default function App() {
           fetchAuditLogsFromDb(),
           fetchBookingsFromDb(),
           fetchOthersFoldersFromDb(),
+          fetchCalendarEventsFromDb(),
         ]);
 
         let dbProductFolders: string[] = [];
@@ -918,6 +938,33 @@ export default function App() {
               return merged;
             });
           }
+        }
+
+        // Sync Store Calendar Events & Tasks from Supabase
+        if (
+          dbCalendar.status === 'fulfilled' &&
+          dbCalendar.value !== null &&
+          Date.now() - lastCalendarMutationAtRef.current > 3000
+        ) {
+          const remoteCalendar = dbCalendar.value;
+          const boardMap = getStoredBoardStatusMap();
+          setCalendarEvents((prev) => {
+            const merged = remoteCalendar.map((item) => {
+              const localMatch = prev.find((lc) => lc.id === item.id);
+              const fallbackStatus = item.completed
+                ? 'done'
+                : (item.boardStatus || localMatch?.boardStatus || boardMap[item.id]);
+              return {
+                ...item,
+                boardStatus: fallbackStatus,
+                team: item.team || localMatch?.team,
+                assignedToId: item.assignedToId || localMatch?.assignedToId,
+                assignedToName: item.assignedToName || localMatch?.assignedToName,
+              };
+            });
+            saveStoredCalendarEvents(merged);
+            return merged;
+          });
         }
 
         if (notify) {
@@ -1375,6 +1422,12 @@ export default function App() {
       await upsertProductToDb(finalProd);
     } catch (err: any) {
       console.warn('Supabase upsert product error:', err?.message);
+      const msg = String(err?.message || '');
+      if (msg.includes('exceed_egress_quota')) {
+        showToast('Saved locally only — Supabase project is restricted (exceed_egress_quota).');
+      } else if (msg) {
+        showToast(`Saved locally, Supabase sync warning: ${msg}`);
+      }
     }
 
     // Then record audit log
@@ -1810,11 +1863,13 @@ export default function App() {
       const securePasswordHash = await hashPassword(plainPassword);
 
       // 2. Check if user already exists in remote Supabase profiles table
-      const { data: existingProfile } = await supabase
+      const { data: existingProfile, error: existingErr } = await supabase
         .from('profiles')
         .select('id, email, status')
         .ilike('email', cleanEmail)
         .maybeSingle();
+
+      if (existingErr) throw existingErr;
 
       if (existingProfile) {
         // If profile already exists (e.g. pending or previously registered), update to active and set password hash
@@ -1936,7 +1991,22 @@ export default function App() {
       return { success: true };
     } catch (err: any) {
       console.warn('Direct user creation notice:', err?.message);
-      return { success: false, error: err?.message || 'Failed to create user' };
+      const rawMsg = String(err?.message || '');
+      if (rawMsg.includes('exceed_egress_quota')) {
+        return {
+          success: false,
+          error:
+            'Supabase project is currently restricted by Free Plan monthly egress quota (exceed_egress_quota). To restore database writes, open Supabase Dashboard → Organization Billing to upgrade/remove the spend cap, or connect a new Supabase project.',
+        };
+      }
+      if (rawMsg.includes('user_role') && rawMsg.includes('leader')) {
+        return {
+          success: false,
+          error:
+            'Database enum "user_role" is missing "leader". Run the SQL update from Account Approvals → View Supabase SQL.',
+        };
+      }
+      return { success: false, error: rawMsg || 'Failed to create user' };
     }
   };
 
@@ -2395,6 +2465,132 @@ export default function App() {
     showToast(`Booking ${target.bookingNumber} deleted.`, newLog);
   };
 
+  // Calendar Events & Tasks Handlers
+  const handleSaveCalendarEvent = (item: CalendarItem) => {
+    lastCalendarMutationAtRef.current = Date.now();
+    const normalizedItem: CalendarItem = {
+      ...item,
+      boardStatus: item.boardStatus || (item.completed ? 'done' : 'upcoming'),
+      completed: item.boardStatus ? item.boardStatus === 'done' : item.completed,
+    };
+    const isExisting = calendarEvents.some((ev) => ev.id === normalizedItem.id);
+    const nextEvents = isExisting
+      ? calendarEvents.map((ev) => (ev.id === normalizedItem.id ? normalizedItem : ev))
+      : [normalizedItem, ...calendarEvents];
+
+    setCalendarEvents(nextEvents);
+    saveStoredCalendarEvents(nextEvents);
+
+    const boardMap = getStoredBoardStatusMap();
+    if (normalizedItem.boardStatus) {
+      boardMap[normalizedItem.id] = normalizedItem.boardStatus;
+      saveStoredBoardStatusMap(boardMap);
+    }
+
+    upsertCalendarEventToDb(normalizedItem).then((res) => {
+      if (!res.ok && res.error) {
+        console.warn('Notice saving calendar item to Supabase:', res.error);
+      }
+    });
+
+    const kindLabel = normalizedItem.itemType === 'task' ? 'Task' : 'Event';
+    showToast(`${kindLabel} "${normalizedItem.title}" ${isExisting ? 'updated' : 'added to calendar'}.`);
+  };
+
+  const handleDeleteCalendarEvent = (id: string) => {
+    lastCalendarMutationAtRef.current = Date.now();
+    const target = calendarEvents.find((ev) => ev.id === id);
+    const nextEvents = calendarEvents.filter((ev) => ev.id !== id);
+    setCalendarEvents(nextEvents);
+    saveStoredCalendarEvents(nextEvents);
+
+    const boardMap = getStoredBoardStatusMap();
+    if (boardMap[id]) {
+      delete boardMap[id];
+      saveStoredBoardStatusMap(boardMap);
+    }
+
+    deleteCalendarEventFromDb(id).then((res) => {
+      if (!res.ok && res.error) {
+        console.warn('Notice deleting calendar item from Supabase:', res.error);
+      }
+    });
+
+    if (target) {
+      showToast(`Removed "${target.title}" from calendar.`);
+    }
+  };
+
+  const handleToggleCalendarTask = (id: string) => {
+    lastCalendarMutationAtRef.current = Date.now();
+    const target = calendarEvents.find((ev) => ev.id === id);
+    if (!target) return;
+
+    const nextDone = !target.completed;
+    const nextBoardStatus: BoardColumnStatus = nextDone ? 'done' : 'upcoming';
+    const updatedItem: CalendarItem = {
+      ...target,
+      completed: nextDone,
+      boardStatus: nextBoardStatus,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextEvents = calendarEvents.map((ev) => (ev.id === id ? updatedItem : ev));
+    setCalendarEvents(nextEvents);
+    saveStoredCalendarEvents(nextEvents);
+
+    const boardMap = getStoredBoardStatusMap();
+    boardMap[id] = nextBoardStatus;
+    saveStoredBoardStatusMap(boardMap);
+
+    upsertCalendarEventToDb(updatedItem).then((res) => {
+      if (!res.ok && res.error) {
+        console.warn('Notice updating task completion in Supabase:', res.error);
+      }
+    });
+
+    showToast(
+      updatedItem.completed
+        ? `Marked task "${updatedItem.title}" as completed.`
+        : `Reopened task "${updatedItem.title}".`
+    );
+  };
+
+  const handleMoveBoardItem = (id: string, nextStatus: BoardColumnStatus) => {
+    lastCalendarMutationAtRef.current = Date.now();
+    const target = calendarEvents.find((ev) => ev.id === id);
+    if (!target) return;
+
+    const updatedItem: CalendarItem = {
+      ...target,
+      boardStatus: nextStatus,
+      completed: nextStatus === 'done',
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextEvents = calendarEvents.map((ev) => (ev.id === id ? updatedItem : ev));
+    setCalendarEvents(nextEvents);
+    saveStoredCalendarEvents(nextEvents);
+
+    const boardMap = getStoredBoardStatusMap();
+    boardMap[id] = nextStatus;
+    saveStoredBoardStatusMap(boardMap);
+
+    upsertCalendarEventToDb(updatedItem).then((res) => {
+      if (!res.ok && res.error) {
+        console.warn('Notice updating board stage in Supabase:', res.error);
+      }
+    });
+
+    const stageLabel =
+      nextStatus === 'done'
+        ? 'Done'
+        : nextStatus === 'in_progress'
+        ? 'In Progress'
+        : 'Upcoming';
+    showToast(`Moved "${updatedItem.title}" to ${stageLabel}.`);
+  };
+
   // Refresh data from Supabase
   const handleResetData = () => {
     refreshFromSupabase(true);
@@ -2645,15 +2841,43 @@ export default function App() {
 
             {/* KPI Metric Strip in Clean Light Mode */}
             <div className={`grid grid-cols-2 ${isLeader ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-3`}>
-              <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterLowStockOnly(false);
+                  setSelectedCategory('All');
+                  setSelectedAudience('All');
+                  setSelectedOtherFolder('All Items');
+                  setSearchQuery('');
+                  setActiveView('inventory');
+                }}
+                title="Reset all filters and show all catalogue items"
+                className={`text-left p-4 rounded-2xl border shadow-sm cursor-pointer transition-all ${
+                  filterLowStockOnly ||
+                  selectedCategory !== 'All' ||
+                  selectedAudience !== 'All' ||
+                  selectedOtherFolder !== 'All Items' ||
+                  searchQuery.trim() !== ''
+                    ? 'bg-white border-slate-200/90 hover:border-amber-400 hover:bg-amber-50/40'
+                    : 'bg-slate-900/5 border-slate-300'
+                }`}
+              >
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                   Total Items
                 </div>
                 <div className="text-2xl font-black font-mono tabular-nums text-slate-900 mt-1">
                   {activeProducts.length}
                 </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">Active catalogue items</div>
-              </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  {filterLowStockOnly ||
+                  selectedCategory !== 'All' ||
+                  selectedAudience !== 'All' ||
+                  selectedOtherFolder !== 'All Items' ||
+                  searchQuery.trim() !== ''
+                    ? 'Click to show all items'
+                    : 'Active catalogue items'}
+                </div>
+              </button>
 
               <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
@@ -3224,6 +3448,7 @@ export default function App() {
         {effectiveView === 'bookings' && !isLeader && (
           <BookingsView
             bookings={bookings}
+            products={products}
             currentUser={currentUser}
             onOpenNewBookingModal={() => {
               setBookingModalProduct(undefined);
@@ -3260,6 +3485,30 @@ export default function App() {
             onShowToast={showToast}
             initialSelectedBookingId={selectedBookingForDetails}
             onClearSelectedBookingId={() => setSelectedBookingForDetails(null)}
+          />
+        )}
+
+        {effectiveView === 'calendar' && !isLeader && (
+          <CalendarView
+            items={calendarEvents}
+            users={users}
+            currentUser={currentUser}
+            onSaveItem={handleSaveCalendarEvent}
+            onDeleteItem={handleDeleteCalendarEvent}
+            onToggleTaskComplete={handleToggleCalendarTask}
+            onShowToast={(msg) => showToast(msg)}
+          />
+        )}
+
+        {effectiveView === 'board' && !isLeader && (
+          <TeamBoardView
+            items={calendarEvents}
+            users={users}
+            currentUser={currentUser}
+            onSaveItem={handleSaveCalendarEvent}
+            onDeleteItem={handleDeleteCalendarEvent}
+            onMoveItemStatus={handleMoveBoardItem}
+            onShowToast={(msg) => showToast(msg)}
           />
         )}
 

@@ -1,4 +1,4 @@
-import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category, Booking, CalendarItem } from '../types/inventory';
+import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category, Booking, CalendarItem, BoardColumnStatus, StoreTeamId } from '../types/inventory';
 import { INITIAL_PRODUCTS, INITIAL_REQUESTS, INITIAL_AUDIT_LOGS, INITIAL_USERS, INITIAL_CATEGORIES } from '../data/initialData';
 
 const STORAGE_KEYS = {
@@ -10,6 +10,8 @@ const STORAGE_KEYS = {
   CATEGORIES: 'wearhouse_categories_v4_live',
   BOOKINGS: 'wearhouse_bookings_v4_live',
   CALENDAR_EVENTS: 'wearhouse_calendar_events_v4_live',
+  BOARD_STATUS_MAP: 'wearhouse_board_status_v1',
+  TEAM_DIRECTORY: 'wearhouse_team_directory_v1',
 };
 
 export function getStoredUsers(): User[] {
@@ -316,5 +318,40 @@ export function saveStoredCalendarEvents(items: CalendarItem[]): void {
     console.error('Failed to save calendar events to storage:', err);
   }
 }
+
+export function getStoredBoardStatusMap(): Record<string, BoardColumnStatus> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.BOARD_STATUS_MAP);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredBoardStatusMap(map: Record<string, BoardColumnStatus>): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.BOARD_STATUS_MAP, JSON.stringify(map));
+  } catch {}
+}
+
+export function getStoredTeamDirectory(): Record<string, StoreTeamId[]> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.TEAM_DIRECTORY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredTeamDirectory(dir: Record<string, StoreTeamId[]>): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.TEAM_DIRECTORY, JSON.stringify(dir));
+  } catch {}
+}
+
 
 

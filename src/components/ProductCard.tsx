@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Product, Role, ProductVariant } from '../types/inventory';
 import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Clock, Check, CalendarCheck } from 'lucide-react';
 
@@ -33,6 +33,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     ? product.images
     : (product.image ? [product.image] : []);
   const currentImage = allCardImages[activeImgIdx] || product.image;
+
+  useEffect(() => {
+    setActiveImgIdx(0);
+  }, [product.id]);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [activeImgIdx, currentImage]);
 
   // Extract unique colors and sizes
   const uniqueColors = Array.from(

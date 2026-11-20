@@ -81,6 +81,13 @@ export async function checkSupabaseConnection(): Promise<DbConnectionStatus> {
       if (error.code === '42P01' || error.message.includes('relation "public.products" does not exist')) {
         return { connected: true, tablesExist: false, error: 'Tables not created yet. Please execute the SQL migration script in your Supabase SQL Editor.' };
       }
+      if (error.message?.includes('exceed_egress_quota')) {
+        return {
+          connected: false,
+          tablesExist: false,
+          error: 'Supabase project is restricted (exceed_egress_quota). In Supabase Dashboard → Organization Billing, upgrade plan / remove spend cap or connect a new Supabase project.',
+        };
+      }
       return { connected: false, tablesExist: false, error: error.message };
     }
 
@@ -311,12 +318,15 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
     let primaryImage = '';
     let imageList: string[] = [];
     if (p.image_url) {
-      if (typeof p.image_url === 'string' && p.image_url.trim().startsWith('[')) {
+      if (Array.isArray(p.image_url)) {
+        imageList = p.image_url.filter(Boolean);
+        primaryImage = imageList[0] || '';
+      } else if (typeof p.image_url === 'string' && p.image_url.trim().startsWith('[')) {
         try {
           const parsed = JSON.parse(p.image_url);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            imageList = parsed;
-            primaryImage = parsed[0] || '';
+            imageList = parsed.filter(Boolean);
+            primaryImage = imageList[0] || '';
           }
         } catch {
           primaryImage = p.image_url;
@@ -1523,6 +1533,14 @@ export async function fetchCalendarEventsFromDb(): Promise<CalendarItem[] | null
       endTime: row.end_time || undefined,
       allDay: Boolean(row.all_day),
       completed: Boolean(row.completed),
+      boardStatus:
+        row.board_status === 'upcoming' ||
+        row.board_status === 'in_progress' ||
+        row.board_status === 'done'
+          ? row.board_status
+          : row.completed
+          ? 'done'
+          : undefined,
       team: row.team || undefined,
       assignedToId: row.assigned_to_id || undefined,
       assignedToName: row.assigned_to_name || undefined,
@@ -1562,12 +1580,26 @@ export async function upsertCalendarEventToDb(
       updated_at: item.updatedAt,
     };
 
-    let { error } = await supabase.from('calendar_events').upsert({
+    const withTeamPayload = {
       ...basePayload,
       team: item.team || null,
       assigned_to_id: item.assignedToId || null,
       assigned_to_name: item.assignedToName || null,
+    };
+
+    let { error } = await supabase.from('calendar_events').upsert({
+      ...withTeamPayload,
+      board_status: item.boardStatus || (item.completed ? 'done' : 'upcoming'),
     });
+
+    // Fallback cleanly if board_status column isn't added yet
+    if (
+      error &&
+      (error.message?.includes('board_status') || (error as any).code === 'PGRST204')
+    ) {
+      const retryTeam = await supabase.from('calendar_events').upsert(withTeamPayload);
+      error = retryTeam.error;
+    }
 
     // If team / assigned_to_* columns haven't been added yet on live Supabase, retry base payload cleanly
     if (

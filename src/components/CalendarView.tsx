@@ -57,8 +57,8 @@ export const STORE_TEAMS: StoreTeamMeta[] = [
   },
   {
     id: 'troops',
-    label: 'Scout Branches Team',
-    shortLabel: 'Scout Branches',
+    label: 'Scout Fera2 Team',
+    shortLabel: 'Scout Fera2',
     hex: '#059669',
     dotClass: 'bg-emerald-600',
     chipClass: 'bg-emerald-50 text-emerald-900 border-emerald-200 hover:bg-emerald-100',
@@ -1258,7 +1258,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                     <option value="">Select Registered Account...</option>
                     {activeAccounts.map((u) => (
                       <option key={u.id} value={u.id}>
-                        {u.name} ({u.role === 'admin' ? 'Admin' : 'Staff'})
+                        {u.name}
                       </option>
                     ))}
                   </select>

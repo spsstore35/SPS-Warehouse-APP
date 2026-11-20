@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays, Kanban } from 'lucide-react';
 import { isUserAdmin, isUserLeader } from '../utils/security';
 import {
   getNotificationPermissionState,
@@ -324,6 +324,21 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     <span className="flex items-center gap-2.5">
                       <CalendarDays className="w-4 h-4 text-indigo-600" />
                       <span>Calendar &amp; Tasks</span>
+                    </span>
+                  </button>
+
+                  {/* 3c. Team Board & People */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountSheet(false);
+                      onNavigate('board');
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-blue-950 font-bold text-xs hover:bg-blue-100 transition-colors"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Kanban className="w-4 h-4 text-blue-600" />
+                      <span>Team Board &amp; People</span>
                     </span>
                   </button>
 

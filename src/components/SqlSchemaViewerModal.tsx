@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS public.calendar_events (
     end_time TEXT,
     all_day BOOLEAN NOT NULL DEFAULT FALSE,
     completed BOOLEAN NOT NULL DEFAULT FALSE,
+    board_status TEXT,
     team TEXT,
     assigned_to_id TEXT,
     assigned_to_name TEXT,

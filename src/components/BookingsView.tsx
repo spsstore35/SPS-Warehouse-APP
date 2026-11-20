@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Booking, BookingStatus, User } from '../types/inventory';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Booking, BookingStatus, Product, User } from '../types/inventory';
 import {
   CalendarCheck,
   Plus,
@@ -31,6 +31,7 @@ import { isUserAdmin } from '../utils/security';
 
 interface BookingsViewProps {
   bookings: Booking[];
+  products?: Product[];
   currentUser: User;
   onOpenNewBookingModal: () => void;
   onEditBooking?: (booking: Booking) => void;
@@ -48,6 +49,7 @@ interface BookingsViewProps {
 
 export const BookingsView: React.FC<BookingsViewProps> = ({
   bookings,
+  products = [],
   currentUser,
   onOpenNewBookingModal,
   onEditBooking,
@@ -63,6 +65,14 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onClearSelectedBookingId,
 }) => {
   const isAdmin = isUserAdmin(currentUser);
+  const productImageById = useMemo(() => {
+    const map = new Map<string, string>();
+    products.forEach((p) => {
+      const img = p.image || p.images?.[0];
+      if (img) map.set(p.id, img);
+    });
+    return map;
+  }, [products]);
   const canAdminModifyUnpaidBooking = (b: Booking) =>
     isAdmin && b.status === 'pending' && !b.depositPaid;
   const [searchQuery, setSearchQuery] = useState('');
@@ -150,26 +160,26 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       : '';
 
     const textEn = `Hello ${clientName},
-Greetings from *Saint Paul the Apostle Scouts – Official Scout Store (SPS Warehouse)*.
+Greetings from *Scout Store (SPS Warehouse)*.
 
 This is our official Scout Store number. Through this chat, you can:
-• Track and follow up on your order progress step by step until delivery.
 • Receive your official order invoice (PDF) and full breakdown.
 • Send and confirm your payment transfers (deposit or remaining balance) directly in this chat.
+• Track and follow up on your order progress step by step until delivery.
 • Reach out anytime with any questions or inquiries — we are always happy to assist you.${orderSummaryEn}`;
 
     const orderSummaryAr = booking
       ? `\n\n📋 *تفاصيل الأوردر رقم #${booking.bookingNumber}:*\n${itemsSummary || 'طلب ملابس وأدوات كشفية.'}\n\n💰 إجمالي الطلب: ${booking.total.toFixed(2)} جنيه\n💵 العربون المطلوب (${depositPct}%): ${depositAmount.toFixed(2)} جنيه\n📦 المتبقي عند الاستلام: ${remainingAmount.toFixed(2)} جنيه`
       : '';
 
-    const textAr = `أهلاً بحضرتك أ/ ${clientName}،
-نتشرف بتواصلك مع *كشافة القديس بولس الرسول الكشفية (الاستور الكشفي)*.
+    const textAr = `أهلاً ${clientName}،
+تحياتنا من *الاستور الكشفي – كشافة القديس بولس الرسول (SPS Warehouse)*.
 
-هذا هو الرقم الرسمي للاستور الكشفي، ومن خلال هذه المحادثة يمكننا:
-• متابعة حالة الأوردر الخاص بحضرتك خطوة بخطوة حتى الاستلام.
-• إرسال الفاتورة الرسمية للأوردر وكافة التفاصيل.
-• استلام تحويلات الدفع (العربون أو باقي المبلغ) وتأكيدها مباشرة هنا في الشات.
-• الرد على أي استفسارات أو تعديلات تحتاجها في أي وقت بكل ترحاب.${orderSummaryAr}`;
+هذا هو الرقم الرسمي للاستور الكشفي. من خلال هذه المحادثة يمكنك:
+• استلام فاتورة الأوردر الرسمية (PDF) والتفاصيل الكاملة.
+• إرسال وتأكيد تحويلات الدفع (العربون أو باقي المبلغ) مباشرة في هذه المحادثة.
+• متابعة حالة الأوردر خطوة بخطوة حتى الاستلام.
+• التواصل معنا في أي وقت لأي أسئلة أو استفسارات — يسعدنا دائماً مساعدتك.${orderSummaryAr}`;
 
     const message = lang === 'ar' ? textAr : textEn;
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
@@ -1309,67 +1319,86 @@ This is our official Scout Store number. Through this chat, you can:
                 </div>
 
                 <div className="space-y-2.5">
-                  {activeBooking.items.map((it) => (
+                  {activeBooking.items.map((it) => {
+                    const itemImage = it.productImage || productImageById.get(it.productId);
+                    return (
                     <div
                       key={it.id}
-                      className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs flex flex-col gap-2.5"
+                      className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-start gap-3.5"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="text-sm sm:text-base font-black text-slate-900 leading-snug">
-                            {it.productName}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-600">
-                            <span className="font-mono text-amber-800 font-bold">{it.productSku}</span>
-                            <span>•</span>
-                            <span className="inline-flex items-center gap-1.5 font-bold">
-                              <span
-                                className="w-3 h-3 rounded-full border border-slate-300 inline-block shrink-0 shadow-2xs"
-                                style={{ backgroundColor: it.colorHex }}
-                              />
-                              <span>{it.colorName}</span>
-                            </span>
-                            <span>•</span>
-                            <span className="font-mono font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 text-xs">
-                              {!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard Size' : `Size: ${it.size}`}
-                            </span>
-                          </div>
-                        </div>
-
-                        {it.deficitQuantity > 0 ? (
-                          <div className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-1 rounded-lg shrink-0 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3 text-rose-600" />
-                            <span>Deficit: {it.deficitQuantity}</span>
-                          </div>
+                      {/* Product Photo: Visible only on Tablet & Laptop (md+), hidden on Mobile */}
+                      <div className="hidden md:flex w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden shrink-0 items-center justify-center">
+                        {itemImage ? (
+                          <img
+                            src={itemImage}
+                            alt={it.productName}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
                         ) : (
-                          <div className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg shrink-0 flex items-center gap-1">
-                            <Check className="w-3 h-3 text-emerald-600" />
-                            <span>In Stock</span>
-                          </div>
+                          <Package className="w-7 h-7 text-slate-400" />
                         )}
                       </div>
 
-                      {/* Line pricing and pieces breakdown: Clear, bold badges */}
-                      <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200/80 text-blue-950 font-black">
-                            <span className="font-mono text-sm text-blue-700">{it.quantity}</span>
-                            <span className="text-[11px] font-bold text-blue-900 uppercase">pcs</span>
-                          </span>
-                          <span className="text-slate-600 font-medium">
-                            @ <span className="font-mono font-black text-slate-900">{it.unitPrice.toFixed(2)}</span> EGP / piece
-                          </span>
+                      <div className="flex-1 min-w-0 flex flex-col gap-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="text-sm sm:text-base font-black text-slate-900 leading-snug">
+                              {it.productName}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-600">
+                              <span className="font-mono text-amber-800 font-bold">{it.productSku}</span>
+                              <span>•</span>
+                              <span className="inline-flex items-center gap-1.5 font-bold">
+                                <span
+                                  className="w-3 h-3 rounded-full border border-slate-300 inline-block shrink-0 shadow-2xs"
+                                  style={{ backgroundColor: it.colorHex }}
+                                />
+                                <span>{it.colorName}</span>
+                              </span>
+                              <span>•</span>
+                              <span className="font-mono font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 text-xs">
+                                {!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard Size' : `Size: ${it.size}`}
+                              </span>
+                            </div>
+                          </div>
+
+                          {it.deficitQuantity > 0 ? (
+                            <div className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-1 rounded-lg shrink-0 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3 text-rose-600" />
+                              <span>Deficit: {it.deficitQuantity}</span>
+                            </div>
+                          ) : (
+                            <div className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg shrink-0 flex items-center gap-1">
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span>In Stock</span>
+                            </div>
+                          )}
                         </div>
 
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-slate-400 font-semibold uppercase">Total:</span>
-                          <span className="font-mono font-black text-sm text-blue-950 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
-                            {it.totalPrice.toFixed(2)} EGP
-                          </span>
+                        {/* Line pricing and pieces breakdown: Clear, bold badges */}
+                        <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200/80 text-blue-950 font-black">
+                              <span className="font-mono text-sm text-blue-700">{it.quantity}</span>
+                              <span className="text-[11px] font-bold text-blue-900 uppercase">pcs</span>
+                            </span>
+                            <span className="text-slate-600 font-medium">
+                              @ <span className="font-mono font-black text-slate-900">{it.unitPrice.toFixed(2)}</span> EGP / piece
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-slate-400 font-semibold uppercase">Total:</span>
+                            <span className="font-mono font-black text-sm text-blue-950 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                              {it.totalPrice.toFixed(2)} EGP
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban } from 'lucide-react';
 import { isUserAdmin, isUserLeader } from '../utils/security';
 import {
   getNotificationPermissionState,
@@ -184,6 +184,21 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <CalendarDays className="w-4 h-4 text-blue-600" />
                   <span>Calendar</span>
+                </button>
+              )}
+
+              {!isLeader && (
+                <button
+                  onClick={() => onNavigate('board')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'board'
+                      ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Team Board (Upcoming, In Progress, Done) & People Directory"
+                >
+                  <Kanban className="w-4 h-4 text-indigo-600" />
+                  <span>Team Board</span>
                 </button>
               )}
 
@@ -394,6 +409,20 @@ export const Header: React.FC<HeaderProps> = ({
                           <span className="flex items-center gap-2">
                             <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
                             <span>Calendar &amp; Tasks</span>
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('board');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100/70 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <Kanban className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Team Board &amp; People</span>
                           </span>
                         </button>
 

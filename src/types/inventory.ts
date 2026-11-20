@@ -216,6 +216,8 @@ export interface Booking {
 
 export type CalendarItemType = 'event' | 'task';
 
+export type BoardColumnStatus = 'upcoming' | 'in_progress' | 'done';
+
 export type StoreTeamId =
   | 'purchases'
   | 'troops'
@@ -234,6 +236,7 @@ export interface CalendarItem {
   endTime?: string; // HH:mm
   allDay: boolean;
   completed: boolean;
+  boardStatus?: BoardColumnStatus;
   team?: StoreTeamId;
   assignedToId?: string;
   assignedToName?: string;
