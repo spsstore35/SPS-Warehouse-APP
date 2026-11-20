@@ -15,6 +15,7 @@ import {
   Booking,
   BookingItem,
   BookingStatus,
+  CalendarItem,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -790,7 +791,14 @@ export async function registerUserInDb(data: {
     created_at: newUser.createdAt,
   });
 
-  if (error) throw error;
+  if (error) {
+    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"')) {
+      throw new Error(
+        `Database enum "user_role" is missing 'leader'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; in Supabase SQL Editor.`
+      );
+    }
+    throw error;
+  }
 
   try {
     await insertAuditLogInDb({
@@ -861,7 +869,14 @@ export async function updateUserRoleInDb(
     .update(updatePayload)
     .eq('id', userId);
 
-  if (error) throw error;
+  if (error) {
+    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"')) {
+      throw new Error(
+        `Database enum "user_role" is missing 'leader'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; in Supabase SQL Editor.`
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1405,7 +1420,9 @@ export async function fetchOthersFoldersFromDb(): Promise<string[] | null> {
   }
 }
 
-export async function syncOthersFoldersToDb(folders: string[]): Promise<void> {
+export async function syncOthersFoldersToDb(
+  folders: string[]
+): Promise<{ ok: boolean; error?: string }> {
   try {
     const uniqueFolders = Array.from(
       new Set(
@@ -1423,25 +1440,167 @@ export async function syncOthersFoldersToDb(folders: string[]): Promise<void> {
 
     const { error: checkErr } = await supabase.from('others_folders').select('path').limit(1);
     if (checkErr) {
-      // Table not created yet — fail gracefully without interrupting UX
-      return;
+      return { ok: false, error: checkErr.message };
     }
 
-    const { data: existingRows } = await supabase.from('others_folders').select('path');
+    const { data: existingRows, error: fetchErr } = await supabase
+      .from('others_folders')
+      .select('path');
+    if (fetchErr) {
+      return { ok: false, error: fetchErr.message };
+    }
+
     const existingSet = new Set((existingRows || []).map((r: any) => String(r.path)));
     const targetSet = new Set(uniqueFolders);
 
     const toDelete = Array.from(existingSet).filter((p) => !targetSet.has(p));
     if (toDelete.length > 0) {
-      await supabase.from('others_folders').delete().in('path', toDelete);
+      const { error: delErr } = await supabase
+        .from('others_folders')
+        .delete()
+        .in('path', toDelete);
+      if (delErr) {
+        console.warn('Supabase others_folders delete notice:', delErr.message);
+        return { ok: false, error: delErr.message };
+      }
     }
 
     if (uniqueFolders.length > 0) {
       const payload = uniqueFolders.map((path) => ({ path }));
-      await supabase.from('others_folders').upsert(payload, { onConflict: 'path' });
+      const { error: upsertErr } = await supabase
+        .from('others_folders')
+        .upsert(payload, { onConflict: 'path' });
+
+      if (upsertErr) {
+        // Fallback if remote others_folders table was created without UNIQUE(path)
+        const toInsert = uniqueFolders.filter((p) => !existingSet.has(p));
+        if (toInsert.length > 0) {
+          const { error: insErr } = await supabase
+            .from('others_folders')
+            .insert(toInsert.map((path) => ({ path })));
+          if (insErr) {
+            console.warn('Supabase others_folders insert notice:', insErr.message);
+            return { ok: false, error: insErr.message };
+          }
+        } else {
+          console.warn('Supabase others_folders upsert notice:', upsertErr.message);
+          return { ok: false, error: upsertErr.message };
+        }
+      }
     }
+
+    return { ok: true };
   } catch (err: any) {
     console.warn('Notice syncing Others folders to Supabase:', err?.message);
+    return { ok: false, error: err?.message || 'Sync error' };
   }
 }
+
+/**
+ * CALENDAR EVENTS & TASKS
+ */
+
+export async function fetchCalendarEventsFromDb(): Promise<CalendarItem[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('calendar_events')
+      .select('*')
+      .order('start_date', { ascending: true });
+
+    if (error) {
+      // Table not created yet -> signal null so caller retains local storage seamlessly
+      return null;
+    }
+
+    if (!data) return [];
+    return data.map((row: any) => ({
+      id: String(row.id),
+      title: String(row.title || ''),
+      itemType: row.item_type === 'task' ? 'task' : 'event',
+      startDate: String(row.start_date),
+      endDate: String(row.end_date || row.start_date),
+      startTime: row.start_time || undefined,
+      endTime: row.end_time || undefined,
+      allDay: Boolean(row.all_day),
+      completed: Boolean(row.completed),
+      team: row.team || undefined,
+      assignedToId: row.assigned_to_id || undefined,
+      assignedToName: row.assigned_to_name || undefined,
+      troopGroup: row.troop_group || undefined,
+      location: row.location || undefined,
+      notes: row.notes || undefined,
+      createdById: String(row.created_by_id || ''),
+      createdByName: String(row.created_by_name || 'Staff'),
+      createdAt: String(row.created_at || new Date().toISOString()),
+      updatedAt: String(row.updated_at || new Date().toISOString()),
+    }));
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertCalendarEventToDb(
+  item: CalendarItem
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const basePayload = {
+      id: item.id,
+      title: item.title,
+      item_type: item.itemType,
+      start_date: item.startDate,
+      end_date: item.endDate || item.startDate,
+      start_time: item.allDay ? null : item.startTime || null,
+      end_time: item.allDay ? null : item.endTime || null,
+      all_day: Boolean(item.allDay),
+      completed: Boolean(item.completed),
+      troop_group: item.troopGroup || null,
+      location: item.location || null,
+      notes: item.notes || null,
+      created_by_id: item.createdById || null,
+      created_by_name: item.createdByName || 'Staff',
+      created_at: item.createdAt,
+      updated_at: item.updatedAt,
+    };
+
+    let { error } = await supabase.from('calendar_events').upsert({
+      ...basePayload,
+      team: item.team || null,
+      assigned_to_id: item.assignedToId || null,
+      assigned_to_name: item.assignedToName || null,
+    });
+
+    // If team / assigned_to_* columns haven't been added yet on live Supabase, retry base payload cleanly
+    if (
+      error &&
+      (error.message?.includes('team') ||
+        error.message?.includes('assigned_to') ||
+        (error as any).code === 'PGRST204')
+    ) {
+      const retry = await supabase.from('calendar_events').upsert(basePayload);
+      error = retry.error;
+    }
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
+  }
+}
+
+export async function deleteCalendarEventFromDb(
+  id: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { error } = await supabase.from('calendar_events').delete().eq('id', id);
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
+  }
+}
+
 

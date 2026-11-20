@@ -145,29 +145,31 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       ? Math.max(0, booking.total - depositAmount)
       : 0;
 
-    const textEn = `Hello ${clientName}, this is SPS Warehouse Store (Saint Paul Scouts).
-We have prepared your official Quotation for Order #${booking?.bookingNumber || ''}:
+    const orderSummaryEn = booking
+      ? `\n\n📋 *Order #${booking.bookingNumber} Summary:*\n${itemsSummary || 'Scout uniform & gear booking.'}\n\n💰 Total Order Value: ${booking.total.toFixed(2)} EGP\n💵 Advance Deposit (${depositPct}%): ${depositAmount.toFixed(2)} EGP\n📦 Remaining Balance on Delivery: ${remainingAmount.toFixed(2)} EGP`
+      : '';
 
-📋 ORDER SPECIFICATIONS:
-${itemsSummary || 'Standard apparel booking.'}
+    const textEn = `Hello ${clientName},
+Greetings from *Saint Paul the Apostle Scouts – Official Scout Store (SPS Warehouse)*.
 
-💰 Total Order Value: ${booking?.total.toFixed(2) || '0.00'} EGP
-💵 Advance Deposit (${depositPct}%): ${depositAmount.toFixed(2)} EGP
-📦 Remaining Balance on Delivery: ${remainingAmount.toFixed(2)} EGP
+This is our official Scout Store number. Through this chat, you can:
+• Track and follow up on your order progress step by step until delivery.
+• Receive your official order invoice (PDF) and full breakdown.
+• Send and confirm your payment transfers (deposit or remaining balance) directly in this chat.
+• Reach out anytime with any questions or inquiries — we are always happy to assist you.${orderSummaryEn}`;
 
-We are sending you the formal 1-page Quotation PDF attached. This is our official store number to stay in touch until your order is delivered.`;
+    const orderSummaryAr = booking
+      ? `\n\n📋 *تفاصيل الأوردر رقم #${booking.bookingNumber}:*\n${itemsSummary || 'طلب ملابس وأدوات كشفية.'}\n\n💰 إجمالي الطلب: ${booking.total.toFixed(2)} جنيه\n💵 العربون المطلوب (${depositPct}%): ${depositAmount.toFixed(2)} جنيه\n📦 المتبقي عند الاستلام: ${remainingAmount.toFixed(2)} جنيه`
+      : '';
 
-    const textAr = `أهلاً ${clientName}، ده رقم ستور كشافة القديس بولس الكشفية.
-تم تجهيز عرض الأسعار الرسمي (Quotation) لطلبك #${booking?.bookingNumber || ''}:
+    const textAr = `أهلاً بحضرتك أ/ ${clientName}،
+نتشرف بتواصلك مع *كشافة القديس بولس الرسول الكشفية (الاستور الكشفي)*.
 
-📋 تفاصيل الأصناف والكميات:
-${itemsSummary || 'طلب ملابس كشفية.'}
-
-💰 إجمالي الطلب: ${booking?.total.toFixed(2) || '0.00'} جنيه
-💵 المقدم المطلوب (${depositPct}%): ${depositAmount.toFixed(2)} جنيه
-📦 المتبقي عند الاستلام: ${remainingAmount.toFixed(2)} جنيه
-
-مرفق مع حضرتك ملف الـ (Quotation PDF) الرسمي للتأكيد، وده الرقم الرسمي للتواصل ومتابعة طلبك حتى الاستلام.`;
+هذا هو الرقم الرسمي للاستور الكشفي، ومن خلال هذه المحادثة يمكننا:
+• متابعة حالة الأوردر الخاص بحضرتك خطوة بخطوة حتى الاستلام.
+• إرسال الفاتورة الرسمية للأوردر وكافة التفاصيل.
+• استلام تحويلات الدفع (العربون أو باقي المبلغ) وتأكيدها مباشرة هنا في الشات.
+• الرد على أي استفسارات أو تعديلات تحتاجها في أي وقت بكل ترحاب.${orderSummaryAr}`;
 
     const message = lang === 'ar' ? textAr : textEn;
     return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
@@ -510,25 +512,58 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
           })}
         </div>
 
-        {/* Search Bar with Instant Clear */}
-        <div className="relative w-full">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by client name, booking #, or item name..."
-            className="w-full pl-10 pr-9 py-2.5 sm:py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-900 shadow-inner"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
+        {/* Search Bar + WhatsApp Language Switcher */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by client name, booking #, or item name..."
+              className="w-full pl-10 pr-9 py-2.5 sm:py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-900 shadow-inner"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between sm:justify-start gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0">
+            <span className="text-[11px] font-bold text-slate-600 pl-2 flex items-center gap-1">
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span>WhatsApp:</span>
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setWaLanguage('en')}
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+                  waLanguage === 'en'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                onClick={() => setWaLanguage('ar')}
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+                  waLanguage === 'ar'
+                    ? 'bg-white text-emerald-800 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                عربي
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -587,11 +622,11 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                             >
                               <MessageCircle className="w-3 h-3 text-emerald-600" />
                               <a
-                                href={getWhatsAppUrl(b.clientPhone, b.clientName, waLanguage)}
+                                href={getWhatsAppUrl(b.clientPhone, b.clientName, waLanguage, b)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="hover:underline font-bold"
-                                title="Chat with client on WhatsApp"
+                                title={`Chat with client on WhatsApp (${waLanguage === 'ar' ? 'Arabic' : 'English'})`}
                               >
                                 {b.clientPhone}
                               </a>
@@ -917,25 +952,25 @@ ${itemsSummary || 'طلب ملابس كشفية.'}
                       </button>
                     </div>
 
-                    {/* WhatsApp Action Button with Quotation Details & auto-open PDF */}
-                    <button
-                      type="button"
+                    {/* WhatsApp Action Link with Quotation Details & auto-open PDF */}
+                    <a
+                      href={getWhatsAppUrl(
+                        activeBooking.clientPhone,
+                        activeBooking.clientName,
+                        waLanguage,
+                        activeBooking
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       onClick={() => {
-                        const url = getWhatsAppUrl(
-                          activeBooking.clientPhone,
-                          activeBooking.clientName,
-                          waLanguage,
-                          activeBooking
-                        );
-                        window.open(url, '_blank', 'noopener,noreferrer');
                         onOpenPrintModal(activeBooking, 'quotation');
                       }}
                       className="px-4 py-2 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
                       title={`Send ${waLanguage === 'ar' ? 'Arabic' : 'English'} quotation message on WhatsApp & open PDF to attach`}
                     >
                       <MessageCircle className="w-4 h-4" />
-                      <span>WhatsApp</span>
-                    </button>
+                      <span>WhatsApp ({waLanguage === 'ar' ? 'عربي' : 'EN'})</span>
+                    </a>
                   </div>
                 )}
               </div>

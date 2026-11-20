@@ -214,3 +214,36 @@ export interface Booking {
   updatedAt: string;
 }
 
+export type CalendarItemType = 'event' | 'task';
+
+export type StoreTeamId =
+  | 'purchases'
+  | 'troops'
+  | 'inventory'
+  | 'calendar'
+  | 'marketing'
+  | 'budgeting';
+
+export interface CalendarItem {
+  id: string;
+  title: string;
+  itemType: CalendarItemType;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  startTime?: string; // HH:mm
+  endTime?: string; // HH:mm
+  allDay: boolean;
+  completed: boolean;
+  team?: StoreTeamId;
+  assignedToId?: string;
+  assignedToName?: string;
+  troopGroup?: string;
+  location?: string;
+  notes?: string;
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+

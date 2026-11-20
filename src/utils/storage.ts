@@ -1,4 +1,4 @@
-import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category, Booking } from '../types/inventory';
+import { Product, AdjustmentRequest, AuditLogEntry, User, Role, Category, Booking, CalendarItem } from '../types/inventory';
 import { INITIAL_PRODUCTS, INITIAL_REQUESTS, INITIAL_AUDIT_LOGS, INITIAL_USERS, INITIAL_CATEGORIES } from '../data/initialData';
 
 const STORAGE_KEYS = {
@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   USERS_LIST: 'wearhouse_all_accounts_v4_live',
   CATEGORIES: 'wearhouse_categories_v4_live',
   BOOKINGS: 'wearhouse_bookings_v4_live',
+  CALENDAR_EVENTS: 'wearhouse_calendar_events_v4_live',
 };
 
 export function getStoredUsers(): User[] {
@@ -295,4 +296,25 @@ export function saveStoredBookings(bookings: Booking[]): void {
     console.error('Failed to save bookings to storage:', err);
   }
 }
+
+export function getStoredCalendarEvents(): CalendarItem[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CALENDAR_EVENTS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error('Failed to load calendar events from storage:', err);
+    return [];
+  }
+}
+
+export function saveStoredCalendarEvents(items: CalendarItem[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.CALENDAR_EVENTS, JSON.stringify(items));
+  } catch (err) {
+    console.error('Failed to save calendar events to storage:', err);
+  }
+}
+
 

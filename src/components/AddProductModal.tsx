@@ -11,6 +11,7 @@ import {
 } from '../types/inventory';
 import { compressImage } from '../utils/imageCompressor';
 import { ImageCropModal } from './ImageCropModal';
+import { isUserAdmin } from '../utils/security';
 import {
   X,
   Camera,
@@ -544,7 +545,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       });
     }
 
-    const isAdmin = currentUser.role === 'admin';
+    const isAdmin = isUserAdmin(currentUser);
     const finalProduct: Product = {
       id: productToEdit ? productToEdit.id : `prod_${Date.now()}`,
       sku: finalSku,
@@ -578,22 +579,30 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     saveProductNow();
   };
 
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = isUserAdmin(currentUser);
+  const fallbackFolders = [
+    'Wegla',
+    'Pins & Badges',
+    'Wa3d',
+    'Accessories',
+    'Souvenirs',
+    'Sharat hewayat',
+    'Sharat hewayat / Ashbal',
+    'Sharat hewayat / Kashafeen',
+    'Sharat hewayat / Zahrat',
+    'Sharat hewayat / Morshedat',
+  ];
   const mergedFolderPresets = Array.from(
-    new Set([
-      'Wegla',
-      'Pins & Badges',
-      'Wa3d',
-      'Accessories',
-      'Souvenirs',
-      'Sharat hewayat',
-      'Sharat hewayat / Ashbal',
-      'Sharat hewayat / Kashafeen',
-      'Sharat hewayat / Zahrat',
-      'Sharat hewayat / Morshedat',
-      ...availableFolders,
-    ])
-  );
+    new Set(
+      (availableFolders.length > 0 ? availableFolders : fallbackFolders).map((f) =>
+        f
+          .split('/')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join(' / ')
+      )
+    )
+  ).filter(Boolean);
 
   return (
     <>

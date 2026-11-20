@@ -237,6 +237,8 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
 
   // Section 1A: KPI Metrics
   const kpiMetrics = useMemo(() => {
+    const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
     let totalRevenue = 0;
     let confirmedRevenue = 0;
     let pendingRevenue = 0;
@@ -250,17 +252,18 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
 
     dateAndBranchFilteredBookings.forEach((b) => {
       const paid = isOrderPaidOrConfirmed(b);
+      const orderTotal = Math.max(0, Number(b.total) || 0);
       const units = b.items.reduce((s, it) => s + (it.quantity || 0), 0);
-      totalRevenue += b.total || 0;
+      totalRevenue += orderTotal;
       totalUnitsSold += units;
 
       if (paid) {
-        confirmedRevenue += b.total || 0;
+        confirmedRevenue += orderTotal;
         confirmedUnits += units;
         confirmedOrdersCount += 1;
-        collectedCash += getCollectedCashForBooking(b);
+        collectedCash += Math.min(orderTotal, Math.max(0, getCollectedCashForBooking(b)));
       } else {
-        pendingRevenue += b.total || 0;
+        pendingRevenue += orderTotal;
         pendingUnits += units;
         pendingOrdersCount += 1;
       }
@@ -270,8 +273,13 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       }
     });
 
-    const receivableBalance = Math.max(0, totalRevenue - collectedCash);
-    const confirmedPct = totalRevenue > 0 ? Math.round((confirmedRevenue / totalRevenue) * 100) : 0;
+    totalRevenue = round2(totalRevenue);
+    confirmedRevenue = round2(confirmedRevenue);
+    pendingRevenue = round2(pendingRevenue);
+    collectedCash = round2(Math.min(totalRevenue, collectedCash));
+    const receivableBalance = round2(Math.max(0, totalRevenue - collectedCash));
+    const confirmedRemainingBalance = round2(Math.max(0, confirmedRevenue - collectedCash));
+    const collectedPct = totalRevenue > 0 ? Math.round((collectedCash / totalRevenue) * 100) : 0;
 
     return {
       totalRevenue,
@@ -279,7 +287,8 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       pendingRevenue,
       collectedCash,
       receivableBalance,
-      confirmedPct,
+      confirmedRemainingBalance,
+      collectedPct,
       totalUnitsSold,
       confirmedUnits,
       pendingUnits,
@@ -1061,7 +1070,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Card 1: Total Revenue (Paid/Confirmed vs Pending) */}
+          {/* Card 1: Total Revenue (Cash Collected vs Receivable = Total Revenue) */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col justify-between space-y-4">
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
@@ -1072,9 +1081,9 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                 <span className="text-sm font-bold text-slate-500">EGP</span>
               </div>
               <div className="text-[11px] font-mono tabular-nums text-slate-500 mt-1">
-                Cash Collected: <strong className="text-emerald-700">{formatCurrency(kpiMetrics.collectedCash)} EGP</strong>
+                Confirmed Orders: <strong className="text-slate-800">{formatCurrency(kpiMetrics.confirmedRevenue)} EGP</strong>
                 {' · '}
-                Receivable: <strong className="text-slate-700">{formatCurrency(kpiMetrics.receivableBalance)} EGP</strong>
+                Awaiting Deposit: <strong className="text-amber-700">{formatCurrency(kpiMetrics.pendingRevenue)} EGP</strong>
               </div>
             </div>
 
@@ -1082,25 +1091,30 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
               <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden flex">
                 <div
                   className="bg-emerald-600 h-full transition-all"
-                  style={{ width: `${kpiMetrics.confirmedPct}%` }}
+                  style={{ width: `${kpiMetrics.collectedPct}%` }}
                 />
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div>
                   <div className="text-[10px] font-bold uppercase text-emerald-700">
-                    Paid / Confirmed
+                    Cash Collected ({kpiMetrics.collectedPct}%)
                   </div>
                   <div className="font-mono tabular-nums font-black text-slate-900">
-                    {formatCurrency(kpiMetrics.confirmedRevenue)} EGP
+                    {formatCurrency(kpiMetrics.collectedCash)} EGP
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-[10px] font-bold uppercase text-amber-700">
-                    Pending Payment
+                    Receivable ({100 - kpiMetrics.collectedPct}%)
                   </div>
                   <div className="font-mono tabular-nums font-black text-slate-900">
-                    {formatCurrency(kpiMetrics.pendingRevenue)} EGP
+                    {formatCurrency(kpiMetrics.receivableBalance)} EGP
                   </div>
+                  {kpiMetrics.confirmedRemainingBalance > 0 && (
+                    <div className="text-[10px] font-mono tabular-nums text-slate-500">
+                      {formatCurrency(kpiMetrics.pendingRevenue)} + {formatCurrency(kpiMetrics.confirmedRemainingBalance)} bal.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

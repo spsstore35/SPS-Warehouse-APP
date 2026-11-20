@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3 } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays } from 'lucide-react';
 import { isUserAdmin, isUserLeader } from '../utils/security';
 import {
   getNotificationPermissionState,
@@ -38,6 +38,40 @@ export const Header: React.FC<HeaderProps> = ({
   const isLeader = isUserLeader(currentUser);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const [canSlideLeft, setCanSlideLeft] = useState(false);
+  const [canSlideRight, setCanSlideRight] = useState(false);
+
+  const updateNavScrollState = () => {
+    const el = navRef.current;
+    if (!el) return;
+    setCanSlideLeft(el.scrollLeft > 4);
+    setCanSlideRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  };
+
+  const slideNav = (direction: 'left' | 'right') => {
+    const el = navRef.current;
+    if (!el) return;
+    const step = Math.max(180, Math.round(el.clientWidth * 0.55));
+    el.scrollBy({ left: direction === 'left' ? -step : step, behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    updateNavScrollState();
+    const el = navRef.current;
+    if (!el) return;
+    const onResize = () => updateNavScrollState();
+    window.addEventListener('resize', onResize);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(onResize);
+      ro.observe(el);
+    }
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (ro) ro.disconnect();
+    };
+  }, [activeView, isAdmin, isLeader, pendingBookingsCount, pendingStockCount, pendingAccountsCount, pendingAuditNotificationsCount]);
 
   // Close profile dropdown on outside click
   useEffect(() => {
@@ -57,16 +91,16 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/90 transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-3 md:gap-6 h-14 md:h-16">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-2 md:gap-4 h-14 md:h-16">
           {/* Left spacer on mobile to keep centered brand perfectly balanced with right avatar */}
           <div className="w-9 sm:w-10 md:hidden shrink-0" aria-hidden="true" />
 
           {/* Zone 1: Brand title & logo (centered on mobile, left on desktop) */}
-          <div className="flex items-center justify-center md:justify-start gap-2.5 sm:gap-3 flex-1 md:flex-none">
+          <div className="flex items-center justify-center md:justify-start gap-2 sm:gap-2.5 flex-1 md:flex-none shrink-0">
             <button
               onClick={() => onNavigate('inventory')}
-              className="flex items-center gap-2 sm:gap-2.5 text-base sm:text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap text-left hover:text-amber-700 transition-colors"
+              className="flex items-center gap-2 sm:gap-2.5 text-base sm:text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap text-left hover:text-amber-700 transition-colors shrink-0"
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden bg-white shadow-2xs border border-slate-200/90 flex items-center justify-center p-0.5 shrink-0">
                 <img
@@ -78,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span>SPS Warehouse</span>
             </button>
             <span
-              className={`hidden sm:inline-block text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+              className={`hidden sm:inline-block text-[11px] font-bold px-2.5 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${
                 isAdmin
                   ? 'bg-amber-50 text-amber-900 border-amber-300'
                   : isLeader
@@ -90,148 +124,193 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
 
-          {/* Zone 2: Navigation Links (desktop) */}
-          <nav className="hidden md:flex items-center gap-5 text-sm font-semibold text-slate-600">
-            <button
-              onClick={() => onNavigate('inventory')}
-              className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                activeView === 'inventory' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-              }`}
+          {/* Zone 2: Horizontal Sliding Navigation Links (desktop/tablet) */}
+          <div className="hidden md:flex items-center gap-1 flex-1 min-w-0">
+            {canSlideLeft && (
+              <button
+                type="button"
+                onClick={() => slideNav('left')}
+                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 flex items-center justify-center shrink-0 transition-colors"
+                title="Slide pages left"
+                aria-label="Slide navigation left"
+              >
+                <span className="text-xs font-black leading-none" aria-hidden="true">‹</span>
+              </button>
+            )}
+
+            <nav
+              ref={navRef}
+              onScroll={updateNavScrollState}
+              className="flex items-center gap-4 lg:gap-5 overflow-x-auto scrollbar-none scroll-smooth py-1.5 px-1 flex-1 min-w-0 text-sm font-semibold text-slate-600"
             >
-              Inventory Catalog
-            </button>
-
-            {!isLeader && (
               <button
-                onClick={() => onNavigate('bookings')}
-                className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                  activeView === 'bookings'
-                    ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
-                    : ''
+                onClick={() => onNavigate('inventory')}
+                className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+                  activeView === 'inventory' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
                 }`}
-                title="Client bookings, quotations and deposit tracking"
               >
-                <CalendarCheck className="w-4 h-4 text-blue-600" />
-                <span>Bookings</span>
-                {pendingBookingsCount > 0 && (
-                  <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
-                    {pendingBookingsCount}
-                  </span>
-                )}
+                Inventory Catalog
               </button>
-            )}
 
-            {isAdmin && (
-              <>
+              {!isLeader && (
                 <button
-                  onClick={() => onNavigate('analytics')}
+                  onClick={() => onNavigate('bookings')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'analytics'
-                      ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
+                    activeView === 'bookings'
+                      ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
                       : ''
                   }`}
-                  title="Admin sales analytics, branch demand & production aggregator"
+                  title="Client bookings, quotations and deposit tracking"
                 >
-                  <BarChart3 className="w-4 h-4 text-emerald-600" />
-                  <span>Analytics</span>
-                </button>
-
-                {/* 1. Dedicated Stock Approvals */}
-                <button
-                  onClick={() => onNavigate('stock-approvals')}
-                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')
-                      ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
-                      : ''
-                  }`}
-                  title="Review pending inventory stock changes"
-                >
-                  <CheckSquare className="w-4 h-4 text-amber-600" />
-                  <span>Stock Approvals</span>
-                  {pendingStockCount > 0 && (
-                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
-                      {pendingStockCount}
+                  <CalendarCheck className="w-4 h-4 text-blue-600" />
+                  <span>Bookings</span>
+                  {pendingBookingsCount > 0 && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
+                      {pendingBookingsCount}
                     </span>
                   )}
                 </button>
+              )}
 
-                {/* 2. Dedicated Accounts Approval Front & Center */}
+              {!isLeader && (
                 <button
-                  onClick={() => onNavigate('account-approvals')}
+                  onClick={() => onNavigate('calendar')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')
-                      ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                    activeView === 'calendar'
+                      ? 'text-blue-700 font-bold border-b-2 border-blue-600 pb-0.5'
                       : ''
                   }`}
-                  title="Approve staff registration accounts"
+                  title="Store calendar events, tasks, and mobile calendar sync"
                 >
-                  <Users className="w-4 h-4 text-amber-600" />
-                  <span>Account Approvals</span>
-                  {pendingAccountsCount > 0 ? (
-                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px] animate-pulse">
-                      {pendingAccountsCount}
-                    </span>
-                  ) : null}
+                  <CalendarDays className="w-4 h-4 text-blue-600" />
+                  <span>Calendar</span>
                 </button>
+              )}
 
-                {/* 3. Add New Item */}
-                <button
-                  onClick={() => onNavigate('add-product')}
-                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                    activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                  }`}
-                >
-                  Add New Item
-                </button>
-              </>
-            )}
+              {isAdmin && (
+                <>
+                  <button
+                    onClick={() => onNavigate('analytics')}
+                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                      activeView === 'analytics'
+                        ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
+                        : ''
+                    }`}
+                    title="Admin sales analytics, branch demand & production aggregator"
+                  >
+                    <BarChart3 className="w-4 h-4 text-emerald-600" />
+                    <span>Analytics</span>
+                  </button>
 
-            {!isAdmin && !isLeader && (
-              <>
+                  {/* 1. Dedicated Stock Approvals */}
+                  <button
+                    onClick={() => onNavigate('stock-approvals')}
+                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                      activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')
+                        ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                        : ''
+                    }`}
+                    title="Review pending inventory stock changes"
+                  >
+                    <CheckSquare className="w-4 h-4 text-amber-600" />
+                    <span>Stock Approvals</span>
+                    {pendingStockCount > 0 && (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
+                        {pendingStockCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* 2. Dedicated Accounts Approval Front & Center */}
+                  <button
+                    onClick={() => onNavigate('account-approvals')}
+                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                      activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')
+                        ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                        : ''
+                    }`}
+                    title="Approve staff registration accounts"
+                  >
+                    <Users className="w-4 h-4 text-amber-600" />
+                    <span>Account Approvals</span>
+                    {pendingAccountsCount > 0 ? (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px] animate-pulse">
+                        {pendingAccountsCount}
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {/* 3. Add New Item */}
+                  <button
+                    onClick={() => onNavigate('add-product')}
+                    className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+                      activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                    }`}
+                  >
+                    Add New Item
+                  </button>
+                </>
+              )}
+
+              {!isAdmin && !isLeader && (
+                <>
+                  <button
+                    onClick={() => onNavigate('worker-requests')}
+                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                      activeView === 'worker-requests' ? 'text-sky-800 font-bold border-b-2 border-sky-600 pb-0.5' : ''
+                    }`}
+                  >
+                    <span>My Adjustment Requests</span>
+                    {pendingStockCount > 0 && (
+                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
+                        {pendingStockCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Staff can also submit new items */}
+                  <button
+                    onClick={() => onNavigate('add-product')}
+                    className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+                      activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                    }`}
+                  >
+                    + Add New Item
+                  </button>
+                </>
+              )}
+
+              {!isLeader && (
                 <button
-                  onClick={() => onNavigate('worker-requests')}
+                  onClick={() => onNavigate('audit-log')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'worker-requests' ? 'text-sky-800 font-bold border-b-2 border-sky-600 pb-0.5' : ''
+                    activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
                   }`}
                 >
-                  <span>My Adjustment Requests</span>
-                  {pendingStockCount > 0 && (
-                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
-                      {pendingStockCount}
+                  <span>Stock Audit Log</span>
+                  {pendingAuditNotificationsCount > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                      {pendingAuditNotificationsCount}
                     </span>
                   )}
                 </button>
+              )}
+            </nav>
 
-                {/* Staff can also submit new items */}
-                <button
-                  onClick={() => onNavigate('add-product')}
-                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                    activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                  }`}
-                >
-                  + Add New Item
-                </button>
-              </>
-            )}
-
-            {!isLeader && (
+            {canSlideRight && (
               <button
-                onClick={() => onNavigate('audit-log')}
-                className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                  activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                }`}
+                type="button"
+                onClick={() => slideNav('right')}
+                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 flex items-center justify-center shrink-0 transition-colors"
+                title="Slide pages right"
+                aria-label="Slide navigation right"
               >
-                <span>Stock Audit Log</span>
-                {pendingAuditNotificationsCount > 0 && (
-                  <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
-                    {pendingAuditNotificationsCount}
-                  </span>
-                )}
+                <span className="text-xs font-black leading-none" aria-hidden="true">›</span>
               </button>
             )}
-          </nav>
+          </div>
 
-          {/* Zone 3: Interactive User Profile Avatar (without mobile alert icons) */}
+          {/* Zone 3: Interactive User Profile Avatar (always pinned right, never clipped) */}
           <div className="flex items-center justify-end shrink-0">
             {/* Clickable User Avatar Initial with Popover Menu */}
             <div className="relative" ref={profileMenuRef}>
@@ -303,19 +382,35 @@ export const Header: React.FC<HeaderProps> = ({
                     </button>
 
                     {!isLeader && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          onNavigate('add-product');
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                      >
-                        <span className="flex items-center gap-2">
-                          <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
-                          <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
-                        </span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('calendar');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-blue-900 bg-blue-50/70 hover:bg-blue-100/70 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Calendar &amp; Tasks</span>
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onNavigate('add-product');
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        >
+                          <span className="flex items-center gap-2">
+                            <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
+                            <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
+                          </span>
+                        </button>
+                      </>
                     )}
 
                     {isAdmin && (

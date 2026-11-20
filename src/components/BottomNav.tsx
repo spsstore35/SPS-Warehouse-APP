@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3 } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays } from 'lucide-react';
 import { isUserAdmin, isUserLeader } from '../utils/security';
 import {
   getNotificationPermissionState,
@@ -312,6 +312,21 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     </span>
                   </button>
 
+                  {/* 3b. Store Calendar & Tasks */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountSheet(false);
+                      onNavigate('calendar');
+                    }}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 text-indigo-950 font-bold text-xs hover:bg-indigo-100 transition-colors"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <CalendarDays className="w-4 h-4 text-indigo-600" />
+                      <span>Calendar &amp; Tasks</span>
+                    </span>
+                  </button>
+
                   {/* 4. Stock Adjustment Approvals */}
                   {isAdmin ? (
                     <button
@@ -479,6 +494,28 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   </div>
                   <p className="text-xs text-slate-600 mt-0.5">
                     Create bulk client order, quotation & workshop sheet
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 3: Calendar Event / Task */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateChoiceSheet(false);
+                  onNavigate('calendar');
+                }}
+                className="w-full p-4 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50/50 hover:from-emerald-100 hover:to-teal-100/60 border border-emerald-200/90 text-left transition-all active:scale-98 flex items-center gap-3.5 shadow-2xs group"
+              >
+                <div className="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                  <CalendarDays className="w-6 h-6 stroke-[2.2]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-black text-slate-900 flex items-center justify-between">
+                    <span>Store Calendar &amp; Tasks</span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    View &amp; add scheduled events, tasks &amp; phone calendar exports
                   </p>
                 </div>
               </button>

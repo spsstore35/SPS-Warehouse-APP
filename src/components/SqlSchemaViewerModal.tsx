@@ -16,7 +16,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ENUMS
-CREATE TYPE user_role AS ENUM ('admin', 'worker');
+CREATE TYPE user_role AS ENUM ('admin', 'worker', 'leader');
 CREATE TYPE user_status AS ENUM ('active', 'pending', 'rejected');
 CREATE TYPE target_audience AS ENUM ('Men', 'Women', 'Kids', 'Unisex');
 CREATE TYPE adjustment_status AS ENUM ('pending', 'approved', 'rejected');
@@ -58,8 +58,16 @@ CREATE TABLE public.products (
     fabric_details TEXT,
     price NUMERIC(10, 2),
     image_url TEXT,
+    folder TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- OTHERS CATEGORY FOLDERS, SUB-FOLDERS & SUB-SUB-FOLDERS
+CREATE TABLE IF NOT EXISTS public.others_folders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    path TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- PRODUCT VARIANTS (SIZES & COLORS)
@@ -166,6 +174,29 @@ CREATE TABLE public.booking_items (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 8. STORE CALENDAR EVENTS & TASKS
+CREATE TABLE IF NOT EXISTS public.calendar_events (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    item_type TEXT NOT NULL DEFAULT 'event' CHECK (item_type IN ('event', 'task')),
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    start_time TEXT,
+    end_time TEXT,
+    all_day BOOLEAN NOT NULL DEFAULT FALSE,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    team TEXT,
+    assigned_to_id TEXT,
+    assigned_to_name TEXT,
+    troop_group TEXT,
+    location TEXT,
+    notes TEXT,
+    created_by_id TEXT,
+    created_by_name TEXT NOT NULL DEFAULT 'Staff',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ENABLE ROW LEVEL SECURITY
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -175,6 +206,8 @@ ALTER TABLE public.adjustment_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.booking_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.others_folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.calendar_events ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all access on categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
@@ -184,6 +217,8 @@ CREATE POLICY "Allow public all access on adjustment_requests" ON public.adjustm
 CREATE POLICY "Allow public all access on stock_audit_logs" ON public.stock_audit_logs FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on bookings" ON public.bookings FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on booking_items" ON public.booking_items FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on others_folders" ON public.others_folders FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on calendar_events" ON public.calendar_events FOR ALL USING (true) WITH CHECK (true);
 
 -- SEED DATA (ADMIN, WORKERS, CLOTHING ITEMS & VARIANTS)
 INSERT INTO public.profiles (email, password_hash, full_name, role, status, requested_role, employee_id)
