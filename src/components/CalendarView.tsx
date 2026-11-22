@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { CalendarItem, CalendarItemType, StoreTeamId, User } from '../types/inventory';
-import { getScoutFare2Meta } from '../utils/scoutFera2';
+import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   Clock,
+  Check,
   CheckCircle2,
   Circle,
   Plus,
@@ -207,13 +208,33 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 }) => {
   const todayKey = toDateKey(new Date());
 
+  const [calendarMode, setCalendarMode] = useState<'month' | 'week' | 'day'>('month');
   const [cursorMonth, setCursorMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
   const [selectedDate, setSelectedDate] = useState<string>(todayKey);
   const [filterType, setFilterType] = useState<'all' | CalendarItemType>('all');
-  const [filterTeam, setFilterTeam] = useState<'all' | StoreTeamId>('all');
+  const [selectedTeams, setSelectedTeams] = useState<StoreTeamId[]>([]);
+  const [selectedFare2, setSelectedFare2] = useState<string[]>([]);
+  const [isHoveringScoutFera2, setIsHoveringScoutFera2] = useState<boolean>(false);
+  const scoutHoverTimeoutRef = useRef<number | null>(null);
+  const openScoutFera2Hover = () => {
+    if (scoutHoverTimeoutRef.current !== null) {
+      window.clearTimeout(scoutHoverTimeoutRef.current);
+      scoutHoverTimeoutRef.current = null;
+    }
+    setIsHoveringScoutFera2(true);
+  };
+  const closeScoutFera2HoverDelayed = () => {
+    if (scoutHoverTimeoutRef.current !== null) {
+      window.clearTimeout(scoutHoverTimeoutRef.current);
+    }
+    scoutHoverTimeoutRef.current = window.setTimeout(() => {
+      setIsHoveringScoutFera2(false);
+      scoutHoverTimeoutRef.current = null;
+    }, 180);
+  };
   const [onlyAssignedToMe, setOnlyAssignedToMe] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [agendaMode, setAgendaMode] = useState<'selected_day' | 'upcoming_all'>('selected_day');
@@ -280,10 +301,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const myNameLower = (currentUser.name || '').trim().toLowerCase();
+    const fare2Set = new Set(selectedFare2.map((f) => f.toLowerCase()));
     return items
       .filter((item) => {
         if (filterType !== 'all' && item.itemType !== filterType) return false;
-        if (filterTeam !== 'all' && item.team !== filterTeam) return false;
+        if (selectedTeams.length > 0 && (!item.team || !selectedTeams.includes(item.team))) {
+          return false;
+        }
+        if (fare2Set.size > 0) {
+          const itemTroop = (item.troopGroup || '').trim().toLowerCase();
+          if (!itemTroop || !fare2Set.has(itemTroop)) return false;
+        }
         if (onlyAssignedToMe) {
           const matchesId = item.assignedToId && item.assignedToId === currentUser.id;
           const matchesName =
@@ -292,7 +320,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         }
         if (q) {
           const teamMeta = getTeamMeta(item.team);
-          const hay = `${item.title} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${teamMeta?.label || ''} ${item.assignedToName || ''}`.toLowerCase();
+          const fare2Meta = getScoutFare2Meta(item.troopGroup);
+          const hay = `${item.title} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fare2Meta?.audience || ''} ${teamMeta?.label || ''} ${item.assignedToName || ''}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
@@ -302,7 +331,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
         return (a.startTime || '').localeCompare(b.startTime || '');
       });
-  }, [items, filterType, filterTeam, onlyAssignedToMe, searchQuery, currentUser]);
+  }, [items, filterType, selectedTeams, selectedFare2, onlyAssignedToMe, searchQuery, currentUser]);
 
   // Metrics
   const stats = useMemo(() => {
@@ -331,6 +360,32 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     return counts;
   }, [items]);
 
+  // Scout Fera2 item counts
+  const fare2Counts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    items.forEach((it) => {
+      const grp = (it.troopGroup || '').trim().toLowerCase();
+      if (grp) {
+        counts[grp] = (counts[grp] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [items]);
+
+  // Toggle multi-select Store Team filter
+  const toggleTeamFilter = (teamId: StoreTeamId) => {
+    setSelectedTeams((prev) =>
+      prev.includes(teamId) ? prev.filter((id) => id !== teamId) : [...prev, teamId]
+    );
+  };
+
+  // Toggle multi-select Scout Fera2 filter (pick 1, 2, or more; empty = All)
+  const toggleFare2Filter = (fare2Id: string) => {
+    setSelectedFare2((prev) =>
+      prev.includes(fare2Id) ? prev.filter((id) => id !== fare2Id) : [...prev, fare2Id]
+    );
+  };
+
   // Build 42-day month grid
   const monthCells = useMemo(() => {
     const year = cursorMonth.getFullYear();
@@ -350,6 +405,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     }
     return cells;
   }, [cursorMonth]);
+
+  // Build 7-day week cells centered on selectedDate (Sunday -> Saturday)
+  const weekCells = useMemo(() => {
+    const base = parseDateKey(selectedDate);
+    const sunday = new Date(base.getFullYear(), base.getMonth(), base.getDate() - base.getDay());
+    const days: Array<{ dateKey: string; dayName: string; dayNum: number; monthShort: string }> = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + i);
+      days.push({
+        dateKey: toDateKey(d),
+        dayName: WEEKDAYS[d.getDay()],
+        dayNum: d.getDate(),
+        monthShort: d.toLocaleDateString('en-US', { month: 'short' }),
+      });
+    }
+    return days;
+  }, [selectedDate]);
 
   // Map items appearing on each day cell (inclusive startDate..endDate)
   const getItemsForDate = (dateKey: string): CalendarItem[] => {
@@ -382,10 +454,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setFormAllDay(false);
     setFormStartTime('10:00');
     setFormEndTime('12:00');
-    setFormTeam(filterTeam !== 'all' ? filterTeam : '');
+    setFormTeam(selectedTeams.length === 1 ? selectedTeams[0] : '');
     setFormAssignedToId('');
     setFormAssignedToName('');
-    setFormTroop('');
+    setFormTroop(selectedFare2.length === 1 ? selectedFare2[0] : '');
     setFormLocation('');
     setFormNotes('');
     setFormError('');
@@ -585,6 +657,40 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     year: 'numeric',
   });
 
+  const periodTitle = useMemo(() => {
+    if (calendarMode === 'month') return monthTitle;
+    if (calendarMode === 'week' && weekCells.length === 7) {
+      const first = parseDateKey(weekCells[0].dateKey);
+      const last = parseDateKey(weekCells[6].dateKey);
+      const firstLabel = first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const lastLabel = last.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      return `${firstLabel} – ${lastLabel}`;
+    }
+    const d = parseDateKey(selectedDate);
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }, [calendarMode, monthTitle, weekCells, selectedDate]);
+
+  const stepPeriod = (direction: -1 | 1) => {
+    if (calendarMode === 'month') {
+      setCursorMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + direction, 1));
+      return;
+    }
+    const deltaDays = calendarMode === 'week' ? direction * 7 : direction;
+    const nextKey = addDaysToDateKey(selectedDate, deltaDays);
+    const nextDate = parseDateKey(nextKey);
+    setSelectedDate(nextKey);
+    setCursorMonth(new Date(nextDate.getFullYear(), nextDate.getMonth(), 1));
+  };
+
   const formatRangeLabel = (item: CalendarItem) => {
     const sameDay = !item.endDate || item.endDate === item.startDate;
     const dateLabel = sameDay
@@ -715,15 +821,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         </div>
 
-        {/* 6 Store Teams Color Filter Bar */}
+        {/* 6 Store Teams Color Filter Bar (Default: All Teams · Multi-select supported) */}
         <div className="pt-2.5 border-t border-slate-100 flex items-center gap-2 overflow-x-auto scrollbar-none pb-0.5">
           <span className="text-xs font-bold text-slate-500 shrink-0 mr-1">Teams:</span>
 
           <button
             type="button"
-            onClick={() => setFilterTeam('all')}
+            onClick={() => {
+              setSelectedTeams([]);
+              setSelectedFare2([]);
+            }}
             className={`px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-              filterTeam === 'all'
+              selectedTeams.length === 0
                 ? 'bg-slate-900 text-white border-slate-900'
                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
             }`}
@@ -733,13 +842,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </button>
 
           {STORE_TEAMS.map((team) => {
-            const isActive = filterTeam === team.id;
+            const isActive = selectedTeams.includes(team.id);
+            const isScoutFera2Team = team.id === 'troops';
+            const showFera2Bar =
+              selectedTeams.includes('troops') || selectedFare2.length > 0 || isHoveringScoutFera2;
             return (
               <button
                 key={team.id}
                 type="button"
-                onClick={() => setFilterTeam(isActive ? 'all' : team.id)}
-                className={`px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2 ${
+                onMouseEnter={isScoutFera2Team ? openScoutFera2Hover : undefined}
+                onMouseLeave={isScoutFera2Team ? closeScoutFera2HoverDelayed : undefined}
+                onClick={() => {
+                  if (isScoutFera2Team && isActive) {
+                    setSelectedFare2([]);
+                  }
+                  toggleTeamFilter(team.id);
+                }}
+                className={`px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                   isActive ? team.activeButtonClass : team.chipClass
                 }`}
               >
@@ -751,191 +870,585 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 />
                 <span>{team.shortLabel}</span>
                 <span className="font-mono tabular-nums opacity-80">{teamCounts[team.id]}</span>
+                {isActive && <Check className="w-3 h-3 shrink-0" />}
+                {isScoutFera2Team && (
+                  <span className="text-[10px] opacity-75 ml-0.5">
+                    {showFera2Bar ? '▴' : '▾'}
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
+
+        {/* Multi-Select Scout Fera2 Filter Bar (Shown ONLY when hovering or selecting Scout Fera2) */}
+        {(selectedTeams.includes('troops') || selectedFare2.length > 0 || isHoveringScoutFera2) && (
+          <div
+            onMouseEnter={openScoutFera2Hover}
+            onMouseLeave={closeScoutFera2HoverDelayed}
+            className="pt-2.5 border-t border-slate-100 flex items-center gap-2 overflow-x-auto scrollbar-none pb-0.5 animate-in fade-in duration-150"
+          >
+            <span className="text-xs font-bold text-emerald-700 shrink-0 mr-1">Scout Fera2:</span>
+
+            <button
+              type="button"
+              onClick={() => setSelectedFare2([])}
+              className={`px-3 py-1.5 min-h-[34px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                selectedFare2.length === 0
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <span>All Fera2</span>
+            </button>
+
+            {SCOUT_FERA2_LIST.map((f) => {
+              const isActive = selectedFare2.includes(f.id);
+              const cnt = fare2Counts[f.id.toLowerCase()] || 0;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => toggleFare2Filter(f.id)}
+                  title={`${f.label} (${f.audience}) — tap to multi-select`}
+                  className={`px-2.5 py-1.5 min-h-[34px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    isActive ? f.activeButtonClass : f.chipClass
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      isActive ? 'bg-white' : f.dotClass
+                    }`}
+                  />
+                  <span>{f.label}</span>
+                  {cnt > 0 && <span className="font-mono text-[11px] opacity-80">{cnt}</span>}
+                  {isActive && <Check className="w-3 h-3 shrink-0" />}
+                </button>
+              );
+            })}
+
+            {(() => {
+              const isActive = selectedFare2.includes('Afrad');
+              const cnt = fare2Counts['afrad'] || 0;
+              return (
+                <button
+                  type="button"
+                  onClick={() => toggleFare2Filter('Afrad')}
+                  className={`px-2.5 py-1.5 min-h-[34px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    isActive
+                      ? 'bg-slate-800 text-white border-slate-800'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                  }`}
+                >
+                  <span>Afrad</span>
+                  {cnt > 0 && <span className="font-mono text-[11px] opacity-80">{cnt}</span>}
+                  {isActive && <Check className="w-3 h-3 shrink-0" />}
+                </button>
+              );
+            })()}
+
+            {(selectedTeams.length > 0 || selectedFare2.length > 0) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedTeams([]);
+                  setSelectedFare2([]);
+                }}
+                className="px-2.5 py-1.5 min-h-[34px] rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 shrink-0 cursor-pointer flex items-center gap-1"
+              >
+                <X className="w-3 h-3" />
+                <span>Reset Filters</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Main Split: Month Calendar Grid + Day / Upcoming Agenda */}
+      {/* Main Split: Calendar View (Month / Week / Day) + Day / Upcoming Agenda */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Left/Top: Month Calendar Grid */}
-        <div className="lg:col-span-7 xl:col-span-8 bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          {/* Month Controls */}
-          <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between gap-2 bg-slate-50/70">
+        {/* Left/Top: Calendar Viewport (Month, Week, or Day) */}
+        <div
+          className={`${
+            calendarMode === 'day' ? 'lg:col-span-12' : 'lg:col-span-7 xl:col-span-8'
+          } bg-white rounded-2xl border border-slate-200 overflow-hidden`}
+        >
+          {/* Calendar Top Controls: Navigation + Month/Week/Day Switcher + Today */}
+          <div className="px-4 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/70">
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() =>
-                  setCursorMonth(
-                    (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
-                  )
-                }
+                onClick={() => stepPeriod(-1)}
                 className="w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
-                aria-label="Previous month"
+                aria-label={`Previous ${calendarMode}`}
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <h2 className="text-sm sm:text-base font-black text-slate-900 px-1 min-w-[140px] text-center">
-                {monthTitle}
+                {periodTitle}
               </h2>
               <button
                 type="button"
-                onClick={() =>
-                  setCursorMonth(
-                    (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
-                  )
-                }
+                onClick={() => stepPeriod(1)}
                 className="w-10 h-10 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 flex items-center justify-center transition-colors cursor-pointer"
-                aria-label="Next month"
+                aria-label={`Next ${calendarMode}`}
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                const now = new Date();
-                setCursorMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-                setSelectedDate(todayKey);
-                setAgendaMode('selected_day');
-              }}
-              className="px-3.5 py-2 min-h-[40px] rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-xs font-bold text-slate-800 transition-colors cursor-pointer"
-            >
-              Today
-            </button>
-          </div>
-
-          {/* Weekday Headers */}
-          <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
-            {WEEKDAYS.map((day) => (
-              <div
-                key={day}
-                className="py-2 text-center text-[11px] font-bold text-slate-500"
-              >
-                {day}
+            <div className="flex items-center gap-2">
+              {/* Month | Week | Day Mode Switcher */}
+              <div className="inline-flex p-1 bg-slate-200/70 rounded-xl border border-slate-200">
+                {(['month', 'week', 'day'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setCalendarMode(mode);
+                      if (mode === 'day') setAgendaMode('selected_day');
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-colors cursor-pointer ${
+                      calendarMode === mode
+                        ? 'bg-slate-900 text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
               </div>
-            ))}
+
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date();
+                  setCursorMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                  setSelectedDate(todayKey);
+                  setAgendaMode('selected_day');
+                }}
+                className="px-3.5 py-2 min-h-[40px] rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-xs font-bold text-slate-800 transition-colors cursor-pointer"
+              >
+                Today
+              </button>
+            </div>
           </div>
 
-          {/* Calendar Cells */}
-          <div className="grid grid-cols-7 divide-x divide-y divide-slate-100">
-            {monthCells.map((cell) => {
-              const dayItems = getItemsForDate(cell.dateKey);
-              const isToday = cell.dateKey === todayKey;
-              const isSelected = cell.dateKey === selectedDate;
+          {/* MODE 1: MONTH GRID */}
+          {calendarMode === 'month' && (
+            <>
+              <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+                {WEEKDAYS.map((day) => (
+                  <div
+                    key={day}
+                    className="py-2 text-center text-[11px] font-bold text-slate-500"
+                  >
+                    {day}
+                  </div>
+                ))}
+              </div>
 
-              return (
-                <div
-                  key={cell.dateKey}
-                  onClick={() => {
-                    setSelectedDate(cell.dateKey);
-                    setAgendaMode('selected_day');
-                  }}
-                  className={`min-h-[82px] sm:min-h-[108px] p-1.5 sm:p-2 transition-colors cursor-pointer flex flex-col gap-1 ${
-                    !cell.inCurrentMonth ? 'bg-slate-50/60 text-slate-400' : 'bg-white'
-                  } ${
-                    isSelected
-                      ? 'ring-2 ring-inset ring-blue-600 bg-blue-50/20'
-                      : 'hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`w-6 h-6 rounded-lg text-xs font-mono font-bold flex items-center justify-center tabular-nums ${
-                        isToday
-                          ? 'bg-blue-600 text-white'
-                          : isSelected
-                          ? 'bg-slate-900 text-white'
-                          : cell.inCurrentMonth
-                          ? 'text-slate-800'
-                          : 'text-slate-400'
+              <div className="grid grid-cols-7 divide-x divide-y divide-slate-100">
+                {monthCells.map((cell) => {
+                  const dayItems = getItemsForDate(cell.dateKey);
+                  const isToday = cell.dateKey === todayKey;
+                  const isSelected = cell.dateKey === selectedDate;
+
+                  return (
+                    <div
+                      key={cell.dateKey}
+                      onClick={() => {
+                        setSelectedDate(cell.dateKey);
+                        setAgendaMode('selected_day');
+                      }}
+                      className={`min-h-[82px] sm:min-h-[108px] p-1.5 sm:p-2 transition-colors cursor-pointer flex flex-col gap-1 ${
+                        !cell.inCurrentMonth ? 'bg-slate-50/60 text-slate-400' : 'bg-white'
+                      } ${
+                        isSelected
+                          ? 'ring-2 ring-inset ring-blue-600 bg-blue-50/20'
+                          : 'hover:bg-slate-50'
                       }`}
                     >
-                      {cell.dayNum}
-                    </span>
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`w-6 h-6 rounded-lg text-xs font-mono font-bold flex items-center justify-center tabular-nums ${
+                            isToday
+                              ? 'bg-blue-600 text-white'
+                              : isSelected
+                              ? 'bg-slate-900 text-white'
+                              : cell.inCurrentMonth
+                              ? 'text-slate-800'
+                              : 'text-slate-400'
+                          }`}
+                        >
+                          {cell.dayNum}
+                        </span>
 
-                    {dayItems.length > 0 && (
-                      <span className="text-[10px] font-mono font-bold text-slate-400 hidden sm:inline tabular-nums">
-                        {dayItems.length}
-                      </span>
+                        {dayItems.length > 0 && (
+                          <span className="text-[10px] font-mono font-bold text-slate-400 hidden sm:inline tabular-nums">
+                            {dayItems.length}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Mobile color-coded dot indicators */}
+                      {dayItems.length > 0 && (
+                        <div className="flex sm:hidden flex-wrap gap-1 mt-0.5">
+                          {dayItems.slice(0, 4).map((it) => {
+                            const teamMeta = getTeamMeta(it.team);
+                            const dotColor = teamMeta
+                              ? teamMeta.dotClass
+                              : it.itemType === 'task'
+                              ? it.completed
+                                ? 'bg-emerald-500'
+                                : 'bg-amber-500'
+                              : 'bg-slate-700';
+                            return (
+                              <span
+                                key={it.id}
+                                className={`w-2 h-2 rounded-sm ${dotColor}`}
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Desktop/tablet color-coded event & task chips */}
+                      <div className="hidden sm:flex flex-col gap-1 overflow-hidden">
+                        {dayItems.slice(0, 2).map((it) => {
+                          const teamMeta = getTeamMeta(it.team);
+                          const chipStyle = teamMeta
+                            ? teamMeta.chipClass
+                            : it.itemType === 'task'
+                            ? it.completed
+                              ? 'bg-slate-100 text-slate-600 border-slate-200'
+                              : 'bg-slate-100 text-slate-900 border-slate-300 hover:bg-slate-200'
+                            : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100';
+
+                          return (
+                            <button
+                              key={it.id}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDetailItemId(it.id);
+                              }}
+                              className={`w-full text-left px-1.5 py-0.5 rounded-md border text-[10px] font-bold truncate transition-colors cursor-pointer flex items-center gap-1 ${chipStyle} ${
+                                it.itemType === 'task' && it.completed ? 'line-through opacity-70' : ''
+                              }`}
+                              title={`${it.title}${teamMeta ? ` · ${teamMeta.label}` : ''}${it.assignedToName ? ` · Assigned: ${it.assignedToName}` : ''}`}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-sm shrink-0 ${
+                                  teamMeta ? teamMeta.dotClass : 'bg-slate-500'
+                                }`}
+                                aria-hidden="true"
+                              />
+                              <span className="shrink-0">
+                                {it.itemType === 'task' ? (it.completed ? '✓' : '☐') : ''}
+                              </span>
+                              <span className="truncate">{it.title}</span>
+                            </button>
+                          );
+                        })}
+                        {dayItems.length > 2 && (
+                          <span className="text-[10px] font-bold text-slate-500 pl-1">
+                            +{dayItems.length - 2} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* MODE 2: WEEK VIEW (7-Day Columns) */}
+          {calendarMode === 'week' && (
+            <div className="grid grid-cols-1 sm:grid-cols-7 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+              {weekCells.map((wc) => {
+                const dayItems = getItemsForDate(wc.dateKey);
+                const isToday = wc.dateKey === todayKey;
+                const isSelected = wc.dateKey === selectedDate;
+                return (
+                  <div
+                    key={wc.dateKey}
+                    onClick={() => {
+                      setSelectedDate(wc.dateKey);
+                      setAgendaMode('selected_day');
+                    }}
+                    className={`min-h-[140px] sm:min-h-[380px] p-2.5 flex flex-col gap-2 cursor-pointer transition-colors ${
+                      isSelected ? 'bg-blue-50/25' : 'bg-white hover:bg-slate-50/70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 pb-2 border-b border-slate-100">
+                      <div className="flex items-center sm:flex-col sm:items-start gap-1.5 sm:gap-0">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          {wc.dayName}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={`px-2 py-0.5 rounded-lg text-xs font-mono font-black ${
+                              isToday
+                                ? 'bg-blue-600 text-white'
+                                : isSelected
+                                ? 'bg-slate-900 text-white'
+                                : 'text-slate-900'
+                            }`}
+                          >
+                            {wc.dayNum}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-400">
+                            {wc.monthShort}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openCreateModal(wc.dateKey, 'event');
+                        }}
+                        className="w-6 h-6 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center shrink-0"
+                        title={`Add on ${wc.monthShort} ${wc.dayNum}`}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {dayItems.length === 0 ? (
+                      <div className="text-[11px] text-slate-400 py-2 sm:py-6 text-center">
+                        Free
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {dayItems.map((it) => {
+                          const teamMeta = getTeamMeta(it.team);
+                          const fm = getScoutFare2Meta(it.troopGroup);
+                          return (
+                            <div
+                              key={it.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDetailItemId(it.id);
+                              }}
+                              className={`p-2 rounded-lg border text-[11px] space-y-1 cursor-pointer transition-colors ${
+                                teamMeta
+                                  ? teamMeta.chipClass
+                                  : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-900'
+                              }`}
+                            >
+                              <div className="flex items-start gap-1.5">
+                                {it.itemType === 'task' && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onToggleTaskComplete(it.id);
+                                    }}
+                                    className="mt-0.5 shrink-0"
+                                  >
+                                    {it.completed ? (
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    ) : (
+                                      <Circle className="w-3.5 h-3.5 text-amber-600" />
+                                    )}
+                                  </button>
+                                )}
+                                <span
+                                  className={`font-bold leading-snug line-clamp-2 ${
+                                    it.itemType === 'task' && it.completed
+                                      ? 'line-through opacity-70'
+                                      : ''
+                                  }`}
+                                >
+                                  {it.title}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1 text-[10px] opacity-85">
+                                <span>
+                                  {it.allDay ? 'All Day' : formatDisplayTime(it.startTime)}
+                                </span>
+                                {fm && (
+                                  <span
+                                    className={`px-1 py-0.2 rounded font-bold ${fm.solidBadgeClass}`}
+                                  >
+                                    {fm.label}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
+                );
+              })}
+            </div>
+          )}
 
-                  {/* Mobile color-coded dot indicators */}
-                  {dayItems.length > 0 && (
-                    <div className="flex sm:hidden flex-wrap gap-1 mt-0.5">
-                      {dayItems.slice(0, 4).map((it) => {
-                        const teamMeta = getTeamMeta(it.team);
-                        const dotColor = teamMeta
-                          ? teamMeta.dotClass
-                          : it.itemType === 'task'
-                          ? it.completed
-                            ? 'bg-emerald-500'
-                            : 'bg-amber-500'
-                          : 'bg-slate-700';
-                        return (
-                          <span
-                            key={it.id}
-                            className={`w-2 h-2 rounded-sm ${dotColor}`}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Desktop/tablet color-coded event & task chips */}
-                  <div className="hidden sm:flex flex-col gap-1 overflow-hidden">
-                    {dayItems.slice(0, 2).map((it) => {
-                      const teamMeta = getTeamMeta(it.team);
-                      const chipStyle = teamMeta
-                        ? teamMeta.chipClass
-                        : it.itemType === 'task'
-                        ? it.completed
-                          ? 'bg-slate-100 text-slate-600 border-slate-200'
-                          : 'bg-slate-100 text-slate-900 border-slate-300 hover:bg-slate-200'
-                        : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100';
-
-                      return (
-                        <button
-                          key={it.id}
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDetailItemId(it.id);
-                          }}
-                          className={`w-full text-left px-1.5 py-0.5 rounded-md border text-[10px] font-bold truncate transition-colors cursor-pointer flex items-center gap-1 ${chipStyle} ${
-                            it.itemType === 'task' && it.completed ? 'line-through opacity-70' : ''
-                          }`}
-                          title={`${it.title}${teamMeta ? ` · ${teamMeta.label}` : ''}${it.assignedToName ? ` · Assigned: ${it.assignedToName}` : ''}`}
-                        >
-                          <span
-                            className={`w-2 h-2 rounded-sm shrink-0 ${
-                              teamMeta ? teamMeta.dotClass : 'bg-slate-500'
-                            }`}
-                            aria-hidden="true"
-                          />
-                          <span className="shrink-0">
-                            {it.itemType === 'task' ? (it.completed ? '✓' : '☐') : ''}
-                          </span>
-                          <span className="truncate">{it.title}</span>
-                        </button>
-                      );
-                    })}
-                    {dayItems.length > 2 && (
-                      <span className="text-[10px] font-bold text-slate-500 pl-1">
-                        +{dayItems.length - 2} more
+          {/* MODE 3: DAY VIEW (Detailed Schedule for Selected Day) */}
+          {calendarMode === 'day' && (
+            <div className="p-4 sm:p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Daily Schedule
+                  </div>
+                  <div className="text-base sm:text-lg font-black text-slate-900">
+                    {formatDisplayDate(selectedDate)}
+                    {selectedDate === todayKey && (
+                      <span className="ml-2 px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[11px] font-bold">
+                        Today
                       </span>
                     )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openCreateModal(selectedDate, 'task')}
+                    className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-950 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <ListTodo className="w-3.5 h-3.5" />
+                    <span>+ Task</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openCreateModal(selectedDate, 'event')}
+                    className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Event</span>
+                  </button>
+                </div>
+              </div>
+
+              {selectedDayItems.length === 0 ? (
+                <div className="py-12 text-center space-y-3 border border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                  <CalendarIcon className="w-10 h-10 text-slate-300 mx-auto" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">
+                      Nothing scheduled on {formatDisplayDate(selectedDate)}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Add an event or task for this day, or adjust your active Team / Fare2 filters.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {selectedDayItems.map((item) => {
+                    const teamMeta = getTeamMeta(item.team);
+                    const fm = getScoutFare2Meta(item.troopGroup);
+                    const { dateLabel, timeLabel } = formatRangeLabel(item);
+                    const isTask = item.itemType === 'task';
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => setDetailItemId(item.id)}
+                        className={`p-4 rounded-xl border cursor-pointer transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                          teamMeta
+                            ? teamMeta.cardClass
+                            : 'bg-white border-slate-200 hover:border-slate-400'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3 min-w-0">
+                          {isTask && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleTaskComplete(item.id);
+                              }}
+                              className="mt-0.5 shrink-0 cursor-pointer"
+                            >
+                              {item.completed ? (
+                                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                              ) : (
+                                <Circle className="w-5 h-5 text-amber-600" />
+                              )}
+                            </button>
+                          )}
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                              {teamMeta && (
+                                <span
+                                  className={`font-bold flex items-center gap-1.5 ${teamMeta.textClass}`}
+                                >
+                                  <span
+                                    className={`w-2.5 h-2.5 rounded-sm shrink-0 ${teamMeta.dotClass}`}
+                                  />
+                                  <span>{teamMeta.label}</span>
+                                </span>
+                              )}
+                              {fm && (
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[11px] font-bold ${fm.solidBadgeClass}`}
+                                >
+                                  {fm.label} · {fm.audience}
+                                </span>
+                              )}
+                              {!fm && item.troopGroup && (
+                                <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-bold">
+                                  {item.troopGroup}
+                                </span>
+                              )}
+                            </div>
+                            <div
+                              className={`text-sm font-black text-slate-900 ${
+                                isTask && item.completed ? 'line-through text-slate-500' : ''
+                              }`}
+                            >
+                              {item.title}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                              <span className="font-mono font-semibold flex items-center gap-1">
+                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                <span>{timeLabel}</span>
+                              </span>
+                              {item.endDate && item.endDate !== item.startDate && (
+                                <span className="font-mono text-slate-500">{dateLabel}</span>
+                              )}
+                              {item.assignedToName && (
+                                <span className="font-semibold flex items-center gap-1">
+                                  <UserCheck className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>{item.assignedToName}</span>
+                                </span>
+                              )}
+                              {item.location && (
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>{item.location}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadIcs(item);
+                          }}
+                          className="self-start sm:self-center px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>.ics</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Right/Bottom: Selected Day & Upcoming Schedule + Tasks */}
+        {/* Right/Bottom: Selected Day & Upcoming Schedule + Tasks (Hidden in Day view to prevent duplicate daily schedule) */}
+        {calendarMode !== 'day' && (
         <div className="lg:col-span-5 xl:col-span-4 bg-white rounded-2xl border border-slate-200 overflow-hidden flex flex-col">
           <div className="p-4 border-b border-slate-200 bg-slate-50/70 space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -1136,6 +1649,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* Create / Edit Modal */}

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { Booking, Product, User } from '../types/inventory';
 import { isUserAdmin } from '../utils/security';
-import { getScoutFare2Meta } from '../utils/scoutFera2';
+import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   BarChart3,
   Download,
@@ -15,8 +15,10 @@ import {
   Shirt,
   Package,
   Users,
+  Check,
   CheckCircle2,
   Clock,
+  Calendar as CalendarIcon,
   ArrowUpDown,
   X,
 } from 'lucide-react';
@@ -154,10 +156,13 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
   // Section 2: Branch Filter inside Branch Demand
   const [selectedDemandBranch, setSelectedDemandBranch] = useState<string>('All');
 
-  // Section 3: Production Aggregator Filters
+  // Section 3: Production Aggregator Filters (Multi-select Fare2 + Date Range + Status + Shortfall)
   const [aggregatorFilter, setAggregatorFilter] = useState<AggregatorFilter>('all');
   const [aggregatorSearch, setAggregatorSearch] = useState<string>('');
   const [onlyShortfall, setOnlyShortfall] = useState<boolean>(false);
+  const [aggregatorFare2, setAggregatorFare2] = useState<string[]>([]);
+  const [aggFromDate, setAggFromDate] = useState<string>('');
+  const [aggToDate, setAggToDate] = useState<string>('');
 
   // Strict RBAC guard
   if (!isAdmin) {
@@ -593,6 +598,53 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     return branchVariantDemand.filter((b) => b.branchName === selectedDemandBranch);
   }, [branchVariantDemand, selectedDemandBranch]);
 
+  const toggleAggregatorFare2 = (fare2Id: string) => {
+    setAggregatorFare2((prev) =>
+      prev.includes(fare2Id) ? prev.filter((id) => id !== fare2Id) : [...prev, fare2Id]
+    );
+  };
+
+  // Bookings filtered specifically for Section 3 (uses aggregator date window if set, else global date range; plus multi-select Fare2)
+  const aggregatorMatchedBookings = useMemo(() => {
+    const effFrom = aggFromDate || fromDate;
+    const effTo = aggToDate || toDate;
+    const fare2Set = new Set(aggregatorFare2.map((f) => f.toLowerCase()));
+
+    return bookings.filter((b) => {
+      const orderDay = toOrderDateKey(b.createdAt);
+      if (effFrom && orderDay && orderDay < effFrom) return false;
+      if (effTo && orderDay && orderDay > effTo) return false;
+      if ((effFrom || effTo) && !orderDay) return false;
+
+      const resolvedBranch = resolveBookingBranchName(b);
+      if (fare2Set.size > 0) {
+        if (!fare2Set.has(resolvedBranch.toLowerCase())) return false;
+      } else if (branchFilter !== 'All Branches') {
+        if (branchFilter === 'Unassigned') {
+          if (resolvedBranch !== 'Unassigned') return false;
+        } else if (resolvedBranch.toLowerCase() !== branchFilter.toLowerCase()) {
+          return false;
+        }
+      }
+
+      const paid = isOrderPaidOrConfirmed(b);
+      if (aggregatorFilter === 'paid' && !paid) return false;
+      if (aggregatorFilter === 'pending_fulfillment') {
+        if (b.status !== 'pending' && b.status !== 'preparing') return false;
+      }
+      return true;
+    });
+  }, [
+    bookings,
+    aggFromDate,
+    aggToDate,
+    fromDate,
+    toDate,
+    aggregatorFare2,
+    branchFilter,
+    aggregatorFilter,
+  ]);
+
   // Section 3: Master Production & Procurement Aggregator
   const productionAggregatorRows = useMemo(() => {
     const map = new Map<
@@ -614,12 +666,8 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       }
     >();
 
-    dateAndBranchFilteredBookings.forEach((b) => {
+    aggregatorMatchedBookings.forEach((b) => {
       const paid = isOrderPaidOrConfirmed(b);
-      if (aggregatorFilter === 'paid' && !paid) return;
-      if (aggregatorFilter === 'pending_fulfillment') {
-        if (b.status !== 'pending' && b.status !== 'preparing') return;
-      }
 
       b.items.forEach((it) => {
         const sizeLabel = normalizeSizeLabel(it.size);
@@ -693,8 +741,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       })
       .sort((a, b) => b.totalNeeded - a.totalNeeded || b.netToMake - a.netToMake);
   }, [
-    dateAndBranchFilteredBookings,
-    aggregatorFilter,
+    aggregatorMatchedBookings,
     aggregatorSearch,
     onlyShortfall,
     productById,
@@ -717,8 +764,10 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
   const handleExportExcel = () => {
     try {
       const wb = XLSX.utils.book_new();
+      const effFrom = aggFromDate || fromDate;
+      const effTo = aggToDate || toDate;
       const rangeLabel =
-        fromDate || toDate ? `${fromDate || 'Start'}_to_${toDate || 'Today'}` : 'All_Time';
+        effFrom || effTo ? `${effFrom || 'Start'}_to_${effTo || 'Today'}` : 'All_Time';
       const statusLabel =
         aggregatorFilter === 'paid'
           ? 'Paid_Confirmed_Only'
@@ -843,14 +892,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       XLSX.utils.book_append_sheet(wb, wsBranch, 'Most Requested Sizes');
 
       // Sheet 4: Orders Detail (Filtered)
-      const orderSheetRows = dateAndBranchFilteredBookings
-        .filter((b) => {
-          if (aggregatorFilter === 'paid') return isOrderPaidOrConfirmed(b);
-          if (aggregatorFilter === 'pending_fulfillment') {
-            return b.status === 'pending' || b.status === 'preparing';
-          }
-          return true;
-        })
+      const orderSheetRows = aggregatorMatchedBookings
         .map((b) => ({
           'Order #': b.bookingNumber,
           Date: toOrderDateKey(b.createdAt),
@@ -938,8 +980,10 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
+    const effFrom = aggFromDate || fromDate;
+    const effTo = aggToDate || toDate;
     const rangeLabel =
-      fromDate || toDate ? `${fromDate || 'Start'}_to_${toDate || 'Today'}` : 'All_Time';
+      effFrom || effTo ? `${effFrom || 'Start'}_to_${effTo || 'Today'}` : 'All_Time';
     link.href = url;
     link.setAttribute('download', `SPS_Production_Aggregator_${rangeLabel}.csv`);
     document.body.appendChild(link);
@@ -1744,61 +1788,169 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         </div>
 
         {/* Aggregator Filter Toggle & Controls */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-2 border-t border-slate-100">
-          <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200 overflow-x-auto scrollbar-none">
-            {(
-              [
-                { id: 'all', label: 'All Orders' },
-                { id: 'paid', label: 'Paid & Confirmed Only' },
-                { id: 'pending_fulfillment', label: 'Pending Fulfillment' },
-              ] as const
-            ).map((opt) => (
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          {/* Row 1: Payment Status + Deficit Toggle + Search */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200 overflow-x-auto scrollbar-none">
+              {(
+                [
+                  { id: 'all', label: 'All Orders' },
+                  { id: 'paid', label: 'Paid & Confirmed Only' },
+                  { id: 'pending_fulfillment', label: 'Pending Fulfillment' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setAggregatorFilter(opt.id)}
+                  className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap shrink-0 min-h-[38px] ${
+                    aggregatorFilter === opt.id
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                key={opt.id}
                 type="button"
-                onClick={() => setAggregatorFilter(opt.id)}
-                className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap shrink-0 min-h-[38px] ${
-                  aggregatorFilter === opt.id
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-600 hover:text-slate-900'
+                onClick={() => setOnlyShortfall((prev) => !prev)}
+                className={`px-3 py-2 rounded-xl border text-xs font-bold transition-colors min-h-[40px] whitespace-nowrap shrink-0 ${
+                  onlyShortfall
+                    ? 'bg-rose-600 border-rose-600 text-white'
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {opt.label}
+                {onlyShortfall ? 'Showing Deficit Only' : 'Deficit / To Make Only'}
               </button>
-            ))}
+
+              <div className="relative flex-1 sm:w-56">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={aggregatorSearch}
+                  onChange={(e) => setAggregatorSearch(e.target.value)}
+                  placeholder="Search variant, size or color..."
+                  className="w-full pl-8 pr-8 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-900 focus:outline-none focus:border-slate-900 min-h-[40px]"
+                />
+                {aggregatorSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setAggregatorSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Row 2: Multi-Select Scout Fera2 Filter (Pick 1, 2, or more from the 6 teams) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1">
+              Scout Fera2:
+            </span>
             <button
               type="button"
-              onClick={() => setOnlyShortfall((prev) => !prev)}
-              className={`px-3 py-2 rounded-xl border text-xs font-bold transition-colors min-h-[40px] whitespace-nowrap shrink-0 ${
-                onlyShortfall
-                  ? 'bg-rose-600 border-rose-600 text-white'
-                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+              onClick={() => setAggregatorFare2([])}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap shrink-0 min-h-[34px] cursor-pointer ${
+                aggregatorFare2.length === 0
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
               }`}
             >
-              {onlyShortfall ? 'Showing Deficit Only' : 'Deficit / To Make Only'}
+              All Fera2
             </button>
+            {SCOUT_FERA2_LIST.map((f) => {
+              const isSelected = aggregatorFare2.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => toggleAggregatorFare2(f.id)}
+                  title={`${f.label} (${f.audience}) — click to select one or multiple Fera2`}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap shrink-0 min-h-[34px] flex items-center gap-1.5 cursor-pointer ${
+                    isSelected ? f.activeButtonClass : f.chipClass
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      isSelected ? 'bg-white' : f.dotClass
+                    }`}
+                  />
+                  <span>{f.label}</span>
+                  {isSelected && <Check className="w-3 h-3 shrink-0" />}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => toggleAggregatorFare2('Afrad')}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap shrink-0 min-h-[34px] flex items-center gap-1.5 cursor-pointer ${
+                aggregatorFare2.includes('Afrad')
+                  ? 'bg-slate-800 text-white border-slate-800'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+              }`}
+            >
+              <span>Afrad</span>
+              {aggregatorFare2.includes('Afrad') && <Check className="w-3 h-3 shrink-0" />}
+            </button>
+          </div>
 
-            <div className="relative flex-1 sm:w-56">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={aggregatorSearch}
-                onChange={(e) => setAggregatorSearch(e.target.value)}
-                placeholder="Search variant, size or color..."
-                className="w-full pl-8 pr-8 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-900 focus:outline-none focus:border-slate-900 min-h-[40px]"
-              />
-              {aggregatorSearch && (
+          {/* Row 3: Dedicated Date Range Filter (From Date -> To Date) */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1">
+                <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
+                <span>Order Date Range:</span>
+              </span>
+
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 min-h-[38px]">
+                <span className="text-[11px] font-bold text-slate-500 uppercase shrink-0">From</span>
+                <input
+                  type="date"
+                  value={aggFromDate}
+                  onChange={(e) => setAggFromDate(e.target.value)}
+                  aria-label="Aggregator From Date"
+                  className="bg-transparent text-xs font-mono font-bold text-slate-900 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 min-h-[38px]">
+                <span className="text-[11px] font-bold text-slate-500 uppercase shrink-0">To</span>
+                <input
+                  type="date"
+                  value={aggToDate}
+                  onChange={(e) => setAggToDate(e.target.value)}
+                  aria-label="Aggregator To Date"
+                  className="bg-transparent text-xs font-mono font-bold text-slate-900 focus:outline-none"
+                />
+              </div>
+
+              {(aggregatorFare2.length > 0 || aggFromDate || aggToDate) && (
                 <button
                   type="button"
-                  onClick={() => setAggregatorSearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  onClick={() => {
+                    setAggregatorFare2([]);
+                    setAggFromDate('');
+                    setAggToDate('');
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-1 min-h-[38px] cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3 h-3" />
+                  <span>Clear Aggregator Filters</span>
                 </button>
               )}
+            </div>
+
+            <div className="text-[11px] font-mono text-slate-500">
+              Matching <strong className="text-slate-900">{aggregatorMatchedBookings.length}</strong> order
+              {aggregatorMatchedBookings.length === 1 ? '' : 's'}
+              {aggregatorFare2.length > 0 ? ` · ${aggregatorFare2.join(', ')}` : ''}
             </div>
           </div>
         </div>
