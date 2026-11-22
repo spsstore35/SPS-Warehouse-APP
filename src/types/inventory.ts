@@ -11,6 +11,8 @@ export interface User {
   requestedRole?: Role;
   employeeId?: string;
   avatarColor?: string;
+  assignedTeams?: StoreTeamId[];
+  assignedFare2?: string[];
   createdAt?: string;
   approvedAt?: string;
   approvedBy?: string;
@@ -184,6 +186,9 @@ export interface Booking {
   bookingNumber: string;
   clientName: string;
   troopGroup?: string; // Ashbal, Zahrat, Kashafeen, Morshedat, 3ashera 1, 3ashera 2, Afrad
+  assignedFare2?: string; // Resolved Scout Fera2 sub-team (Ashbal..3ashera 2) for Afrad / Unassigned or specific orders
+  assignedToId?: string;
+  assignedToName?: string;
   clientPhone: string;
   notes?: string;
   items: BookingItem[];

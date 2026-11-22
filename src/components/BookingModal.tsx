@@ -1,5 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Product, ProductVariant, Booking, BookingItem, User, Role } from '../types/inventory';
+import {
+  SCOUT_FERA2_LIST,
+  getScoutFare2Meta,
+  isCoreScoutFare2,
+} from '../utils/scoutFera2';
+import { getStoredFare2Leaders } from '../utils/storage';
 import {
   X,
   Plus,
@@ -14,6 +20,8 @@ import {
   Check,
   Edit3,
   AlertCircle,
+  Users,
+  ChevronDown,
 } from 'lucide-react';
 
 const formatSizeShort = (sz?: string) =>
@@ -26,6 +34,7 @@ interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   products: Product[];
+  users?: User[];
   initialProduct?: Product;
   bookingToEdit?: Booking | null;
   currentUser: User;
@@ -87,6 +96,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
   onClose,
   products,
+  users = [],
   initialProduct,
   bookingToEdit,
   currentUser,
@@ -95,6 +105,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 }) => {
   const isUserAdmin = currentUser.role === 'admin';
   const isEditMode = Boolean(bookingToEdit);
+
+  const fare2Leaders = useMemo(() => getStoredFare2Leaders(), [isOpen]);
+  const activeMembers = useMemo(
+    () =>
+      users
+        .filter((u) => u.status === 'active' && u.role !== 'leader')
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [users]
+  );
 
   const initialEditDepositPct = bookingToEdit
     ? bookingToEdit.depositPercentage ??
@@ -109,6 +128,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     formatTitleCaseWords(bookingToEdit?.clientName || '')
   );
   const [troopGroup, setTroopGroup] = useState(bookingToEdit?.troopGroup || '');
+  const [assignedFare2, setAssignedFare2] = useState(() => {
+    if (bookingToEdit?.assignedFare2) return bookingToEdit.assignedFare2;
+    if (isCoreScoutFare2(bookingToEdit?.troopGroup)) return bookingToEdit?.troopGroup || '';
+    return '';
+  });
+  const [assignedToId, setAssignedToId] = useState(() => {
+    if (bookingToEdit?.assignedToId) return bookingToEdit.assignedToId;
+    const f = bookingToEdit?.assignedFare2 || bookingToEdit?.troopGroup || '';
+    return fare2Leaders[f]?.userId || '';
+  });
+  const [assignedToName, setAssignedToName] = useState(() => {
+    if (bookingToEdit?.assignedToName) return bookingToEdit.assignedToName;
+    const f = bookingToEdit?.assignedFare2 || bookingToEdit?.troopGroup || '';
+    return fare2Leaders[f]?.userName || '';
+  });
   const [clientPhone, setClientPhone] = useState(
     bookingToEdit?.clientPhone && bookingToEdit.clientPhone !== 'N/A' ? bookingToEdit.clientPhone : ''
   );
@@ -263,6 +297,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [isEditingPrice, setIsEditingPrice] = useState<boolean>(false);
   const [formError, setFormError] = useState<string>('');
   const [addItemError, setAddItemError] = useState<string>('');
+  const [isTroopDropdownOpen, setIsTroopDropdownOpen] = useState(false);
+  const troopDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isTroopDropdownOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (troopDropdownRef.current && !troopDropdownRef.current.contains(e.target as Node)) {
+        setIsTroopDropdownOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsTroopDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [isTroopDropdownOpen]);
 
   if (!isOpen) return null;
 
@@ -440,16 +494,31 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setFormError('Please enter client or organization name.');
       return;
     }
+    if (!troopGroup.trim() && (!isEditMode || Boolean(bookingToEdit?.troopGroup))) {
+      setFormError('Please select a Scout Fera2 / Troop Group.');
+      return;
+    }
     if (items.length === 0) {
       setFormError('Please add at least one item to this booking order.');
       return;
     }
+
+    const resolvedFare2 =
+      getScoutFare2Meta(troopGroup)?.id ||
+      getScoutFare2Meta(assignedFare2)?.id ||
+      undefined;
+    const defaultLeader = resolvedFare2 ? fare2Leaders[resolvedFare2] : undefined;
+    const finalAssignedToId = assignedToId || defaultLeader?.userId || undefined;
+    const finalAssignedToName = assignedToName.trim() || defaultLeader?.userName || undefined;
 
     if (bookingToEdit) {
       const updatedBooking: Booking = {
         ...bookingToEdit,
         clientName: normalizedClientName,
         troopGroup: troopGroup.trim() || undefined,
+        assignedFare2: resolvedFare2,
+        assignedToId: finalAssignedToId,
+        assignedToName: finalAssignedToName,
         clientPhone: clientPhone.trim() || 'N/A',
         notes: notes.trim(),
         items,
@@ -480,6 +549,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       bookingNumber,
       clientName: normalizedClientName,
       troopGroup: troopGroup.trim() || undefined,
+      assignedFare2: resolvedFare2,
+      assignedToId: finalAssignedToId,
+      assignedToName: finalAssignedToName,
       clientPhone: clientPhone.trim() || 'N/A',
       notes: notes.trim(),
       items,
@@ -589,28 +661,301 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Troop / Group Name <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  required={!isEditMode || Boolean(bookingToEdit?.troopGroup)}
-                  value={troopGroup}
-                  onChange={(e) => setTroopGroup(e.target.value)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer ${
-                    troopGroup ? 'border-slate-300 text-slate-900' : 'border-amber-300 text-slate-500 bg-amber-50/20'
-                  }`}
-                >
-                  <option value="">-- Select Troop / Group --</option>
-                  <option value="Ashbal">Ashbal</option>
-                  <option value="Zahrat">Zahrat</option>
-                  <option value="Kashafeen">Kashafeen</option>
-                  <option value="Morshedat">Morshedat</option>
-                  <option value="3ashera 1">3ashera 1</option>
-                  <option value="3ashera 2">3ashera 2</option>
-                  <option value="Afrad">Afrad</option>
-                </select>
+              {/* Unified Color-Coded Scout Fera2 / Troop Group Dropdown */}
+              <div ref={troopDropdownRef} className="relative">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Scout Fera2 / Troop Group <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                    Task Team: Scout Fera2
+                  </span>
+                </div>
+
+                {(() => {
+                  const selectedCoreMeta = getScoutFare2Meta(troopGroup);
+                  const routedMeta = getScoutFare2Meta(assignedFare2);
+                  return (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setIsTroopDropdownOpen((prev) => !prev)}
+                        className={`w-full px-3 py-2.5 rounded-xl border text-left text-xs font-bold flex items-center justify-between gap-2 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs cursor-pointer ${
+                          selectedCoreMeta
+                            ? 'bg-white border-slate-300 text-slate-900'
+                            : troopGroup
+                            ? 'bg-white border-slate-300 text-slate-900'
+                            : 'border-amber-300 text-slate-500 bg-amber-50/20'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          {selectedCoreMeta ? (
+                            <span
+                              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[11px] font-bold truncate ${selectedCoreMeta.chipClass}`}
+                            >
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${selectedCoreMeta.dotClass}`} />
+                              <span>{selectedCoreMeta.label}</span>
+                              <span className="opacity-75 font-semibold">({selectedCoreMeta.audience})</span>
+                            </span>
+                          ) : troopGroup === 'Afrad' ? (
+                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border border-slate-300 bg-slate-100 text-slate-800 text-[11px] font-bold">
+                                <span className="w-2 h-2 rounded-full bg-slate-500 shrink-0" />
+                                <span>Afrad (Not assigned to group)</span>
+                              </span>
+                              {routedMeta && (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-bold ${routedMeta.chipClass}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${routedMeta.dotClass}`} />
+                                  <span>→ {routedMeta.label}</span>
+                                </span>
+                              )}
+                            </div>
+                          ) : troopGroup ? (
+                            <span className="text-slate-900 font-bold truncate">{troopGroup}</span>
+                          ) : (
+                            <span>-- Select Scout Fera2 / Troop --</span>
+                          )}
+                        </div>
+                        <ChevronDown
+                          className={`w-4 h-4 text-slate-500 shrink-0 transition-transform ${
+                            isTroopDropdownOpen ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </button>
+
+                      {isTroopDropdownOpen && (
+                        <div className="absolute left-0 right-0 mt-1.5 z-40 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto p-1.5 space-y-1">
+                          <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            Scout Fera2 (Auto-Assigns Task)
+                          </div>
+                          {SCOUT_FERA2_LIST.map((f) => {
+                            const isSelected = troopGroup === f.id;
+                            const leader = fare2Leaders[f.id];
+                            return (
+                              <button
+                                key={f.id}
+                                type="button"
+                                onClick={() => {
+                                  setTroopGroup(f.id);
+                                  setAssignedFare2(f.id);
+                                  setAssignedToId(leader?.userId || '');
+                                  setAssignedToName(leader?.userName || '');
+                                  setIsTroopDropdownOpen(false);
+                                }}
+                                className={`w-full px-2.5 py-2 rounded-xl border text-left flex items-center justify-between gap-2 transition-colors ${
+                                  isSelected
+                                    ? f.activeButtonClass
+                                    : `${f.chipClass} hover:brightness-95`
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span
+                                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                      isSelected ? 'bg-white' : f.dotClass
+                                    }`}
+                                  />
+                                  <span className="text-xs font-extrabold">{f.label}</span>
+                                  <span className="text-[11px] font-semibold opacity-80">
+                                    ({f.audience})
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {leader?.userName && (
+                                    <span
+                                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                                        isSelected
+                                          ? 'bg-white/20 text-white'
+                                          : 'bg-white/80 text-slate-700 border border-black/10'
+                                      }`}
+                                    >
+                                      {leader.userName}
+                                    </span>
+                                  )}
+                                  {isSelected && <Check className="w-3.5 h-3.5 shrink-0" />}
+                                </div>
+                              </button>
+                            );
+                          })}
+
+                          <div className="px-2.5 pt-1.5 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400 border-t border-slate-100 mt-1">
+                            Individual / Manual Choice
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTroopGroup('Afrad');
+                              setAssignedFare2('');
+                              setAssignedToId('');
+                              setAssignedToName('');
+                              setIsTroopDropdownOpen(false);
+                            }}
+                            className={`w-full px-2.5 py-2 rounded-xl border text-left flex items-center justify-between gap-2 transition-colors ${
+                              troopGroup === 'Afrad'
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                  troopGroup === 'Afrad' ? 'bg-white' : 'bg-slate-500'
+                                }`}
+                              />
+                              <span className="text-xs font-extrabold">Afrad</span>
+                              <span className="text-[11px] font-medium opacity-80">
+                                (Not assigned to group — choose manually)
+                              </span>
+                            </div>
+                            {troopGroup === 'Afrad' && <Check className="w-3.5 h-3.5 shrink-0" />}
+                          </button>
+
+                          {isEditMode && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTroopGroup('');
+                                setAssignedFare2('');
+                                setAssignedToId('');
+                                setAssignedToName('');
+                                setIsTroopDropdownOpen(false);
+                              }}
+                              className={`w-full px-2.5 py-2 rounded-xl border text-left flex items-center justify-between gap-2 transition-colors ${
+                                !troopGroup
+                                  ? 'bg-slate-800 text-white border-slate-800'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className="text-xs font-bold">Unassigned (Choose Fare2 below)</span>
+                              {!troopGroup && <Check className="w-3.5 h-3.5 shrink-0" />}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
+
+              {/* Conditional Manual Fare2 Picker (ONLY for Afrad or Unassigned) + Compact Assigned Person */}
+              {(() => {
+                const isSpecificFare2 = isCoreScoutFare2(troopGroup);
+                const needsManualFare2 = troopGroup === 'Afrad' || (isEditMode && !troopGroup);
+                const activeFare2Meta = getScoutFare2Meta(
+                  isSpecificFare2 ? troopGroup : assignedFare2
+                );
+
+                if (!needsManualFare2 && (!activeFare2Meta || activeMembers.length === 0)) {
+                  return null;
+                }
+
+                return (
+                  <div className="sm:col-span-2 p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+                    {needsManualFare2 && (
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>
+                              {troopGroup === 'Afrad'
+                                ? 'Afrad is not assigned to a group — choose Scout Fare2 manually (or leave unassigned):'
+                                : 'Unassigned — choose Scout Fare2 manually:'}
+                            </span>
+                          </span>
+                          {assignedFare2 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAssignedFare2('');
+                                setAssignedToId('');
+                                setAssignedToName('');
+                              }}
+                              className="text-[10px] font-bold text-slate-500 hover:text-rose-600 underline"
+                            >
+                              Clear group choice
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                          {SCOUT_FERA2_LIST.map((f) => {
+                            const selected = assignedFare2 === f.id;
+                            return (
+                              <button
+                                key={f.id}
+                                type="button"
+                                onClick={() => {
+                                  if (selected) {
+                                    setAssignedFare2('');
+                                    setAssignedToId('');
+                                    setAssignedToName('');
+                                  } else {
+                                    setAssignedFare2(f.id);
+                                    const leader = fare2Leaders[f.id];
+                                    if (leader) {
+                                      setAssignedToId(leader.userId);
+                                      setAssignedToName(leader.userName);
+                                    } else {
+                                      setAssignedToId('');
+                                      setAssignedToName('');
+                                    }
+                                  }
+                                }}
+                                className={`px-2.5 py-2 rounded-lg border text-left text-[11px] font-bold flex items-center gap-1.5 transition-colors ${
+                                  selected ? f.activeButtonClass : f.chipClass
+                                }`}
+                              >
+                                <span
+                                  className={`w-2 h-2 rounded-full shrink-0 ${
+                                    selected ? 'bg-white' : f.dotClass
+                                  }`}
+                                />
+                                <span className="truncate">
+                                  {f.label} <span className="opacity-75">({f.audience})</span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {(activeFare2Meta || needsManualFare2) && activeMembers.length > 0 && (
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                        <label className="text-[11px] font-bold text-slate-700 shrink-0 flex items-center gap-1.5">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              activeFare2Meta ? activeFare2Meta.dotClass : 'bg-slate-400'
+                            }`}
+                          />
+                          <span>
+                            Assigned Person ({activeFare2Meta ? activeFare2Meta.label : 'Afrad'}):
+                          </span>
+                        </label>
+                        <select
+                          value={assignedToId}
+                          onChange={(e) => {
+                            const uid = e.target.value;
+                            setAssignedToId(uid);
+                            const m = activeMembers.find((u) => u.id === uid);
+                            setAssignedToName(m ? m.name : '');
+                          }}
+                          className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">
+                            {activeFare2Meta ? 'Auto / Unassigned' : 'Not assigned'}
+                          </option>
+                          {activeMembers.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">

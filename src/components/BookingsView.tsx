@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Booking, BookingStatus, Product, User } from '../types/inventory';
 import {
+  SCOUT_FERA2_LIST,
+  getScoutFare2Meta,
+  isCoreScoutFare2,
+} from '../utils/scoutFera2';
+import { getStoredFare2Leaders } from '../utils/storage';
+import {
   CalendarCheck,
   Plus,
   Search,
@@ -32,6 +38,7 @@ import { isUserAdmin } from '../utils/security';
 interface BookingsViewProps {
   bookings: Booking[];
   products?: Product[];
+  users?: User[];
   currentUser: User;
   onOpenNewBookingModal: () => void;
   onEditBooking?: (booking: Booking) => void;
@@ -50,6 +57,7 @@ interface BookingsViewProps {
 export const BookingsView: React.FC<BookingsViewProps> = ({
   bookings,
   products = [],
+  users = [],
   currentUser,
   onOpenNewBookingModal,
   onEditBooking,
@@ -65,6 +73,13 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onClearSelectedBookingId,
 }) => {
   const isAdmin = isUserAdmin(currentUser);
+  const activeMembers = useMemo(
+    () =>
+      users
+        .filter((u) => u.status === 'active' && u.role !== 'leader')
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [users]
+  );
   const productImageById = useMemo(() => {
     const map = new Map<string, string>();
     products.forEach((p) => {
@@ -101,12 +116,27 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   } | null>(null);
   const [isEditingTroop, setIsEditingTroop] = useState<boolean>(false);
   const [editTroopValue, setEditTroopValue] = useState<string>('');
+  const [editAssignedFare2, setEditAssignedFare2] = useState<string>('');
+  const [editAssignedToId, setEditAssignedToId] = useState<string>('');
 
   const TROOP_OPTIONS = ['Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'];
 
   useEffect(() => {
     setIsEditingTroop(false);
     setEditTroopValue('');
+    const current = bookings.find((b) => b.id === selectedBookingId);
+    if (current) {
+      const f =
+        getScoutFare2Meta(current.troopGroup)?.id ||
+        getScoutFare2Meta(current.assignedFare2)?.id ||
+        '';
+      setEditAssignedFare2(f);
+      const leaders = getStoredFare2Leaders();
+      setEditAssignedToId(current.assignedToId || (f ? leaders[f]?.userId || '' : ''));
+    } else {
+      setEditAssignedFare2('');
+      setEditAssignedToId('');
+    }
   }, [selectedBookingId]);
 
   // Helper to format clean WhatsApp URL with localized message & quotation details
@@ -361,9 +391,22 @@ This is our official Scout Store number. Through this chat, you can:
       return;
     }
 
+    const leaders = getStoredFare2Leaders();
+    const resolvedFare2 = isCoreScoutFare2(nextTroop)
+      ? nextTroop
+      : activeBooking.assignedFare2;
+    const leader = resolvedFare2 ? leaders[resolvedFare2] : undefined;
+
     const updated: Booking = {
       ...activeBooking,
       troopGroup: nextTroop,
+      assignedFare2: resolvedFare2,
+      assignedToId: isCoreScoutFare2(nextTroop)
+        ? leader?.userId || activeBooking.assignedToId
+        : activeBooking.assignedToId,
+      assignedToName: isCoreScoutFare2(nextTroop)
+        ? leader?.userName || activeBooking.assignedToName
+        : activeBooking.assignedToName,
       updatedAt: new Date().toISOString(),
     };
     if (onUpdateBooking) {
@@ -388,6 +431,34 @@ This is our official Scout Store number. Through this chat, you can:
       onShowToast(`Moved "${activeBooking.clientName}" to ${nextTroop}.`, troopLog);
     }
     setIsEditingTroop(false);
+  };
+
+  const handleSaveScoutFera2TaskAssignment = () => {
+    if (!activeBooking) return;
+    const isSpecific = isCoreScoutFare2(activeBooking.troopGroup);
+    const fare2Meta = getScoutFare2Meta(isSpecific ? activeBooking.troopGroup : editAssignedFare2);
+
+    const leaders = getStoredFare2Leaders();
+    const chosenUser = activeMembers.find((m) => m.id === editAssignedToId);
+    const defaultLeader = fare2Meta ? leaders[fare2Meta.id] : undefined;
+    const finalId = chosenUser?.id || (editAssignedToId === '' ? defaultLeader?.userId : undefined);
+    const finalName = chosenUser?.name || (editAssignedToId === '' ? defaultLeader?.userName : undefined);
+
+    const updated: Booking = {
+      ...activeBooking,
+      assignedFare2: fare2Meta?.id,
+      assignedToId: finalId,
+      assignedToName: finalName,
+      updatedAt: new Date().toISOString(),
+    };
+    onUpdateBooking?.(updated);
+    onShowToast?.(
+      fare2Meta
+        ? `Order #${activeBooking.bookingNumber} assigned to Scout Fera2 → ${fare2Meta.label}${finalName ? ` (${finalName})` : ''}.`
+        : finalName
+        ? `Order #${activeBooking.bookingNumber} assigned to ${finalName} (no group).`
+        : `Order #${activeBooking.bookingNumber} cleared from Scout Fare2 group assignment.`
+    );
   };
 
   return (
@@ -494,6 +565,7 @@ This is our official Scout Store number. Through this chat, you can:
           </span>
           {['All Troops', 'Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'].map((troop) => {
             const isSelected = troopFilter === troop;
+            const fm = getScoutFare2Meta(troop);
             const count =
               troop === 'All Troops'
                 ? bookings.length
@@ -503,16 +575,27 @@ This is our official Scout Store number. Through this chat, you can:
                 key={troop}
                 type="button"
                 onClick={() => setTroopFilter(troop)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 border ${
                   isSelected
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    ? fm
+                      ? `${fm.activeButtonClass} shadow-xs`
+                      : 'bg-slate-900 border-slate-900 text-white shadow-xs'
+                    : fm
+                    ? fm.chipClass
+                    : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
                 }`}
               >
+                {fm && (
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      isSelected ? 'bg-white' : fm.dotClass
+                    }`}
+                  />
+                )}
                 <span>{troop}</span>
                 <span
                   className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                    isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                    isSelected ? 'bg-white/20 text-white' : 'bg-white/80 text-slate-700'
                   }`}
                 >
                   {count}
@@ -620,11 +703,37 @@ This is our official Scout Store number. Through this chat, you can:
                           <h3 className="text-base sm:text-lg font-black text-slate-900 group-hover:text-blue-600 transition-colors truncate">
                             {b.clientName}
                           </h3>
-                          {b.troopGroup && (
-                            <span className="text-[11px] font-bold text-blue-800 bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-md">
-                              {b.troopGroup}
-                            </span>
-                          )}
+                          {(() => {
+                            const fm = getScoutFare2Meta(b.troopGroup);
+                            const routedFm = !fm ? getScoutFare2Meta(b.assignedFare2) : null;
+                            if (fm) {
+                              return (
+                                <span
+                                  className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${fm.solidBadgeClass}`}
+                                  title={`${fm.label} (${fm.audience})`}
+                                >
+                                  {fm.label}
+                                </span>
+                              );
+                            }
+                            return (
+                              <>
+                                {b.troopGroup && (
+                                  <span className="text-[11px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                                    {b.troopGroup}
+                                  </span>
+                                )}
+                                {routedFm && (
+                                  <span
+                                    className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${routedFm.solidBadgeClass}`}
+                                    title={`Routed to Scout Fera2 → ${routedFm.label} (${routedFm.audience})`}
+                                  >
+                                    → {routedFm.label}
+                                  </span>
+                                )}
+                              </>
+                            );
+                          })()}
                           {b.clientPhone && b.clientPhone !== 'N/A' && (
                             <span
                               onClick={(e) => e.stopPropagation()}
@@ -851,11 +960,32 @@ This is our official Scout Store number. Through this chat, you can:
                     <h2 className="text-base sm:text-xl font-black text-white truncate">
                       {activeBooking.clientName}
                     </h2>
-                    {activeBooking.troopGroup && (
-                      <span className="text-xs font-bold text-amber-300 bg-amber-950/80 border border-amber-500/40 px-2 py-0.5 rounded-md">
-                        {activeBooking.troopGroup}
-                      </span>
-                    )}
+                    {(() => {
+                      const fm = getScoutFare2Meta(activeBooking.troopGroup);
+                      const routedFm = !fm ? getScoutFare2Meta(activeBooking.assignedFare2) : null;
+                      if (fm) {
+                        return (
+                          <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-0.5 rounded-md ${fm.solidBadgeClass}`}>
+                            <span className="w-2 h-2 rounded-full bg-white/90 shrink-0" />
+                            <span>{fm.label} · {fm.audience}</span>
+                          </span>
+                        );
+                      }
+                      return (
+                        <>
+                          {activeBooking.troopGroup && (
+                            <span className="text-xs font-bold text-slate-200 bg-white/10 border border-white/20 px-2 py-0.5 rounded-md">
+                              {activeBooking.troopGroup}
+                            </span>
+                          )}
+                          {routedFm && (
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-0.5 rounded-md ${routedFm.solidBadgeClass}`}>
+                              <span>→ {routedFm.label} · {routedFm.audience}</span>
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div className="text-[11px] sm:text-xs text-slate-400 truncate flex items-center gap-1.5 mt-0.5">
                     <span>Created {new Date(activeBooking.createdAt).toLocaleDateString()}</span>
@@ -1049,6 +1179,97 @@ This is our official Scout Store number. Through this chat, you can:
                   )
                 )}
               </div>
+
+              {/* Scout Fera2 Task Routing Card (Automatic for 6 Fera2, Selectable for Afrad / Unassigned) */}
+              {(() => {
+                const isSpecific = isCoreScoutFare2(activeBooking.troopGroup);
+                const resolvedMeta = getScoutFare2Meta(
+                  isSpecific ? activeBooking.troopGroup : activeBooking.assignedFare2
+                );
+                const leaders = getStoredFare2Leaders();
+                const effectiveLeaderName =
+                  activeBooking.assignedToName ||
+                  (resolvedMeta ? leaders[resolvedMeta.id]?.userName : undefined);
+
+                return (
+                  <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 shrink-0" />
+                        <span className="text-[10px] uppercase tracking-wider font-black text-slate-500">
+                          Task Team: Scout Fera2
+                        </span>
+                        {resolvedMeta ? (
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${resolvedMeta.solidBadgeClass}`}
+                          >
+                            {resolvedMeta.label} · {resolvedMeta.audience}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                            Choose Fare2 (Afrad / Unassigned)
+                          </span>
+                        )}
+                      </div>
+
+                      {effectiveLeaderName && (
+                        <span className="text-xs font-bold text-slate-700">
+                          Assigned: <strong className="text-slate-900">{effectiveLeaderName}</strong>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      {!isSpecific && (
+                        <select
+                          value={editAssignedFare2}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditAssignedFare2(val);
+                            const l = leaders[val];
+                            if (l) setEditAssignedToId(l.userId);
+                          }}
+                          className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
+                        >
+                          <option value="">-- Not assigned to group (Afrad) --</option>
+                          {SCOUT_FERA2_LIST.map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.label} ({f.audience})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {activeMembers.length > 0 && (
+                        <select
+                          value={editAssignedToId}
+                          onChange={(e) => setEditAssignedToId(e.target.value)}
+                          className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
+                        >
+                          <option value="">
+                            {resolvedMeta && leaders[resolvedMeta.id]
+                              ? `Leader: ${leaders[resolvedMeta.id].userName}`
+                              : 'Auto / Unassigned'}
+                          </option>
+                          {activeMembers.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleSaveScoutFera2TaskAssignment}
+                        className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold min-h-[40px] shrink-0"
+                      >
+                        Save Task Assignment
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Action Cards: Quotation PDF & Workshop Sheet */}
               <div className="space-y-2.5">

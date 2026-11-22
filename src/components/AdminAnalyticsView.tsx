@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { Booking, Product, User } from '../types/inventory';
 import { isUserAdmin } from '../utils/security';
+import { getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   BarChart3,
   Download,
@@ -12,6 +13,7 @@ import {
   Layers,
   Factory,
   Shirt,
+  Package,
   Users,
   CheckCircle2,
   Clock,
@@ -61,6 +63,14 @@ const normalizeSizeLabel = (sz?: string): string => {
     return 'Standard Size';
   }
   return clean;
+};
+
+const resolveBookingBranchName = (b: Booking): string => {
+  const core = getScoutFare2Meta(b.troopGroup);
+  if (core) return core.id;
+  const routed = getScoutFare2Meta(b.assignedFare2);
+  if (routed) return routed.id;
+  return (b.troopGroup || '').trim() || 'Unassigned';
 };
 
 const isOrderPaidOrConfirmed = (b: Booking): boolean =>
@@ -196,8 +206,8 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
   const branchOptions = useMemo(() => {
     const set = new Set<string>(KNOWN_BRANCHES);
     bookings.forEach((b) => {
-      const grp = (b.troopGroup || '').trim();
-      if (grp) set.add(grp);
+      const grp = resolveBookingBranchName(b);
+      if (grp && grp !== 'Unassigned') set.add(grp);
     });
     return ['All Branches', ...Array.from(set), 'Unassigned'];
   }, [bookings]);
@@ -224,9 +234,9 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       if ((fromDate || toDate) && !orderDay) return false;
 
       if (branchFilter !== 'All Branches') {
-        const bGroup = (b.troopGroup || '').trim();
+        const bGroup = resolveBookingBranchName(b);
         if (branchFilter === 'Unassigned') {
-          if (bGroup) return false;
+          if (bGroup !== 'Unassigned') return false;
         } else if (bGroup.toLowerCase() !== branchFilter.toLowerCase()) {
           return false;
         }
@@ -457,20 +467,17 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     }));
   }, [dateAndBranchFilteredBookings, productById, productByName]);
 
-  // Section 2B: Branch-Level Variant Breakdown (Far3 -> T-Shirts & Amees)
+  // Section 2B: Most Requested Sizes by Scout Fera2 -> Sized items get individual Top-3 cards; Standard/no-size items group under "Others"
   const branchVariantDemand = useMemo(() => {
-    type Bucket = {
+    type ProductSizeBucket = {
+      productKey: string;
+      productName: string;
+      category: string;
+      group: 'tshirt' | 'amees' | 'other';
+      hasSizedVariants: boolean;
       totalUnits: number;
       sizes: Map<string, number>;
-      colors: Map<string, { qty: number; hex: string }>;
-      types: Map<string, number>;
     };
-    const makeBucket = (): Bucket => ({
-      totalUnits: 0,
-      sizes: new Map(),
-      colors: new Map(),
-      types: new Map(),
-    });
 
     const branches = new Map<
       string,
@@ -478,9 +485,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         branchName: string;
         ordersCount: number;
         totalUnits: number;
-        tshirt: Bucket;
-        amees: Bucket;
-        otherUnits: number;
+        products: Map<string, ProductSizeBucket>;
       }
     >();
 
@@ -492,9 +497,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
           branchName: clean,
           ordersCount: 0,
           totalUnits: 0,
-          tshirt: makeBucket(),
-          amees: makeBucket(),
-          otherUnits: 0,
+          products: new Map(),
         };
         branches.set(clean, entry);
       }
@@ -502,7 +505,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     };
 
     dateAndBranchFilteredBookings.forEach((b) => {
-      const branch = getOrCreateBranch(b.troopGroup || 'Unassigned');
+      const branch = getOrCreateBranch(resolveBookingBranchName(b));
       branch.ordersCount += 1;
 
       b.items.forEach((it) => {
@@ -514,29 +517,31 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
           productById.get(it.productId) ||
           productByName.get((it.productName || '').trim().toLowerCase());
         const group = classifyGarmentGroup(it.productName, catProd);
+        const catalogName = (catProd?.name || it.productName || 'Product').trim();
+        const prodKey = catProd?.id || catalogName.toLowerCase();
+        const size = normalizeSizeLabel(it.size);
+        const bookedHasSizedVariant = size !== 'Standard Size';
+        const catalogHasSizedVariants = Boolean(
+          catProd && catProd.variants.some((v) => normalizeSizeLabel(v.size) !== 'Standard Size')
+        );
 
-        if (group === 'tshirt' || group === 'amees') {
-          const target = group === 'tshirt' ? branch.tshirt : branch.amees;
-          target.totalUnits += qty;
-
-          const size = normalizeSizeLabel(it.size);
-          target.sizes.set(size, (target.sizes.get(size) || 0) + qty);
-
-          const colorName = (it.colorName || 'Standard').trim() || 'Standard';
-          const prevColor = target.colors.get(colorName) || {
-            qty: 0,
-            hex: it.colorHex || '#94a3b8',
+        let bucket = branch.products.get(prodKey);
+        if (!bucket) {
+          bucket = {
+            productKey: prodKey,
+            productName: catalogName,
+            category: catProd?.category || (group === 'tshirt' ? 'T-Shirt' : group === 'amees' ? 'Amees' : 'Gear'),
+            group,
+            hasSizedVariants: bookedHasSizedVariant || catalogHasSizedVariants,
+            totalUnits: 0,
+            sizes: new Map(),
           };
-          target.colors.set(colorName, {
-            qty: prevColor.qty + qty,
-            hex: prevColor.hex || it.colorHex || '#94a3b8',
-          });
-
-          const typeName = catProd?.name || it.productName;
-          target.types.set(typeName, (target.types.get(typeName) || 0) + qty);
-        } else {
-          branch.otherUnits += qty;
+          branch.products.set(prodKey, bucket);
+        } else if (bookedHasSizedVariant || catalogHasSizedVariants) {
+          bucket.hasSizedVariants = true;
         }
+        bucket.totalUnits += qty;
+        bucket.sizes.set(size, (bucket.sizes.get(size) || 0) + qty);
       });
     });
 
@@ -545,30 +550,34 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         .map(([label, qty]) => ({ label, qty }))
         .sort((a, b) => b.qty - a.qty);
 
-    const sortColors = (m: Map<string, { qty: number; hex: string }>) =>
-      Array.from(m.entries())
-        .map(([label, val]) => ({ label, qty: val.qty, hex: val.hex }))
-        .sort((a, b) => b.qty - a.qty);
-
     return Array.from(branches.values())
-      .map((br) => ({
-        branchName: br.branchName,
-        ordersCount: br.ordersCount,
-        totalUnits: br.totalUnits,
-        otherUnits: br.otherUnits,
-        tshirt: {
-          totalUnits: br.tshirt.totalUnits,
-          topSizes: sortEntries(br.tshirt.sizes),
-          topColors: sortColors(br.tshirt.colors),
-          topTypes: sortEntries(br.tshirt.types),
-        },
-        amees: {
-          totalUnits: br.amees.totalUnits,
-          topSizes: sortEntries(br.amees.sizes),
-          topColors: sortColors(br.amees.colors),
-          topTypes: sortEntries(br.amees.types),
-        },
-      }))
+      .map((br) => {
+        const allBuckets = Array.from(br.products.values())
+          .map((pb) => ({
+            productKey: pb.productKey,
+            productName: pb.productName,
+            category: pb.category,
+            group: pb.group,
+            hasSizedVariants: pb.hasSizedVariants,
+            totalUnits: pb.totalUnits,
+            topSizes: sortEntries(pb.sizes),
+          }))
+          .sort((a, b) => b.totalUnits - a.totalUnits || a.productName.localeCompare(b.productName));
+
+        const sizedProducts = allBuckets.filter((pb) => pb.hasSizedVariants);
+        const otherProducts = allBuckets.filter((pb) => !pb.hasSizedVariants);
+        const otherTotalUnits = otherProducts.reduce((sum, pb) => sum + pb.totalUnits, 0);
+
+        return {
+          branchName: br.branchName,
+          ordersCount: br.ordersCount,
+          totalUnits: br.totalUnits,
+          productBuckets: allBuckets,
+          sizedProducts,
+          otherProducts,
+          otherTotalUnits,
+        };
+      })
       .sort((a, b) => {
         const idxA = KNOWN_BRANCHES.indexOf(a.branchName);
         const idxB = KNOWN_BRANCHES.indexOf(b.branchName);
@@ -789,47 +798,49 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       ];
       XLSX.utils.book_append_sheet(wb, wsSales, 'Product Sales');
 
-      // Sheet 3: Branch-Level Variant Demand (Far3)
+      // Sheet 3: Most Requested Sizes (Top 3 per Sized Product + Grouped Others per Fare2)
       const branchRows: Array<Record<string, string | number>> = [];
       branchVariantDemand.forEach((br) => {
-        if (br.tshirt.totalUnits > 0) {
+        br.sizedProducts.forEach((prod) => {
           branchRows.push({
             'Scout Branch (Far3)': br.branchName,
-            'Garment Group': 'T-Shirts',
+            'Product Name': prod.productName,
+            Category: prod.category,
             'Branch Orders': br.ordersCount,
-            'Group Units Demanded': br.tshirt.totalUnits,
-            'Top Requested Sizes': br.tshirt.topSizes.map((s) => `${s.label} (${s.qty})`).join(', '),
-            'Top Requested Colors': br.tshirt.topColors.map((c) => `${c.label} (${c.qty})`).join(', '),
-            'Top Models / Types': br.tshirt.topTypes.map((t) => `${t.label} (${t.qty})`).join(', '),
+            'Units Demanded': prod.totalUnits,
+            'Top 3 Requested Sizes': prod.topSizes
+              .slice(0, 3)
+              .map((s) => `${s.label} (${s.qty})`)
+              .join(', '),
           });
-        }
-        if (br.amees.totalUnits > 0) {
+        });
+        if (br.otherProducts.length > 0) {
           branchRows.push({
             'Scout Branch (Far3)': br.branchName,
-            'Garment Group': 'Uniform Shirts (Amees)',
+            'Product Name': 'Others (Standard / No-Size Items)',
+            Category: 'Others',
             'Branch Orders': br.ordersCount,
-            'Group Units Demanded': br.amees.totalUnits,
-            'Top Requested Sizes': br.amees.topSizes.map((s) => `${s.label} (${s.qty})`).join(', '),
-            'Top Requested Colors': br.amees.topColors.map((c) => `${c.label} (${c.qty})`).join(', '),
-            'Top Models / Types': br.amees.topTypes.map((t) => `${t.label} (${t.qty})`).join(', '),
+            'Units Demanded': br.otherTotalUnits,
+            'Top 3 Requested Sizes': br.otherProducts
+              .map((op) => `${op.productName} (${op.totalUnits})`)
+              .join(', '),
           });
         }
       });
       const wsBranch = XLSX.utils.json_to_sheet(
         branchRows.length > 0
           ? branchRows
-          : [{ Message: 'No T-Shirt or Amees branch demand found for the selected filters.' }]
+          : [{ Message: 'No booked item size demand found for the selected filters.' }]
       );
       wsBranch['!cols'] = [
         { wch: 20 },
-        { wch: 24 },
+        { wch: 26 },
+        { wch: 16 },
         { wch: 14 },
-        { wch: 20 },
-        { wch: 34 },
-        { wch: 28 },
+        { wch: 16 },
         { wch: 36 },
       ];
-      XLSX.utils.book_append_sheet(wb, wsBranch, 'Branch Variant Demand');
+      XLSX.utils.book_append_sheet(wb, wsBranch, 'Most Requested Sizes');
 
       // Sheet 4: Orders Detail (Filtered)
       const orderSheetRows = dateAndBranchFilteredBookings
@@ -845,7 +856,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
           Date: toOrderDateKey(b.createdAt),
           'Client Name': b.clientName,
           Phone: b.clientPhone || 'N/A',
-          'Scout Branch (Far3)': b.troopGroup || 'Unassigned',
+          'Scout Fera2 (Far3)': resolveBookingBranchName(b),
           Status: b.status.toUpperCase(),
           'Payment Confirmed': isOrderPaidOrConfirmed(b) ? 'YES' : 'PENDING',
           'Deposit %': b.depositPercentage ?? Math.round((b.depositRate || 0.5) * 100),
@@ -1464,49 +1475,65 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
           )}
         </div>
 
-        {/* Branch-Level Variant Breakdown (Far3 -> T-Shirts & Amees) */}
+        {/* Most Requested Sizes (Connected to Bookings -> Every Product & Top 3 Sizes per Color-Coded Scout Fera2) */}
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
                 <Users className="w-4 h-4 text-blue-600" />
-                <span>Branch-Level Variant Demand (Far3)</span>
+                <span>Most Requested Sizes</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Most requested Sizes, Colors &amp; Types for <strong>T-Shirts</strong> and{' '}
-                <strong>Uniform Shirts (Amees)</strong> per branch
+                Connected directly to Bookings — Top 3 sizes purchased per catalog item for each Scout Fera2
               </p>
             </div>
           </div>
 
-          {/* Branch Filter Strip */}
+          {/* Branch Filter Strip (Color-Coded) */}
           {branchVariantDemand.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
               <button
                 type="button"
                 onClick={() => setSelectedDemandBranch('All')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 min-h-[36px] transition-colors ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 min-h-[36px] border transition-colors ${
                   selectedDemandBranch === 'All'
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    ? 'bg-slate-900 border-slate-900 text-white'
+                    : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
                 }`}
               >
                 All Branches ({branchVariantDemand.length})
               </button>
-              {branchVariantDemand.map((br) => (
-                <button
-                  key={br.branchName}
-                  type="button"
-                  onClick={() => setSelectedDemandBranch(br.branchName)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 min-h-[36px] transition-colors ${
-                    selectedDemandBranch === br.branchName
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  {br.branchName} ({br.totalUnits})
-                </button>
-              ))}
+              {branchVariantDemand.map((br) => {
+                const fm = getScoutFare2Meta(br.branchName);
+                const isSelected = selectedDemandBranch === br.branchName;
+                return (
+                  <button
+                    key={br.branchName}
+                    type="button"
+                    onClick={() => setSelectedDemandBranch(br.branchName)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap shrink-0 min-h-[36px] border transition-colors ${
+                      isSelected
+                        ? fm
+                          ? fm.activeButtonClass
+                          : 'bg-slate-900 border-slate-900 text-white'
+                        : fm
+                        ? fm.chipClass
+                        : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {fm && (
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isSelected ? 'bg-white' : fm.dotClass
+                        }`}
+                      />
+                    )}
+                    <span>
+                      {br.branchName} ({br.totalUnits})
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
 
@@ -1516,177 +1543,176 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
             </div>
           ) : (
             <div className="space-y-3.5 max-h-[680px] overflow-y-auto pr-1">
-              {visibleBranchDemand.map((br) => (
-                <div
-                  key={br.branchName}
-                  className="border border-slate-200 rounded-2xl p-4 space-y-3 bg-slate-50/40"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200">
-                    <div>
-                      <h3 className="text-sm sm:text-base font-black text-slate-900">
-                        {br.branchName}
-                      </h3>
-                      <div className="text-[11px] font-mono text-slate-500">
-                        {br.ordersCount} order{br.ordersCount === 1 ? '' : 's'} · {br.totalUnits} total pcs
-                        {br.otherUnits > 0 ? ` (${br.otherUnits} other gear pcs)` : ''}
+              {visibleBranchDemand.map((br) => {
+                const fm = getScoutFare2Meta(br.branchName);
+                return (
+                  <div
+                    key={br.branchName}
+                    style={
+                      fm
+                        ? { borderLeftWidth: '4px', borderLeftColor: fm.hex }
+                        : undefined
+                    }
+                    className="border border-slate-200 rounded-2xl p-4 space-y-3 bg-slate-50/40"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {fm && (
+                            <span
+                              className={`w-2.5 h-2.5 rounded-full shrink-0 ${fm.dotClass}`}
+                            />
+                          )}
+                          <h3 className="text-sm sm:text-base font-black text-slate-900">
+                            {br.branchName}
+                          </h3>
+                          {fm && (
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${fm.chipClass}`}
+                            >
+                              {fm.audience}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                          {br.ordersCount} order{br.ordersCount === 1 ? '' : 's'} · {br.totalUnits} total pcs
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs font-mono tabular-nums">
-                      <span className="font-bold text-blue-700">
-                        T-Shirts: {br.tshirt.totalUnits}
-                      </span>
-                      <span className="text-slate-300">|</span>
-                      <span className="font-bold text-amber-800">
-                        Amees: {br.amees.totalUnits}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* T-SHIRTS COLUMN */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                          <Shirt className="w-3.5 h-3.5 text-blue-600" />
-                          <span>T-Shirts</span>
-                        </span>
-                        <span className="font-mono tabular-nums text-xs font-black text-blue-700">
-                          {br.tshirt.totalUnits} pcs
-                        </span>
-                      </div>
-
-                      {br.tshirt.totalUnits === 0 ? (
-                        <p className="text-[11px] text-slate-400">No T-shirt orders yet.</p>
-                      ) : (
-                        <div className="space-y-2 text-[11px]">
-                          <div>
-                            <div className="font-bold text-slate-500 uppercase text-[10px]">
-                              Top Sizes
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              {br.tshirt.topSizes.slice(0, 4).map((sz) => (
-                                <div key={sz.label} className="flex justify-between font-mono tabular-nums">
-                                  <span className="text-slate-800 font-semibold">{sz.label}</span>
-                                  <span className="font-bold text-slate-900">
-                                    {sz.qty} pcs ({Math.round((sz.qty / br.tshirt.totalUnits) * 100)}%)
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="pt-1.5 border-t border-slate-100">
-                            <div className="font-bold text-slate-500 uppercase text-[10px]">
-                              Top Colors
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              {br.tshirt.topColors.slice(0, 3).map((col) => (
-                                <div key={col.label} className="flex items-center justify-between font-mono tabular-nums">
-                                  <span className="flex items-center gap-1.5 text-slate-800 font-semibold">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full border border-slate-300 shrink-0"
-                                      style={{ backgroundColor: col.hex }}
-                                    />
-                                    <span>{col.label}</span>
-                                  </span>
-                                  <span className="font-bold text-slate-900">{col.qty} pcs</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="pt-1.5 border-t border-slate-100">
-                            <div className="font-bold text-slate-500 uppercase text-[10px]">
-                              Top Types
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              {br.tshirt.topTypes.slice(0, 2).map((tp) => (
-                                <div key={tp.label} className="flex justify-between gap-2">
-                                  <span className="text-slate-700 truncate">{tp.label}</span>
-                                  <span className="font-mono tabular-nums font-bold text-slate-900 shrink-0">
-                                    {tp.qty}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                      {(br.sizedProducts.length > 0 || br.otherProducts.length > 0) && (
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums">
+                          {br.sizedProducts.map((pb, idx) => (
+                            <React.Fragment key={pb.productKey}>
+                              {idx > 0 && <span className="text-slate-300">|</span>}
+                              <span
+                                className="font-bold"
+                                style={{ color: fm?.hex || '#0f172a' }}
+                              >
+                                {pb.productName}: {pb.totalUnits}
+                              </span>
+                            </React.Fragment>
+                          ))}
+                          {br.otherProducts.length > 0 && (
+                            <>
+                              {br.sizedProducts.length > 0 && (
+                                <span className="text-slate-300">|</span>
+                              )}
+                              <span className="font-bold text-slate-600">
+                                Others: {br.otherTotalUnits}
+                              </span>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
 
-                    {/* UNIFORM SHIRTS (AMEES) COLUMN */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                          <Shirt className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Uniform Shirts (Amees)</span>
-                        </span>
-                        <span className="font-mono tabular-nums text-xs font-black text-amber-800">
-                          {br.amees.totalUnits} pcs
-                        </span>
+                    {br.productBuckets.length === 0 ? (
+                      <p className="text-xs text-slate-400">
+                        No booked items recorded for this branch yet.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Individual cards for products with size variants (Chemise, T-Shirt, etc.) */}
+                        {br.sizedProducts.map((prod) => (
+                          <div
+                            key={prod.productKey}
+                            className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-black text-slate-900 flex items-center gap-1.5 min-w-0">
+                                <Shirt
+                                  className="w-3.5 h-3.5 shrink-0"
+                                  style={{ color: fm?.hex || '#475569' }}
+                                />
+                                <span className="truncate">{prod.productName}</span>
+                              </span>
+                              <span
+                                className="font-mono tabular-nums text-xs font-black shrink-0"
+                                style={{ color: fm?.hex || '#0f172a' }}
+                              >
+                                {prod.totalUnits} pcs
+                              </span>
+                            </div>
+
+                            <div className="space-y-2 text-[11px]">
+                              <div>
+                                <div className="font-bold text-slate-500 uppercase text-[10px]">
+                                  Top 3 Sizes
+                                </div>
+                                <div className="mt-1.5 space-y-1.5">
+                                  {prod.topSizes.slice(0, 3).map((sz, idx) => (
+                                    <div
+                                      key={sz.label}
+                                      className="flex justify-between items-center font-mono tabular-nums"
+                                    >
+                                      <span className="text-slate-800 font-semibold flex items-center gap-1.5">
+                                        <span
+                                          className={`text-[10px] font-black border px-1.5 py-0.5 rounded ${
+                                            fm
+                                              ? fm.chipClass
+                                              : 'text-slate-700 bg-slate-100 border-slate-200'
+                                          }`}
+                                        >
+                                          #{idx + 1}
+                                        </span>
+                                        <span>{sz.label}</span>
+                                      </span>
+                                      <span className="font-bold text-slate-900">
+                                        {sz.qty} pcs ({Math.round((sz.qty / prod.totalUnits) * 100)}%)
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Grouped "Others" card (Box Icon) for items with no size / Standard Size */}
+                        {br.otherProducts.length > 0 && (
+                          <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-black text-slate-900 flex items-center gap-1.5 min-w-0">
+                                <Package
+                                  className="w-3.5 h-3.5 shrink-0"
+                                  style={{ color: fm?.hex || '#475569' }}
+                                />
+                                <span className="truncate">Others</span>
+                              </span>
+                              <span
+                                className="font-mono tabular-nums text-xs font-black shrink-0"
+                                style={{ color: fm?.hex || '#0f172a' }}
+                              >
+                                {br.otherTotalUnits} pcs
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5 text-[11px]">
+                              <div className="font-bold text-slate-500 uppercase text-[10px]">
+                                Standard / No-Size Items
+                              </div>
+                              <div className="space-y-1.5">
+                                {br.otherProducts.map((op) => (
+                                  <div
+                                    key={op.productKey}
+                                    className="flex justify-between items-center gap-2 font-mono tabular-nums"
+                                  >
+                                    <span className="text-slate-800 font-semibold font-sans truncate">
+                                      {op.productName}
+                                    </span>
+                                    <span className="font-bold text-slate-900 shrink-0">
+                                      {op.totalUnits} pcs
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-
-                      {br.amees.totalUnits === 0 ? (
-                        <p className="text-[11px] text-slate-400">No Amees shirt orders yet.</p>
-                      ) : (
-                        <div className="space-y-2 text-[11px]">
-                          <div>
-                            <div className="font-bold text-slate-500 uppercase text-[10px]">
-                              Top Sizes
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              {br.amees.topSizes.slice(0, 4).map((sz) => (
-                                <div key={sz.label} className="flex justify-between font-mono tabular-nums">
-                                  <span className="text-slate-800 font-semibold">{sz.label}</span>
-                                  <span className="font-bold text-slate-900">
-                                    {sz.qty} pcs ({Math.round((sz.qty / br.amees.totalUnits) * 100)}%)
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="pt-1.5 border-t border-slate-100">
-                            <div className="font-bold text-slate-500 uppercase text-[10px]">
-                              Top Colors
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              {br.amees.topColors.slice(0, 3).map((col) => (
-                                <div key={col.label} className="flex items-center justify-between font-mono tabular-nums">
-                                  <span className="flex items-center gap-1.5 text-slate-800 font-semibold">
-                                    <span
-                                      className="w-2.5 h-2.5 rounded-full border border-slate-300 shrink-0"
-                                      style={{ backgroundColor: col.hex }}
-                                    />
-                                    <span>{col.label}</span>
-                                  </span>
-                                  <span className="font-bold text-slate-900">{col.qty} pcs</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="pt-1.5 border-t border-slate-100">
-                            <div className="font-bold text-slate-500 uppercase text-[10px]">
-                              Top Types
-                            </div>
-                            <div className="mt-1 space-y-1">
-                              {br.amees.topTypes.slice(0, 2).map((tp) => (
-                                <div key={tp.label} className="flex justify-between gap-2">
-                                  <span className="text-slate-700 truncate">{tp.label}</span>
-                                  <span className="font-mono tabular-nums font-bold text-slate-900 shrink-0">
-                                    {tp.qty}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

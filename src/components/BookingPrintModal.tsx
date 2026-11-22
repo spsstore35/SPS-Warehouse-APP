@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Booking } from '../types/inventory';
+import { getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   Printer,
   Download,
@@ -108,6 +109,9 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
 
   const depositPct = booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50);
   const remainingPct = Math.max(0, 100 - depositPct);
+  const troopMeta = getScoutFare2Meta(booking.troopGroup);
+  const routedTroopMeta = !troopMeta ? getScoutFare2Meta(booking.assignedFare2) : null;
+  const activeFare2Meta = troopMeta || routedTroopMeta;
 
   return (
     <div
@@ -318,7 +322,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                       <div className="text-[11px] sm:text-xs text-slate-600 flex flex-wrap items-center gap-2.5 sm:gap-4 mt-1 font-medium">
                         <span className="flex items-center gap-1.5 font-bold text-slate-800">
                           <Phone className="w-3.5 h-3.5 text-slate-500" />
-                          <span>01212101148</span>
+                          <span>01215556301</span>
                         </span>
                         <span className="flex items-center gap-1.5 font-bold text-slate-800">
                           <Mail className="w-3.5 h-3.5 text-slate-500" />
@@ -356,12 +360,41 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     <div className="text-[10px] uppercase tracking-wider font-black text-slate-400 mb-1">
                       QUOTATION PREPARED FOR
                     </div>
-                    <div className="text-base font-black text-slate-900 flex items-center gap-2">
+                    <div className="text-base font-black text-slate-900 flex flex-wrap items-center gap-2">
                       <span>{booking.clientName}</span>
-                      {booking.troopGroup && (
-                        <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 border border-blue-200">
-                          {booking.troopGroup}
+                      {troopMeta ? (
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-md border ${troopMeta.chipClass}`}
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: troopMeta.hex }}
+                          />
+                          <span>
+                            {troopMeta.label} ({troopMeta.audience})
+                          </span>
                         </span>
+                      ) : (
+                        <>
+                          {booking.troopGroup && (
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 border border-slate-300">
+                              {booking.troopGroup}
+                            </span>
+                          )}
+                          {routedTroopMeta && (
+                            <span
+                              className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-md border ${routedTroopMeta.chipClass}`}
+                            >
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: routedTroopMeta.hex }}
+                              />
+                              <span>
+                                → {routedTroopMeta.label} ({routedTroopMeta.audience})
+                              </span>
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="text-xs text-slate-600 mt-0.5 font-medium">
@@ -594,8 +627,25 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     <div className="text-[11px] text-slate-600 font-bold mt-0.5">
                       Date Issued: {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      Client: <span className="font-bold text-slate-800">{booking.clientName}</span>
+                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center sm:justify-end gap-1.5 mt-0.5">
+                      <span>
+                        Client: <span className="font-bold text-slate-800">{booking.clientName}</span>
+                      </span>
+                      {activeFare2Meta ? (
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border ${activeFare2Meta.chipClass}`}
+                        >
+                          <span
+                            className="w-1.5 h-1.5 rounded-full shrink-0"
+                            style={{ backgroundColor: activeFare2Meta.hex }}
+                          />
+                          <span>{activeFare2Meta.label}</span>
+                        </span>
+                      ) : booking.troopGroup ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                          {booking.troopGroup}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>

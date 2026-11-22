@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   BoardColumnStatus,
   CalendarItem,
@@ -10,7 +10,13 @@ import { STORE_TEAMS, StoreTeamMeta } from './CalendarView';
 import {
   getStoredTeamDirectory,
   saveStoredTeamDirectory,
+  getStoredFare2Leaders,
+  saveStoredFare2Leaders,
+  getStoredUserFare2Map,
+  saveStoredUserFare2Map,
+  Fare2LeaderAssignment,
 } from '../utils/storage';
+import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   Kanban,
   Users,
@@ -39,6 +45,8 @@ interface TeamBoardViewProps {
   onSaveItem: (item: CalendarItem) => void;
   onDeleteItem: (id: string) => void;
   onMoveItemStatus: (id: string, nextStatus: BoardColumnStatus) => void;
+  onFare2LeaderChange?: (fare2Id: string, leader: Fare2LeaderAssignment | null) => void;
+  onUserTeamsChange?: (userId: string, assignedTeams: StoreTeamId[], assignedFare2: string[]) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -229,6 +237,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   onSaveItem,
   onDeleteItem,
   onMoveItemStatus,
+  onFare2LeaderChange,
+  onUserTeamsChange,
   onShowToast,
 }) => {
   const todayKey = useMemo(() => toDateKey(new Date()), []);
@@ -239,6 +249,25 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   // Board filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterTeam, setFilterTeam] = useState<StoreTeamId | 'all'>('all');
+  const [filterFare2, setFilterFare2] = useState<string>('all');
+  const [isHoveringScoutFera2, setIsHoveringScoutFera2] = useState(false);
+  const scoutHoverTimeoutRef = useRef<number | null>(null);
+  const openScoutFera2Hover = () => {
+    if (scoutHoverTimeoutRef.current !== null) {
+      window.clearTimeout(scoutHoverTimeoutRef.current);
+      scoutHoverTimeoutRef.current = null;
+    }
+    setIsHoveringScoutFera2(true);
+  };
+  const closeScoutFera2HoverDelayed = () => {
+    if (scoutHoverTimeoutRef.current !== null) {
+      window.clearTimeout(scoutHoverTimeoutRef.current);
+    }
+    scoutHoverTimeoutRef.current = window.setTimeout(() => {
+      setIsHoveringScoutFera2(false);
+      scoutHoverTimeoutRef.current = null;
+    }, 180);
+  };
   const [filterType, setFilterType] = useState<'all' | CalendarItemType>('all');
   const [filterMemberName, setFilterMemberName] = useState<string>('all');
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
@@ -249,6 +278,12 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   const [peopleSearch, setPeopleSearch] = useState('');
   const [teamDirectory, setTeamDirectory] = useState<Record<string, StoreTeamId[]>>(() =>
     getStoredTeamDirectory()
+  );
+  const [userFare2Map, setUserFare2Map] = useState<Record<string, string[]>>(() =>
+    getStoredUserFare2Map()
+  );
+  const [fare2Leaders, setFare2Leaders] = useState<Record<string, Fare2LeaderAssignment>>(() =>
+    getStoredFare2Leaders()
   );
 
   // Modals: Detail, Edit Confirm, Delete Confirm, Stage Confirm, Member Profile & Form
@@ -306,6 +341,11 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     return items
       .filter((item) => {
         if (filterTeam !== 'all' && item.team !== filterTeam) return false;
+        if (filterFare2 !== 'all') {
+          if ((item.troopGroup || '').trim().toLowerCase() !== filterFare2.toLowerCase()) {
+            return false;
+          }
+        }
         if (filterType !== 'all' && item.itemType !== filterType) return false;
         if (filterMemberName !== 'all') {
           const itemAssignee = (item.assignedToName || '').trim().toLowerCase();
@@ -313,13 +353,20 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
         }
         if (q) {
           const teamMeta = getTeamMeta(item.team);
-          const hay = `${item.title} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${teamMeta?.label || ''} ${item.assignedToName || ''}`.toLowerCase();
+          const fare2Meta = getScoutFare2Meta(item.troopGroup);
+          const matchedAssignee = activeMembers.find(
+            (u) =>
+              (item.assignedToId && u.id === item.assignedToId) ||
+              (item.assignedToName &&
+                u.name.trim().toLowerCase() === item.assignedToName.trim().toLowerCase())
+          );
+          const hay = `${item.title} ${item.itemType} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fare2Meta?.audience || ''} ${teamMeta?.label || ''} ${item.assignedToName || ''} ${matchedAssignee?.name || ''} ${matchedAssignee?.email || ''}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
       })
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [items, filterTeam, filterType, filterMemberName, searchQuery]);
+  }, [items, filterTeam, filterFare2, filterType, filterMemberName, searchQuery, activeMembers]);
 
   const itemsByColumn = useMemo(() => {
     const grouped: Record<BoardColumnStatus, CalendarItem[]> = {
@@ -338,12 +385,17 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     [items, detailItemId]
   );
 
-  // Build effective teams per user (explicitly saved in directory OR inferred from assigned items)
+  // Build effective teams per user (saved in profile/directory OR inferred from assigned items/fare2 leaders)
   const effectiveUserTeams = useMemo(() => {
     const map = new Map<string, Set<StoreTeamId>>();
     activeMembers.forEach((u) => {
-      const saved = teamDirectory[u.id] || [];
+      const saved = teamDirectory[u.id] ?? u.assignedTeams ?? [];
       map.set(u.id, new Set(saved));
+    });
+    Object.values(fare2Leaders).forEach((leader) => {
+      if (leader?.userId && map.has(leader.userId)) {
+        map.get(leader.userId)?.add('troops');
+      }
     });
     items.forEach((it) => {
       if (!it.team) return;
@@ -358,34 +410,140 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       }
     });
     return map;
-  }, [activeMembers, teamDirectory, items]);
+  }, [activeMembers, teamDirectory, fare2Leaders, items]);
+
+  // Build effective Scout Fare2 assignments per user (saved in profile/localStorage OR leader assignment)
+  const effectiveUserFare2 = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    activeMembers.forEach((u) => {
+      const saved = userFare2Map[u.id] ?? u.assignedFare2 ?? [];
+      map.set(u.id, new Set(saved));
+    });
+    Object.entries(fare2Leaders).forEach(([fare2Id, leader]) => {
+      if (leader?.userId && map.has(leader.userId)) {
+        map.get(leader.userId)?.add(fare2Id);
+      }
+    });
+    return map;
+  }, [activeMembers, userFare2Map, fare2Leaders]);
 
   const toggleUserTeam = (userId: string, teamId: StoreTeamId) => {
-    setTeamDirectory((prev) => {
-      const current = new Set(prev[userId] || effectiveUserTeams.get(userId) || []);
-      if (current.has(teamId)) {
-        current.delete(teamId);
-      } else {
-        current.add(teamId);
-      }
-      const next = { ...prev, [userId]: Array.from(current) };
-      saveStoredTeamDirectory(next);
-      return next;
-    });
+    const currentTeams = new Set(teamDirectory[userId] ?? Array.from(effectiveUserTeams.get(userId) || []));
+    const wasRemoved = currentTeams.has(teamId);
+    if (wasRemoved) {
+      currentTeams.delete(teamId);
+    } else {
+      currentTeams.add(teamId);
+    }
+    const nextTeamsList = Array.from(currentTeams);
+    const nextDir = { ...teamDirectory, [userId]: nextTeamsList };
+    setTeamDirectory(nextDir);
+    saveStoredTeamDirectory(nextDir);
+
+    let nextFare2List = Array.from(effectiveUserFare2.get(userId) || []);
+    if (teamId === 'troops' && wasRemoved) {
+      nextFare2List = [];
+      const nextF2Map = { ...userFare2Map, [userId]: [] };
+      setUserFare2Map(nextF2Map);
+      saveStoredUserFare2Map(nextF2Map);
+    }
+
+    onUserTeamsChange?.(userId, nextTeamsList, nextFare2List);
   };
 
   const assignUserToTeam = (userId: string, teamId: StoreTeamId) => {
-    setTeamDirectory((prev) => {
-      const current = new Set(prev[userId] || effectiveUserTeams.get(userId) || []);
-      current.add(teamId);
-      const next = { ...prev, [userId]: Array.from(current) };
-      saveStoredTeamDirectory(next);
-      return next;
-    });
+    const currentTeams = new Set(teamDirectory[userId] ?? Array.from(effectiveUserTeams.get(userId) || []));
+    currentTeams.add(teamId);
+    const nextTeamsList = Array.from(currentTeams);
+    const nextDir = { ...teamDirectory, [userId]: nextTeamsList };
+    setTeamDirectory(nextDir);
+    saveStoredTeamDirectory(nextDir);
+
+    const nextFare2List = Array.from(effectiveUserFare2.get(userId) || []);
+    onUserTeamsChange?.(userId, nextTeamsList, nextFare2List);
+
     const u = activeMembers.find((m) => m.id === userId);
     const t = getTeamMeta(teamId);
     if (u && t) {
-      onShowToast?.(`Added ${u.name} to ${t.label}.`);
+      onShowToast?.(`Assigned ${u.name} to ${t.label}.`);
+    }
+  };
+
+  const toggleUserFare2 = (userId: string, fare2Id: string) => {
+    const currentFare2 = new Set(userFare2Map[userId] ?? Array.from(effectiveUserFare2.get(userId) || []));
+    const adding = !currentFare2.has(fare2Id);
+    if (adding) {
+      currentFare2.add(fare2Id);
+    } else {
+      currentFare2.delete(fare2Id);
+    }
+    const nextFare2List = Array.from(currentFare2);
+    const nextF2Map = { ...userFare2Map, [userId]: nextFare2List };
+    setUserFare2Map(nextF2Map);
+    saveStoredUserFare2Map(nextF2Map);
+
+    // Ensure user is in Scout Fera2 team when adding a Fare2
+    const currentTeams = new Set(teamDirectory[userId] ?? Array.from(effectiveUserTeams.get(userId) || []));
+    if (adding) {
+      currentTeams.add('troops');
+    }
+    const nextTeamsList = Array.from(currentTeams);
+    const nextDir = { ...teamDirectory, [userId]: nextTeamsList };
+    setTeamDirectory(nextDir);
+    saveStoredTeamDirectory(nextDir);
+
+    onUserTeamsChange?.(userId, nextTeamsList, nextFare2List);
+
+    const u = activeMembers.find((m) => m.id === userId);
+    const fm = getScoutFare2Meta(fare2Id);
+    if (u && fm) {
+      onShowToast?.(
+        adding
+          ? `Assigned ${u.name} to Scout Fera2 → ${fm.label} (${fm.audience}).`
+          : `Removed ${fm.label} from ${u.name}.`
+      );
+    }
+  };
+
+  const handleSetFare2Leader = (fare2Id: string, userId: string) => {
+    const user = activeMembers.find((m) => m.id === userId) || null;
+    const nextMap = { ...fare2Leaders };
+    let assignment: Fare2LeaderAssignment | null = null;
+
+    if (user) {
+      assignment = { userId: user.id, userName: user.name };
+      nextMap[fare2Id] = assignment;
+      // Ensure this leader is also linked inside Scout Fera2 team AND assigned to this Fare2
+      const currentTeams = new Set(teamDirectory[user.id] ?? Array.from(effectiveUserTeams.get(user.id) || []));
+      currentTeams.add('troops');
+      const nextTeamsList = Array.from(currentTeams);
+      const updatedDir = { ...teamDirectory, [user.id]: nextTeamsList };
+      setTeamDirectory(updatedDir);
+      saveStoredTeamDirectory(updatedDir);
+
+      const currentF2 = new Set(userFare2Map[user.id] ?? Array.from(effectiveUserFare2.get(user.id) || []));
+      currentF2.add(fare2Id);
+      const nextF2List = Array.from(currentF2);
+      const updatedF2Map = { ...userFare2Map, [user.id]: nextF2List };
+      setUserFare2Map(updatedF2Map);
+      saveStoredUserFare2Map(updatedF2Map);
+
+      onUserTeamsChange?.(user.id, nextTeamsList, nextF2List);
+    } else {
+      delete nextMap[fare2Id];
+    }
+
+    setFare2Leaders(nextMap);
+    saveStoredFare2Leaders(nextMap);
+    onFare2LeaderChange?.(fare2Id, assignment);
+
+    const fMeta = getScoutFare2Meta(fare2Id);
+    if (user && fMeta) {
+      onShowToast?.(
+        `Assigned ${user.name} as responsible for ${fMeta.label} (${fMeta.audience}) under Scout Fera2.`
+      );
+    } else if (fMeta) {
+      onShowToast?.(`Cleared responsible leader for ${fMeta.label}.`);
     }
   };
 
@@ -580,13 +738,55 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     };
   };
 
+  const doesItemMatchQuery = (item: CalendarItem, qLower: string): boolean => {
+    const tm = getTeamMeta(item.team);
+    const fm = getScoutFare2Meta(item.troopGroup);
+    const hay = `${item.title} ${item.itemType} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fm?.audience || ''} ${tm?.label || ''} ${item.assignedToName || ''}`.toLowerCase();
+    return hay.includes(qLower);
+  };
+
+  const doesMemberMatchQuery = (member: User, qLower: string): boolean => {
+    if (
+      member.name.toLowerCase().includes(qLower) ||
+      member.email.toLowerCase().includes(qLower)
+    ) {
+      return true;
+    }
+    const teams = Array.from(effectiveUserTeams.get(member.id) || new Set<StoreTeamId>());
+    if (
+      teams.some((tid) => {
+        const tm = getTeamMeta(tid);
+        return tm ? tm.label.toLowerCase().includes(qLower) || tm.shortLabel.toLowerCase().includes(qLower) : false;
+      })
+    ) {
+      return true;
+    }
+    const fare2s = Array.from(effectiveUserFare2.get(member.id) || new Set<string>());
+    if (
+      fare2s.some((fid) => {
+        const fm = getScoutFare2Meta(fid);
+        return (
+          fid.toLowerCase().includes(qLower) ||
+          (fm ? `${fm.label} ${fm.audience}`.toLowerCase().includes(qLower) : false)
+        );
+      })
+    ) {
+      return true;
+    }
+    const memberNameLower = member.name.trim().toLowerCase();
+    return items.some((it) => {
+      const isAssigned =
+        (it.assignedToId && it.assignedToId === member.id) ||
+        (it.assignedToName && it.assignedToName.trim().toLowerCase() === memberNameLower);
+      return isAssigned && doesItemMatchQuery(it, qLower);
+    });
+  };
+
   const filteredPeople = useMemo(() => {
     const q = peopleSearch.trim().toLowerCase();
     if (!q) return activeMembers;
-    return activeMembers.filter(
-      (u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
-    );
-  }, [activeMembers, peopleSearch]);
+    return activeMembers.filter((u) => doesMemberMatchQuery(u, q));
+  }, [activeMembers, peopleSearch, effectiveUserTeams, effectiveUserFare2, items]);
 
   return (
     <div className="space-y-5">
@@ -705,7 +905,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search cards by title, team, member, or branch..."
+                  placeholder="Search tasks, events, account names, or branch..."
                   className="w-full pl-9 pr-8 py-2 min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-blue-500"
                 />
                 {searchQuery && (
@@ -738,6 +938,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 </div>
 
                 {(filterTeam !== 'all' ||
+                  filterFare2 !== 'all' ||
                   filterType !== 'all' ||
                   filterMemberName !== 'all' ||
                   searchQuery.trim() !== '') && (
@@ -745,6 +946,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     type="button"
                     onClick={() => {
                       setFilterTeam('all');
+                      setFilterFare2('all');
                       setFilterType('all');
                       setFilterMemberName('all');
                       setSearchQuery('');
@@ -761,7 +963,10 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
               <button
                 type="button"
-                onClick={() => setFilterTeam('all')}
+                onClick={() => {
+                  setFilterTeam('all');
+                  setFilterFare2('all');
+                }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold border whitespace-nowrap shrink-0 transition-colors ${
                   filterTeam === 'all'
                     ? 'bg-slate-900 text-white border-slate-900'
@@ -772,11 +977,18 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               </button>
               {STORE_TEAMS.map((team) => {
                 const isSelected = filterTeam === team.id;
+                const isScoutFera2Team = team.id === 'troops';
                 return (
                   <button
                     key={team.id}
                     type="button"
-                    onClick={() => setFilterTeam(isSelected ? 'all' : team.id)}
+                    onMouseEnter={isScoutFera2Team ? openScoutFera2Hover : undefined}
+                    onMouseLeave={isScoutFera2Team ? closeScoutFera2HoverDelayed : undefined}
+                    onClick={() => {
+                      const nextTeam = isSelected ? 'all' : team.id;
+                      setFilterTeam(nextTeam);
+                      if (nextTeam !== 'troops') setFilterFare2('all');
+                    }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold border whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors ${
                       isSelected ? team.activeButtonClass : team.chipClass
                     }`}
@@ -787,10 +999,59 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       }`}
                     />
                     <span>{team.shortLabel}</span>
+                    {isScoutFera2Team && (
+                      <span className="text-[10px] opacity-75 ml-0.5">
+                        {filterTeam === 'troops' || filterFare2 !== 'all' || isHoveringScoutFera2
+                          ? '▴'
+                          : '▾'}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
+
+            {/* 6 Color-Coded Scout Fera2 Sub-Team Filter Bar (shown only when hovering or selecting Scout Fera2) */}
+            {(filterTeam === 'troops' || filterFare2 !== 'all' || isHoveringScoutFera2) && (
+              <div
+                onMouseEnter={openScoutFera2Hover}
+                onMouseLeave={closeScoutFera2HoverDelayed}
+                className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none pt-1.5 border-t border-slate-100 animate-in fade-in duration-150"
+              >
+                <span className="text-[11px] font-bold text-emerald-700 whitespace-nowrap shrink-0 mr-1">
+                  Scout Fera2:
+                </span>
+                {SCOUT_FERA2_LIST.map((f) => {
+                  const isSelected = filterFare2.toLowerCase() === f.id.toLowerCase();
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          setFilterFare2('all');
+                        } else {
+                          setFilterTeam('troops');
+                          setFilterFare2(f.id);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors ${
+                        isSelected ? f.activeButtonClass : f.chipClass
+                      }`}
+                      title={`${f.label} — ${f.audience}`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isSelected ? 'bg-white' : f.dotClass
+                        }`}
+                      />
+                      <span>{f.label}</span>
+                      <span className="opacity-75 font-medium">({f.audience})</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -899,11 +1160,24 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                             >
                               {item.itemType === 'task' ? 'Task' : 'Event'}
                             </span>
-                            {item.troopGroup && (
-                              <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                {item.troopGroup}
-                              </span>
-                            )}
+                            {item.troopGroup && (() => {
+                              const fare2Meta = getScoutFare2Meta(item.troopGroup);
+                              return fare2Meta ? (
+                                <span
+                                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold inline-flex items-center gap-1 ${fare2Meta.solidBadgeClass}`}
+                                  title={`${fare2Meta.label} (${fare2Meta.audience})`}
+                                >
+                                  <span>{fare2Meta.label}</span>
+                                  <span className="opacity-85 font-medium text-[10px]">
+                                    · {fare2Meta.audience}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  {item.troopGroup}
+                                </span>
+                              );
+                            })()}
                           </div>
 
                           {/* Card Title */}
@@ -1027,7 +1301,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       ================================================================ */}
       {activeTab === 'people' && (
         <div className="space-y-4">
-          {/* Controls bar for People & Teams */}
+          {/* Controls bar for People & Teams (Unified Search across Tasks, Events, Accounts, Teams & Fare2) */}
           <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200">
@@ -1056,188 +1330,378 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               </div>
             </div>
 
-            {peopleSubView === 'all-people' && (
-              <div className="relative flex-1 max-w-xs">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={peopleSearch}
-                  onChange={(e) => setPeopleSearch(e.target.value)}
-                  placeholder="Search member name or email..."
-                  className="w-full pl-9 pr-3 py-2 min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            )}
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={peopleSearch}
+                onChange={(e) => setPeopleSearch(e.target.value)}
+                placeholder="Search task, event, account name, team, or Fare2..."
+                className="w-full pl-9 pr-8 py-2 min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-blue-500"
+              />
+              {peopleSearch && (
+                <button
+                  type="button"
+                  onClick={() => setPeopleSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  title="Clear search"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Sub-view A: Grouped by the 6 Store Teams */}
-          {peopleSubView === 'by-team' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {STORE_TEAMS.map((team) => {
-                const membersInTeam = activeMembers.filter((u) =>
-                  effectiveUserTeams.get(u.id)?.has(team.id)
-                );
-                const unassignedToThisTeam = activeMembers.filter(
-                  (u) => !effectiveUserTeams.get(u.id)?.has(team.id)
-                );
-                const teamCards = items.filter((it) => it.team === team.id);
-                const teamOpenCount = teamCards.filter(
-                  (it) => getItemColumn(it) !== 'done'
-                ).length;
+          {peopleSubView === 'by-team' && (() => {
+            const q = peopleSearch.trim().toLowerCase();
+            const matchingTeams = STORE_TEAMS.filter((team) => {
+              if (!q) return true;
+              const teamMatches =
+                team.label.toLowerCase().includes(q) ||
+                team.shortLabel.toLowerCase().includes(q);
+              const membersInTeam = activeMembers.filter((u) =>
+                effectiveUserTeams.get(u.id)?.has(team.id)
+              );
+              const hasMatchingMember = membersInTeam.some((m) =>
+                doesMemberMatchQuery(m, q)
+              );
+              const teamCards = items.filter((it) => it.team === team.id);
+              const hasMatchingCard = teamCards.some((it) => doesItemMatchQuery(it, q));
+              const hasMatchingFare2 =
+                team.id === 'troops' &&
+                SCOUT_FERA2_LIST.some((f) => {
+                  const leader = fare2Leaders[f.id];
+                  return (
+                    `${f.label} ${f.audience}`.toLowerCase().includes(q) ||
+                    (leader?.userName || '').toLowerCase().includes(q)
+                  );
+                });
+              return teamMatches || hasMatchingMember || hasMatchingCard || hasMatchingFare2;
+            });
 
-                return (
-                  <div
-                    key={team.id}
-                    className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col justify-between gap-4"
-                  >
-                    <div className="space-y-3">
-                      {/* Team Header */}
-                      <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
-                        <div className="flex items-center gap-2.5">
-                          <span
-                            className={`w-3.5 h-3.5 rounded-full shrink-0 ${team.dotClass}`}
-                          />
-                          <div>
-                            <h3 className="text-sm font-black text-slate-900">
-                              {team.label}
-                            </h3>
-                            <p className="text-[11px] text-slate-500 font-mono tabular-nums">
-                              {membersInTeam.length} member{membersInTeam.length === 1 ? '' : 's'} ·{' '}
-                              {teamOpenCount} active card{teamOpenCount === 1 ? '' : 's'}
-                            </p>
+            if (matchingTeams.length === 0) {
+              return (
+                <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-sm text-slate-500">
+                  No teams, accounts, tasks, or events match "{peopleSearch}".
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {matchingTeams.map((team) => {
+                  const allMembersInTeam = activeMembers.filter((u) =>
+                    effectiveUserTeams.get(u.id)?.has(team.id)
+                  );
+                  const teamMatchesDirectly =
+                    !q ||
+                    team.label.toLowerCase().includes(q) ||
+                    team.shortLabel.toLowerCase().includes(q);
+                  const membersInTeam = q && !teamMatchesDirectly
+                    ? allMembersInTeam.filter((m) => doesMemberMatchQuery(m, q))
+                    : allMembersInTeam;
+                  const unassignedToThisTeam = activeMembers.filter(
+                    (u) => !effectiveUserTeams.get(u.id)?.has(team.id)
+                  );
+                  const teamCards = items.filter((it) => it.team === team.id);
+                  const matchingCards = q
+                    ? teamCards.filter((it) => doesItemMatchQuery(it, q))
+                    : [];
+                  const teamOpenCount = teamCards.filter(
+                    (it) => getItemColumn(it) !== 'done'
+                  ).length;
+
+                  return (
+                    <div
+                      key={team.id}
+                      className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col justify-between gap-4"
+                    >
+                      <div className="space-y-3">
+                        {/* Team Header */}
+                        <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                          <div className="flex items-center gap-2.5">
+                            <span
+                              className={`w-3.5 h-3.5 rounded-full shrink-0 ${team.dotClass}`}
+                            />
+                            <div>
+                              <h3 className="text-sm font-black text-slate-900">
+                                {team.label}
+                              </h3>
+                              <p className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                {allMembersInTeam.length} member{allMembersInTeam.length === 1 ? '' : 's'} ·{' '}
+                                {teamOpenCount} active card{teamOpenCount === 1 ? '' : 's'}
+                              </p>
+                            </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFilterTeam(team.id);
+                              setActiveTab('board');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700 shrink-0"
+                          >
+                            View Board
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFilterTeam(team.id);
-                            setActiveTab('board');
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700 shrink-0"
-                        >
-                          View Board
-                        </button>
-                      </div>
 
-                      {/* Members List inside this Team */}
-                      {membersInTeam.length === 0 ? (
-                        <div className="py-5 px-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 text-center text-xs text-slate-500">
-                          No team members linked yet. Assign someone below or assign a card to this team.
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {membersInTeam.map((member) => {
-                            const stats = getUserStats(member, team.id);
-                            return (
-                              <div
-                                key={member.id}
-                                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-blue-300 flex items-center justify-between gap-2 transition-colors"
-                              >
+                        {/* Matching Tasks / Events Preview when searching */}
+                        {q && matchingCards.length > 0 && (
+                          <div className="space-y-1.5 p-2.5 rounded-xl bg-blue-50/60 border border-blue-200/80">
+                            <div className="text-[10px] font-black uppercase tracking-wider text-blue-800">
+                              Matching Tasks / Events ({matchingCards.length})
+                            </div>
+                            <div className="space-y-1">
+                              {matchingCards.slice(0, 4).map((card) => (
                                 <button
+                                  key={card.id}
                                   type="button"
-                                  onClick={() => setSelectedMemberId(member.id)}
-                                  className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
-                                  title={`Open ${member.name}'s account & event history`}
+                                  onClick={() => setDetailItemId(card.id)}
+                                  className="w-full text-left px-2 py-1.5 rounded-lg bg-white border border-blue-200/70 hover:border-blue-400 text-xs flex items-center justify-between gap-2"
                                 >
-                                  <span
-                                    className="w-8 h-8 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0"
-                                    style={{
-                                      backgroundColor: getAvatarColor(
-                                        member.name,
-                                        member.avatarColor
-                                      ),
-                                    }}
-                                  >
-                                    {getInitials(member.name)}
+                                  <span className="font-bold text-slate-900 truncate">
+                                    {card.itemType === 'task' ? 'Task:' : 'Event:'} {card.title}
                                   </span>
-                                  <div className="min-w-0">
-                                    <div className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-blue-700 truncate transition-colors">
-                                      {member.name}
-                                    </div>
-                                    <div className="text-[11px] text-slate-500 font-mono tabular-nums">
-                                      {stats.upcoming} upcoming · {stats.inProgress} active · {stats.done} done
+                                  {card.assignedToName && (
+                                    <span className="text-[10px] font-semibold text-slate-500 shrink-0">
+                                      {card.assignedToName}
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Members List inside this Team */}
+                        {membersInTeam.length === 0 ? (
+                          <div className="py-5 px-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 text-center text-xs text-slate-500">
+                            {q
+                              ? 'No members in this team match your search.'
+                              : 'No team members linked yet. Assign someone below or assign a card to this team.'}
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {membersInTeam.map((member) => {
+                              const stats = getUserStats(member, team.id);
+                              const memberFare2List = Array.from(
+                                effectiveUserFare2.get(member.id) || new Set<string>()
+                              );
+                              return (
+                                <div
+                                  key={member.id}
+                                  className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-blue-300 space-y-2 transition-colors"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedMemberId(member.id)}
+                                      className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
+                                      title={`Open ${member.name}'s account & event history`}
+                                    >
+                                      <span
+                                        className="w-8 h-8 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0"
+                                        style={{
+                                          backgroundColor: getAvatarColor(
+                                            member.name,
+                                            member.avatarColor
+                                          ),
+                                        }}
+                                      >
+                                        {getInitials(member.name)}
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-blue-700 truncate transition-colors">
+                                          {member.name}
+                                        </div>
+                                        <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                          {stats.upcoming} upcoming · {stats.inProgress} active · {stats.done} done
+                                        </div>
+                                      </div>
+                                    </button>
+
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => openCreateCardModal('upcoming', team.id, member)}
+                                        className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-300"
+                                        title={`Assign new card to ${member.name}`}
+                                      >
+                                        <Plus className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setFilterTeam(team.id);
+                                          setFilterMemberName(member.name);
+                                          setActiveTab('board');
+                                        }}
+                                        className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
+                                        title={`Filter board for ${member.name}`}
+                                      >
+                                        Cards
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleUserTeam(member.id, team.id)}
+                                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                                        title={`Remove ${member.name} from ${team.shortLabel}`}
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   </div>
-                                </button>
 
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => openCreateCardModal('upcoming', team.id, member)}
-                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-blue-700 hover:border-blue-300"
-                                    title={`Assign new card to ${member.name}`}
-                                  >
-                                    <Plus className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setFilterTeam(team.id);
-                                      setFilterMemberName(member.name);
-                                      setActiveTab('board');
-                                    }}
-                                    className="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
-                                    title={`Filter board for ${member.name}`}
-                                  >
-                                    Cards
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleUserTeam(member.id, team.id)}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                                    title={`Remove ${member.name} from ${team.shortLabel}`}
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
+                                  {/* Scout Fera2 member -> show & assign specific Scout Fare2 (Ashbal, Zahrat, etc.) */}
+                                  {team.id === 'troops' && (
+                                    <div className="flex flex-wrap items-center gap-1 pt-1.5 border-t border-slate-200/70">
+                                      {memberFare2List.map((fid) => {
+                                        const fm = getScoutFare2Meta(fid);
+                                        if (!fm) return null;
+                                        return (
+                                          <button
+                                            key={fid}
+                                            type="button"
+                                            onClick={() => toggleUserFare2(member.id, fid)}
+                                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${fm.chipClass}`}
+                                            title={`Assigned to ${fm.label} (${fm.audience}) — click to remove`}
+                                          >
+                                            <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
+                                            <span>{fm.label}</span>
+                                            <X className="w-2.5 h-2.5 opacity-60" />
+                                          </button>
+                                        );
+                                      })}
+                                      <select
+                                        value=""
+                                        onChange={(e) => {
+                                          if (e.target.value) {
+                                            toggleUserFare2(member.id, e.target.value);
+                                          }
+                                        }}
+                                        className="px-2 py-0.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-600 focus:outline-none focus:border-blue-500"
+                                      >
+                                        <option value="">+ Assign Fare2...</option>
+                                        {SCOUT_FERA2_LIST.filter((f) => !memberFare2List.includes(f.id)).map((f) => (
+                                          <option key={f.id} value={f.id}>
+                                            {f.label} ({f.audience})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Scout Fera2: 6 Color-Coded Branches & Leaders ("El Masek") */}
+                      {team.id === 'troops' && (
+                        <div className="pt-3 border-t border-slate-100 space-y-2">
+                          <div className="text-[11px] font-black uppercase tracking-wider text-slate-600">
+                            6 Scout Fera2 Color Codes &amp; Leaders
+                          </div>
+                          <div className="space-y-1.5">
+                            {SCOUT_FERA2_LIST.filter((fare2) => {
+                              if (!q || teamMatchesDirectly) return true;
+                              const leader = fare2Leaders[fare2.id];
+                              return (
+                                `${fare2.label} ${fare2.audience}`.toLowerCase().includes(q) ||
+                                (leader?.userName || '').toLowerCase().includes(q)
+                              );
+                            }).map((fare2) => {
+                              const leader = fare2Leaders[fare2.id];
+                              return (
+                                <div
+                                  key={fare2.id}
+                                  className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-50 border border-slate-200/80"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span
+                                      className={`w-3 h-3 rounded-full shrink-0 ${fare2.dotClass}`}
+                                    />
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-bold text-slate-900 truncate">
+                                        {fare2.label}
+                                      </div>
+                                      <div className="text-[10px] font-semibold text-slate-500">
+                                        {fare2.audience}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <select
+                                    value={leader?.userId || ''}
+                                    onChange={(e) =>
+                                      handleSetFare2Leader(fare2.id, e.target.value)
+                                    }
+                                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-800 max-w-[145px] focus:outline-none focus:border-blue-500"
+                                    title={`Select leader responsible for ${fare2.label} orders`}
+                                  >
+                                    <option value="">Assign leader...</option>
+                                    {activeMembers.map((u) => (
+                                      <option key={u.id} value={u.id}>
+                                        {u.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Assign Member to Team Selector */}
+                      {unassignedToThisTeam.length > 0 && (
+                        <div className="pt-2 border-t border-slate-100">
+                          <div className="flex items-center gap-2">
+                            <UserPlus className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  assignUserToTeam(e.target.value, team.id);
+                                }
+                              }}
+                              className="w-full px-2.5 py-2 min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:outline-none focus:border-blue-500"
+                            >
+                              <option value="">+ Add person to {team.shortLabel}...</option>
+                              {unassignedToThisTeam.map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                       )}
                     </div>
-
-                    {/* Assign Member to Team Selector */}
-                    {unassignedToThisTeam.length > 0 && (
-                      <div className="pt-2 border-t border-slate-100">
-                        <div className="flex items-center gap-2">
-                          <UserPlus className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <select
-                            value=""
-                            onChange={(e) => {
-                              if (e.target.value) {
-                                assignUserToTeam(e.target.value, team.id);
-                              }
-                            }}
-                            className="w-full px-2.5 py-2 min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:outline-none focus:border-blue-500"
-                          >
-                            <option value="">+ Add person to {team.shortLabel}...</option>
-                            {unassignedToThisTeam.map((u) => (
-                              <option key={u.id} value={u.id}>
-                                {u.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Sub-view B: All People across Teams */}
           {peopleSubView === 'all-people' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredPeople.length === 0 ? (
                 <div className="col-span-full bg-white border border-slate-200 rounded-2xl p-8 text-center text-sm text-slate-500">
-                  No matching team members found.
+                  No matching accounts, tasks, events, or teams found.
                 </div>
               ) : (
                 filteredPeople.map((member) => {
                   const userTeams = effectiveUserTeams.get(member.id) || new Set<StoreTeamId>();
+                  const userFare2List = effectiveUserFare2.get(member.id) || new Set<string>();
                   const stats = getUserStats(member);
+                  const q = peopleSearch.trim().toLowerCase();
+                  const matchingMemberItems = q
+                    ? stats.items.filter((it) => doesItemMatchQuery(it, q))
+                    : [];
+
                   return (
                     <div
                       key={member.id}
@@ -1269,6 +1733,11 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               <p className="text-xs text-slate-500 truncate">{member.email}</p>
                             </div>
                           </div>
+                          {userTeams.size === 0 && (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold shrink-0">
+                              Needs Team
+                            </span>
+                          )}
                         </button>
 
                         {/* Workload Stats */}
@@ -1299,10 +1768,29 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                           </div>
                         </div>
 
-                        {/* Assign / Toggle Team Membership */}
+                        {/* Matching Tasks / Events when searching */}
+                        {matchingMemberItems.length > 0 && (
+                          <div className="space-y-1 p-2.5 rounded-xl bg-blue-50/60 border border-blue-200/80">
+                            <div className="text-[10px] font-black uppercase tracking-wider text-blue-800">
+                              Matching Tasks / Events ({matchingMemberItems.length})
+                            </div>
+                            {matchingMemberItems.slice(0, 3).map((it) => (
+                              <button
+                                key={it.id}
+                                type="button"
+                                onClick={() => setDetailItemId(it.id)}
+                                className="w-full text-left px-2 py-1 rounded-lg bg-white border border-blue-200/70 hover:border-blue-400 text-[11px] font-bold text-slate-900 truncate block"
+                              >
+                                {it.itemType === 'task' ? 'Task:' : 'Event:'} {it.title}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Assign / Toggle Team Membership (6 Teams) */}
                         <div className="space-y-1.5">
                           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                            Assigned Teams (tap to toggle)
+                            Assigned Team from 6 Teams (tap to toggle)
                           </div>
                           <div className="flex flex-wrap gap-1.5">
                             {STORE_TEAMS.map((team) => {
@@ -1329,6 +1817,38 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                             })}
                           </div>
                         </div>
+
+                        {/* If assigned to Scout Fera2 -> assign specific Scout Fare2 (Ashbal, Zahrat, etc.) */}
+                        {userTeams.has('troops') && (
+                          <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
+                            <div className="text-[10px] font-black uppercase tracking-wider text-emerald-800">
+                              Assigned Scout Fare2 (tap to toggle)
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {SCOUT_FERA2_LIST.map((f) => {
+                                const active = userFare2List.has(f.id);
+                                return (
+                                  <button
+                                    key={f.id}
+                                    type="button"
+                                    onClick={() => toggleUserFare2(member.id, f.id)}
+                                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 transition-colors ${
+                                      active ? f.activeButtonClass : f.chipClass
+                                    }`}
+                                    title={`${f.label} (${f.audience})`}
+                                  >
+                                    <span
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        active ? 'bg-white' : f.dotClass
+                                      }`}
+                                    />
+                                    <span>{f.label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
@@ -1601,19 +2121,30 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Scout Branch (Optional)
+                    Scout Fera2 / Branch (Optional)
                   </label>
                   <select
                     value={formTroop}
-                    onChange={(e) => setFormTroop(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormTroop(val);
+                      const leader = fare2Leaders[val];
+                      if (leader && !formAssignedToId) {
+                        setFormAssignedToId(leader.userId);
+                        setFormAssignedToName(leader.userName);
+                      }
+                    }}
                     className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-slate-300 bg-white text-sm text-slate-900"
                   >
                     <option value="">All Branches / General</option>
-                    {TROOP_OPTIONS.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
+                    {TROOP_OPTIONS.map((t) => {
+                      const fm = getScoutFare2Meta(t);
+                      return (
+                        <option key={t} value={t}>
+                          {fm ? `${fm.label} (${fm.audience})` : t}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 <div>
@@ -1769,12 +2300,31 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                   </div>
                 )}
 
-                {detailItem.troopGroup && (
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                    <div className="text-slate-500 font-semibold">Scout Branch</div>
-                    <div className="font-bold text-slate-900 mt-1">{detailItem.troopGroup}</div>
-                  </div>
-                )}
+                {detailItem.troopGroup && (() => {
+                  const fm = getScoutFare2Meta(detailItem.troopGroup);
+                  return (
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <div className="text-slate-500 font-semibold">Scout Fera2</div>
+                      <div className="mt-1.5">
+                        {fm ? (
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-bold border ${fm.chipClass}`}
+                          >
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: fm.hex }}
+                            />
+                            <span>
+                              {fm.label} ({fm.audience})
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="font-bold text-slate-900">{detailItem.troopGroup}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {detailItem.notes && (
@@ -2055,7 +2605,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       {selectedMember.name}
                     </h2>
                     <p className="text-xs text-slate-500 truncate">{selectedMember.email}</p>
-                    {memberTeams.length > 0 && (
+                    {(memberTeams.length > 0 || (effectiveUserFare2.get(selectedMember.id)?.size || 0) > 0) && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {memberTeams.map((tid) => {
                           const tm = getTeamMeta(tid);
@@ -2066,6 +2616,19 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tid]}`}
                             >
                               {tm.shortLabel}
+                            </span>
+                          );
+                        })}
+                        {Array.from(effectiveUserFare2.get(selectedMember.id) || []).map((fid) => {
+                          const f2 = getScoutFare2Meta(fid);
+                          if (!f2) return null;
+                          return (
+                            <span
+                              key={fid}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${f2.chipClass}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${f2.dotClass}`} />
+                              {f2.label}
                             </span>
                           );
                         })}

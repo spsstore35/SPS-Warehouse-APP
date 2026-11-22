@@ -16,6 +16,7 @@ import {
   BookingItem,
   BookingStatus,
   CalendarItem,
+  StoreTeamId,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -735,6 +736,11 @@ export async function fetchUsersFromDb(): Promise<User[]> {
       ? 'leader'
       : 'worker';
 
+    const parseStringArray = (val: any): string[] | undefined => {
+      if (Array.isArray(val)) return val.map(String).filter(Boolean);
+      return undefined;
+    };
+
     return {
       id: u.id,
       name: u.full_name || u.name || 'User',
@@ -745,6 +751,8 @@ export async function fetchUsersFromDb(): Promise<User[]> {
       requestedRole: normalizedReqRole,
       employeeId: u.employee_id || undefined,
       avatarColor: u.avatar_color || undefined,
+      assignedTeams: parseStringArray(u.assigned_teams) as StoreTeamId[] | undefined,
+      assignedFare2: parseStringArray(u.assigned_fare2),
       createdAt: u.created_at,
       approvedAt: u.approved_at || undefined,
       approvedBy: u.approved_by_name || undefined,
@@ -886,6 +894,29 @@ export async function updateUserRoleInDb(
       );
     }
     throw error;
+  }
+}
+
+export async function updateUserTeamAssignmentsInDb(
+  userId: string,
+  assignedTeams: StoreTeamId[],
+  assignedFare2: string[]
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        assigned_teams: assignedTeams,
+        assigned_fare2: assignedFare2,
+      })
+      .eq('id', userId);
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
   }
 }
 
@@ -1186,6 +1217,9 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
         bookingNumber: b.booking_number,
         clientName: b.client_name,
         troopGroup: b.troop_group || undefined,
+        assignedFare2: b.assigned_fare2 || undefined,
+        assignedToId: b.assigned_to_id || undefined,
+        assignedToName: b.assigned_to_name || undefined,
         clientPhone: b.client_phone || 'N/A',
         notes: b.notes || undefined,
         items: lineItems,
@@ -1229,6 +1263,9 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       booking_number: booking.bookingNumber,
       client_name: booking.clientName,
       troop_group: booking.troopGroup || null,
+      assigned_fare2: booking.assignedFare2 || null,
+      assigned_to_id: booking.assignedToId || null,
+      assigned_to_name: booking.assignedToName || null,
       client_phone: booking.clientPhone || 'N/A',
       notes: booking.notes || null,
       subtotal: booking.subtotal,
@@ -1263,13 +1300,19 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       bookingErr &&
       (bookingErr.message?.includes('troop_group') ||
         bookingErr.details?.includes('troop_group') ||
+        bookingErr.message?.includes('assigned_fare2') ||
+        bookingErr.message?.includes('assigned_to') ||
         bookingErr.message?.includes('payment_verification') ||
         bookingErr.details?.includes('payment_verification') ||
-        bookingErr.code === 'PGRST204')
+        bookingErr.code === 'PGRST204' ||
+        bookingErr.code === '42703')
     ) {
       if (bookingErr.message?.includes('troop_group') || bookingErr.details?.includes('troop_group')) {
         delete bookingPayload.troop_group;
       }
+      delete bookingPayload.assigned_fare2;
+      delete bookingPayload.assigned_to_id;
+      delete bookingPayload.assigned_to_name;
       delete bookingPayload.payment_verification_requested;
       delete bookingPayload.payment_verification_requested_by;
       delete bookingPayload.payment_verification_requested_at;
@@ -1339,6 +1382,9 @@ export async function updateBookingInDb(
     if (updates.clientName !== undefined) payload.client_name = updates.clientName;
     if (updates.clientPhone !== undefined) payload.client_phone = updates.clientPhone;
     if (updates.troopGroup !== undefined) payload.troop_group = updates.troopGroup;
+    if (updates.assignedFare2 !== undefined) payload.assigned_fare2 = updates.assignedFare2 || null;
+    if (updates.assignedToId !== undefined) payload.assigned_to_id = updates.assignedToId || null;
+    if (updates.assignedToName !== undefined) payload.assigned_to_name = updates.assignedToName || null;
     if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
     if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
     if (updates.depositPercentage !== undefined) payload.deposit_percentage = updates.depositPercentage;
@@ -1373,13 +1419,19 @@ export async function updateBookingInDb(
       error &&
       (error.message?.includes('troop_group') ||
         error.details?.includes('troop_group') ||
+        error.message?.includes('assigned_fare2') ||
+        error.message?.includes('assigned_to') ||
         error.message?.includes('payment_verification') ||
         error.details?.includes('payment_verification') ||
-        error.code === 'PGRST204')
+        error.code === 'PGRST204' ||
+        error.code === '42703')
     ) {
       if (error.message?.includes('troop_group') || error.details?.includes('troop_group')) {
         delete payload.troop_group;
       }
+      delete payload.assigned_fare2;
+      delete payload.assigned_to_id;
+      delete payload.assigned_to_name;
       delete payload.payment_verification_requested;
       delete payload.payment_verification_requested_by;
       delete payload.payment_verification_requested_at;
@@ -1637,5 +1689,59 @@ export async function deleteCalendarEventFromDb(
     return { ok: false, error: err?.message || 'Sync error' };
   }
 }
+
+/**
+ * SCOUT FERA2 LEADERS
+ */
+export async function fetchFare2LeadersFromDb(): Promise<
+  Record<string, { userId: string; userName: string }> | null
+> {
+  try {
+    const { data, error } = await supabase
+      .from('scout_fera2_leaders')
+      .select('fare2_id, leader_user_id, leader_user_name');
+
+    if (error) return null;
+    const map: Record<string, { userId: string; userName: string }> = {};
+    (data || []).forEach((row: any) => {
+      if (row.fare2_id && row.leader_user_id) {
+        map[String(row.fare2_id)] = {
+          userId: String(row.leader_user_id),
+          userName: String(row.leader_user_name || ''),
+        };
+      }
+    });
+    return map;
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertFare2LeaderInDb(
+  fare2Id: string,
+  leader: { userId: string; userName: string } | null
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    if (!leader) {
+      const { error } = await supabase
+        .from('scout_fera2_leaders')
+        .delete()
+        .eq('fare2_id', fare2Id);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true };
+    }
+    const { error } = await supabase.from('scout_fera2_leaders').upsert({
+      fare2_id: fare2Id,
+      leader_user_id: leader.userId,
+      leader_user_name: leader.userName,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
+  }
+}
+
 
 

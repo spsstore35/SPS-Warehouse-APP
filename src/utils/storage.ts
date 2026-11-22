@@ -383,5 +383,70 @@ export function clearCalendarIdUnsynced(id: string): void {
   } catch {}
 }
 
+export interface Fare2LeaderAssignment {
+  userId: string;
+  userName: string;
+}
 
+const FARE2_LEADERS_KEY = 'wearhouse_fare2_leaders_v1';
+const BOOKING_ASSIGNMENT_MAP_KEY = 'wearhouse_booking_assignments_v1';
+
+export function getStoredFare2Leaders(): Record<string, Fare2LeaderAssignment> {
+  try {
+    const raw = localStorage.getItem(FARE2_LEADERS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredFare2Leaders(map: Record<string, Fare2LeaderAssignment>): void {
+  try {
+    localStorage.setItem(FARE2_LEADERS_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+export interface StoredBookingAssignment {
+  assignedFare2?: string;
+  assignedToId?: string;
+  assignedToName?: string;
+}
+
+export function getStoredBookingAssignmentMap(): Record<string, StoredBookingAssignment> {
+  try {
+    const raw = localStorage.getItem(BOOKING_ASSIGNMENT_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredBookingAssignmentMap(map: Record<string, StoredBookingAssignment>): void {
+  try {
+    localStorage.setItem(BOOKING_ASSIGNMENT_MAP_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+const USER_FARE2_MAP_KEY = 'wearhouse_user_fare2_map_v1';
+
+export function getStoredUserFare2Map(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(USER_FARE2_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredUserFare2Map(map: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(USER_FARE2_MAP_KEY, JSON.stringify(map));
+  } catch {}
+}
 

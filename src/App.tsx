@@ -12,6 +12,7 @@ import {
   BookingStatus,
   CalendarItem,
   BoardColumnStatus,
+  StoreTeamId,
 } from './types/inventory';
 import {
   getStoredProducts,
@@ -39,7 +40,17 @@ import {
   getUnsyncedCalendarIds,
   markCalendarIdUnsynced,
   clearCalendarIdUnsynced,
+  getStoredFare2Leaders,
+  saveStoredFare2Leaders,
+  getStoredTeamDirectory,
+  saveStoredTeamDirectory,
+  getStoredUserFare2Map,
+  saveStoredUserFare2Map,
+  getStoredBookingAssignmentMap,
+  saveStoredBookingAssignmentMap,
+  Fare2LeaderAssignment,
 } from './utils/storage';
+import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import { isUserAdmin, isUserLeader, normalizeRole, getRoleDisplayName } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
 import {
@@ -71,6 +82,9 @@ import {
   fetchCalendarEventsFromDb,
   upsertCalendarEventToDb,
   deleteCalendarEventFromDb,
+  updateUserTeamAssignmentsInDb,
+  fetchFare2LeadersFromDb,
+  upsertFare2LeaderInDb,
   fetchActivitySnapshot,
   CATEGORY_MAP,
   DbConnectionStatus,
@@ -124,6 +138,7 @@ import {
   Check,
   ArrowLeft,
   Folder,
+  Download,
 } from 'lucide-react';
 
 export default function App() {
@@ -800,7 +815,17 @@ export default function App() {
       setDbStatus(status);
 
       if (status.connected && status.tablesExist) {
-        const [dbProducts, dbRequests, dbUsers, dbCategories, dbLogs, dbBookings, dbFolders, dbCalendar] = await Promise.allSettled([
+        const [
+          dbProducts,
+          dbRequests,
+          dbUsers,
+          dbCategories,
+          dbLogs,
+          dbBookings,
+          dbFolders,
+          dbCalendar,
+          dbFare2Leaders,
+        ] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
           fetchUsersFromDb(),
@@ -809,6 +834,7 @@ export default function App() {
           fetchBookingsFromDb(),
           fetchOthersFoldersFromDb(),
           fetchCalendarEventsFromDb(),
+          fetchFare2LeadersFromDb(),
         ]);
 
         let dbProductFolders: string[] = [];
@@ -845,9 +871,45 @@ export default function App() {
           setRequests(withImages);
           saveStoredRequests(withImages);
         }
+        if (dbFare2Leaders.status === 'fulfilled' && dbFare2Leaders.value !== null) {
+          const mergedLeaders = {
+            ...getStoredFare2Leaders(),
+            ...dbFare2Leaders.value,
+          };
+          saveStoredFare2Leaders(mergedLeaders);
+        }
         if (dbUsers.status === 'fulfilled') {
-          setUsers(dbUsers.value);
-          saveStoredUsers(dbUsers.value);
+          const localTeamDir = getStoredTeamDirectory();
+          const localFare2Map = getStoredUserFare2Map();
+          let dirDirty = false;
+          let fare2Dirty = false;
+          const enrichedUsers = dbUsers.value.map((u) => {
+            const dbTeams =
+              Array.isArray(u.assignedTeams) && u.assignedTeams.length > 0
+                ? u.assignedTeams
+                : undefined;
+            const dbFare2 =
+              Array.isArray(u.assignedFare2) && u.assignedFare2.length > 0
+                ? u.assignedFare2
+                : undefined;
+            if (dbTeams) {
+              localTeamDir[u.id] = dbTeams;
+              dirDirty = true;
+            }
+            if (dbFare2) {
+              localFare2Map[u.id] = dbFare2;
+              fare2Dirty = true;
+            }
+            return {
+              ...u,
+              assignedTeams: dbTeams || localTeamDir[u.id] || [],
+              assignedFare2: dbFare2 || localFare2Map[u.id] || [],
+            };
+          });
+          if (dirDirty) saveStoredTeamDirectory(localTeamDir);
+          if (fare2Dirty) saveStoredUserFare2Map(localFare2Map);
+          setUsers(enrichedUsers);
+          saveStoredUsers(enrichedUsers);
         }
         if (dbCategories.status === 'fulfilled') {
           const cats = dbCategories.value.length > 0 ? dbCategories.value : INITIAL_CATEGORIES;
@@ -880,17 +942,28 @@ export default function App() {
           });
         }
         if (dbBookings.status === 'fulfilled') {
+          const assignmentMap = getStoredBookingAssignmentMap();
           setBookings((prev) => {
             const merged = dbBookings.value.map((b) => {
               const localMatch = prev.find((lb) => lb.id === b.id);
+              const savedAssign = assignmentMap[b.id];
               const isPaidNow = Boolean(b.depositPaid || b.status !== 'pending');
+              const mergedTroop = b.troopGroup || localMatch?.troopGroup;
+              const resolvedFare2 =
+                b.assignedFare2 ||
+                savedAssign?.assignedFare2 ||
+                localMatch?.assignedFare2 ||
+                (isCoreScoutFare2(mergedTroop) ? mergedTroop : undefined);
               return {
                 ...b,
                 items: b.items.map((it) => ({
                   ...it,
                   productImage: it.productImage || productImageById.get(it.productId) || undefined,
                 })),
-                troopGroup: b.troopGroup || localMatch?.troopGroup,
+                troopGroup: mergedTroop,
+                assignedFare2: resolvedFare2,
+                assignedToId: b.assignedToId || savedAssign?.assignedToId || localMatch?.assignedToId,
+                assignedToName: b.assignedToName || savedAssign?.assignedToName || localMatch?.assignedToName,
                 paymentVerificationRequested: isPaidNow
                   ? false
                   : Boolean(b.paymentVerificationRequested || localMatch?.paymentVerificationRequested),
@@ -2047,6 +2120,265 @@ export default function App() {
     }
   };
 
+  // Auto-sync Orders to Scout Fera2 Tasks (6 Fera2 color-coded sub-teams)
+  // Afrad / Individual orders remain unassigned to any group unless manually assigned.
+  const syncOrderTaskToScoutFera2 = (booking: Booking) => {
+    const fare2Meta =
+      getScoutFare2Meta(booking.troopGroup) ||
+      getScoutFare2Meta(booking.assignedFare2);
+    const taskId = `task_order_${booking.id}`;
+    const assignMap = getStoredBookingAssignmentMap();
+
+    if (!fare2Meta && !booking.assignedToId) {
+      if (assignMap[booking.id]) {
+        delete assignMap[booking.id];
+        saveStoredBookingAssignmentMap(assignMap);
+      }
+      setCalendarEvents((prev) => {
+        if (!prev.some((ev) => ev.id === taskId)) return prev;
+        const updated = prev.filter((ev) => ev.id !== taskId);
+        saveStoredCalendarEvents(updated);
+        return updated;
+      });
+      clearCalendarIdUnsynced(taskId);
+      deleteCalendarEventFromDb(taskId).catch(() => {});
+      return;
+    }
+
+    const leaders = getStoredFare2Leaders();
+    const defaultLeader = fare2Meta ? leaders[fare2Meta.id] : undefined;
+    const assignedToId = booking.assignedToId || defaultLeader?.userId || undefined;
+    const assignedToName = booking.assignedToName || defaultLeader?.userName || undefined;
+
+    // Persist booking->Fare2/member assignment locally so reload never drops it
+    assignMap[booking.id] = {
+      assignedFare2: fare2Meta?.id,
+      assignedToId,
+      assignedToName,
+    };
+    saveStoredBookingAssignmentMap(assignMap);
+
+    const existingTask = calendarEvents.find((ev) => ev.id === taskId);
+    const createdDate = (booking.createdAt || new Date().toISOString()).slice(0, 10);
+    const totalUnits = booking.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
+    const itemsSummary = booking.items
+      .map(
+        (it) =>
+          `• ${it.productName} (${!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard' : it.size} / ${it.colorName}) × ${it.quantity}`
+      )
+      .join('\n');
+
+    const groupLine = fare2Meta
+      ? booking.troopGroup && booking.troopGroup !== fare2Meta.id
+        ? `Order Type: ${booking.troopGroup} → Routed to ${fare2Meta.label} (${fare2Meta.audience})`
+        : `Scout Fera2: ${fare2Meta.label} (${fare2Meta.audience})`
+      : `Order Type: ${booking.troopGroup || 'Afrad (Individual — Not assigned to a group)'}`;
+
+    const notesLines = [
+      `Order #${booking.bookingNumber} · Client: ${booking.clientName}`,
+      booking.clientPhone && booking.clientPhone !== 'N/A' ? `Phone: ${booking.clientPhone}` : '',
+      groupLine,
+      `Total: ${totalUnits} units · ${booking.total.toFixed(2)} EGP`,
+      itemsSummary,
+      booking.notes ? `Order Notes: ${booking.notes}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const nextBoardStatus: BoardColumnStatus = existingTask?.boardStatus || 'upcoming';
+    const nextTask: CalendarItem = {
+      id: taskId,
+      title: `Order #${booking.bookingNumber} — ${booking.clientName}`,
+      itemType: 'task',
+      startDate: existingTask?.startDate || createdDate,
+      endDate: existingTask?.endDate || createdDate,
+      allDay: existingTask ? existingTask.allDay : true,
+      startTime: existingTask?.startTime,
+      endTime: existingTask?.endTime,
+      completed: nextBoardStatus === 'done',
+      boardStatus: nextBoardStatus,
+      team: 'troops',
+      assignedToId,
+      assignedToName,
+      troopGroup: fare2Meta?.id,
+      location: 'SPS Warehouse',
+      notes: notesLines,
+      createdById: existingTask?.createdById || currentUser?.id || 'system',
+      createdByName: existingTask?.createdByName || currentUser?.name || 'System',
+      createdAt: existingTask?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    lastCalendarMutationAtRef.current = Date.now();
+    setCalendarEvents((prev) => {
+      const exists = prev.some((ev) => ev.id === taskId);
+      const updated = exists
+        ? prev.map((ev) => (ev.id === taskId ? nextTask : ev))
+        : [nextTask, ...prev];
+      saveStoredCalendarEvents(updated);
+      return updated;
+    });
+    markCalendarIdUnsynced(taskId);
+
+    const boardMap = getStoredBoardStatusMap();
+    boardMap[taskId] = nextBoardStatus;
+    saveStoredBoardStatusMap(boardMap);
+
+    upsertCalendarEventToDb(nextTask).then((res) => {
+      if (res.ok) clearCalendarIdUnsynced(taskId);
+    });
+  };
+
+  const handleFare2LeaderChange = (fare2Id: string, leader: Fare2LeaderAssignment | null) => {
+    upsertFare2LeaderInDb(fare2Id, leader).catch(() => {});
+    if (!leader) return;
+    // Update open unassigned tasks for this Fare2 so they route to the new leader immediately
+    setCalendarEvents((prev) => {
+      let changed = false;
+      const next = prev.map((ev) => {
+        if (
+          ev.team === 'troops' &&
+          ev.troopGroup === fare2Id &&
+          !ev.assignedToId &&
+          ev.boardStatus !== 'done'
+        ) {
+          changed = true;
+          const updatedEv = {
+            ...ev,
+            assignedToId: leader.userId,
+            assignedToName: leader.userName,
+            updatedAt: new Date().toISOString(),
+          };
+          markCalendarIdUnsynced(updatedEv.id);
+          upsertCalendarEventToDb(updatedEv).then((res) => {
+            if (res.ok) clearCalendarIdUnsynced(updatedEv.id);
+          });
+          return updatedEv;
+        }
+        return ev;
+      });
+      if (changed) saveStoredCalendarEvents(next);
+      return next;
+    });
+  };
+
+  const handleUserTeamsChange = (
+    userId: string,
+    assignedTeams: StoreTeamId[],
+    assignedFare2: string[]
+  ) => {
+    setUsers((prev) => {
+      const updated = prev.map((u) =>
+        u.id === userId ? { ...u, assignedTeams, assignedFare2 } : u
+      );
+      saveStoredUsers(updated);
+      return updated;
+    });
+    if (currentUser && currentUser.id === userId) {
+      const updatedMe = { ...currentUser, assignedTeams, assignedFare2 };
+      setCurrentUser(updatedMe);
+      saveStoredUser(updatedMe);
+    }
+    updateUserTeamAssignmentsInDb(userId, assignedTeams, assignedFare2).catch(() => {});
+  };
+
+  // Export Full Inventory Catalog (All Items & Variants) to CSV
+  const handleExportCatalogCsv = () => {
+    const csvEscape = (val: unknown): string => {
+      const s = val === undefined || val === null ? '' : String(val);
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+
+    const headers = [
+      'Product SKU',
+      'Product Name',
+      'Category',
+      'Sub-Folder',
+      'Target Audience',
+      'Price (EGP)',
+      'Materials / Fabrics',
+      'Variant SKU',
+      'Variant Size',
+      'Variant Color',
+      'Variant Stock',
+      'Low Stock Threshold',
+      'Total Product Stock',
+      'Location',
+      'Description',
+    ];
+
+    const rows: string[] = [headers.map(csvEscape).join(',')];
+    let exportedRows = 0;
+
+    products.forEach((p) => {
+      const variants = p.variants && p.variants.length > 0 ? p.variants : [];
+      if (variants.length === 0) {
+        exportedRows += 1;
+        rows.push(
+          [
+            p.sku,
+            p.name,
+            p.category,
+            p.folder || '',
+            p.targetAudience || 'Unisex',
+            p.price !== undefined ? p.price.toFixed(2) : '',
+            p.fabricDetails || '',
+            '',
+            'Standard',
+            'Default',
+            p.totalQuantity ?? 0,
+            5,
+            p.totalQuantity ?? 0,
+            p.location || '',
+            p.description || '',
+          ]
+            .map(csvEscape)
+            .join(',')
+        );
+      } else {
+        variants.forEach((v) => {
+          exportedRows += 1;
+          rows.push(
+            [
+              p.sku,
+              p.name,
+              p.category,
+              p.folder || '',
+              p.targetAudience || 'Unisex',
+              p.price !== undefined ? p.price.toFixed(2) : '',
+              p.fabricDetails || '',
+              v.sku || '',
+              v.size || 'Standard',
+              v.colorName || '',
+              v.quantity ?? 0,
+              v.minThreshold ?? 5,
+              p.totalQuantity ?? 0,
+              p.location || '',
+              p.description || '',
+            ]
+              .map(csvEscape)
+              .join(',')
+          );
+        });
+      }
+    });
+
+    const csvContent = '\uFEFF' + rows.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sps-inventory-catalog-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    showToast(
+      `Exported ${products.length} catalog items (${exportedRows} variant rows) to CSV.`
+    );
+  };
+
   // Booking Management Handlers
   const handleSaveBooking = (newBooking: Booking, autoAdvanceToPreparing = false) => {
     let nextProducts = [...products];
@@ -2101,6 +2433,9 @@ export default function App() {
       console.warn('Notice saving booking to Supabase:', err?.message);
     });
 
+    // Automatically create Scout Fera2 Task for this order
+    syncOrderTaskToScoutFera2(newBooking);
+
     const newLog: AuditLogEntry = {
       id: `log_${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -2139,6 +2474,7 @@ export default function App() {
     insertBookingInDb(safeBooking).catch((err) => {
       console.warn('Notice saving updated booking to Supabase:', err?.message);
     });
+    syncOrderTaskToScoutFera2(safeBooking);
   };
 
   const handleSaveEditedBooking = (editedBooking: Booking) => {
@@ -2160,6 +2496,7 @@ export default function App() {
     insertBookingInDb(editedBooking).catch((err) => {
       console.warn('Notice updating booking in Supabase:', err?.message);
     });
+    syncOrderTaskToScoutFera2(editedBooking);
 
     const changes: string[] = [];
     if (existing.clientName.trim() !== editedBooking.clientName.trim()) {
@@ -2466,6 +2803,22 @@ export default function App() {
     // Delete from Supabase
     deleteBookingFromDb(bookingId).catch((err) => {
       console.warn('Notice deleting booking in Supabase:', err?.message);
+    });
+
+    // Clean up linked order task & assignment map
+    const linkedTaskId = `task_order_${bookingId}`;
+    const assignMap = getStoredBookingAssignmentMap();
+    if (assignMap[bookingId]) {
+      delete assignMap[bookingId];
+      saveStoredBookingAssignmentMap(assignMap);
+    }
+    setCalendarEvents((prev) => {
+      if (!prev.some((ev) => ev.id === linkedTaskId)) return prev;
+      const filtered = prev.filter((ev) => ev.id !== linkedTaskId);
+      saveStoredCalendarEvents(filtered);
+      clearCalendarIdUnsynced(linkedTaskId);
+      deleteCalendarEventFromDb(linkedTaskId).catch(() => {});
+      return filtered;
     });
 
     const newLog: AuditLogEntry = {
@@ -3023,9 +3376,21 @@ export default function App() {
                 )}
               </div>
 
-              {/* Action buttons (Hidden for Read-Only Leaders) */}
-              {!isLeader && (
-                <div className="flex items-center gap-2">
+              {/* Action buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                {!isLeader && (
+                  <button
+                    type="button"
+                    onClick={handleExportCatalogCsv}
+                    className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs shadow-sm transition-all min-h-[44px]"
+                    title="Export all inventory items, variants, prices, fabrics & low-stock thresholds to CSV"
+                  >
+                    <Download className="w-4 h-4 text-emerald-700" />
+                    <span>Export CSV</span>
+                  </button>
+                )}
+
+                {!isLeader && (
                   <button
                     onClick={() => {
                       setProductToEdit(undefined);
@@ -3037,8 +3402,8 @@ export default function App() {
                     <Plus className="w-4 h-4" />
                     <span>{isAdmin ? 'Add New Item' : '+ Add New Item'}</span>
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             {/* Department / Audience Filter Pills (Men, Women, Kids, Unisex) */}
@@ -3505,6 +3870,7 @@ export default function App() {
           <BookingsView
             bookings={bookings}
             products={products}
+            users={users}
             currentUser={currentUser}
             onOpenNewBookingModal={() => {
               setBookingModalProduct(undefined);
@@ -3564,6 +3930,8 @@ export default function App() {
             onSaveItem={handleSaveCalendarEvent}
             onDeleteItem={handleDeleteCalendarEvent}
             onMoveItemStatus={handleMoveBoardItem}
+            onFare2LeaderChange={handleFare2LeaderChange}
+            onUserTeamsChange={handleUserTeamsChange}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
@@ -3714,6 +4082,7 @@ export default function App() {
             setBookingToEdit(null);
           }}
           products={products}
+          users={users}
           initialProduct={bookingModalProduct}
           bookingToEdit={bookingToEdit}
           currentUser={currentUser}

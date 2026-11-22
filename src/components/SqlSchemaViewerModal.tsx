@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Download, Database, ExternalLink, Terminal } from 'lucide-react';
+import { X, Copy, Check, Download, Database, Terminal, Sparkles } from 'lucide-react';
 
 interface SqlSchemaViewerModalProps {
   onClose: () => void;
@@ -7,9 +7,107 @@ interface SqlSchemaViewerModalProps {
 
 export const SqlSchemaViewerModal: React.FC<SqlSchemaViewerModalProps> = ({ onClose }) => {
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<'migration' | 'full'>('migration');
 
-  // Read or provide full SQL script
-  const sqlContent = `-- ==============================================================================
+  const migrationSql = `-- ==============================================================================
+-- SPS WAREHOUSE - SAFE INCREMENTAL MIGRATION SQL (FOR EXISTING SUPABASE DB)
+-- Run this in Supabase SQL Editor to sync all recent Team, Scout Fera2,
+-- Booking Assignment, and Calendar Board changes without dropping any data.
+-- ==============================================================================
+
+-- 1. Ensure 'leader' role exists on user_role enum
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
+    ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'leader';
+  END IF;
+END $$;
+
+-- 2. Add Store Team (6 teams) & Scout Fera2 assignment columns to profiles
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS approved_by_name TEXT,
+  ADD COLUMN IF NOT EXISTS assigned_teams JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS assigned_fare2 JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- 3. Add Troop Group, Scout Fera2, Assigned Member, and Payment Verification columns to bookings
+ALTER TABLE public.bookings
+  ADD COLUMN IF NOT EXISTS troop_group TEXT,
+  ADD COLUMN IF NOT EXISTS assigned_fare2 TEXT,
+  ADD COLUMN IF NOT EXISTS assigned_to_id TEXT,
+  ADD COLUMN IF NOT EXISTS assigned_to_name TEXT,
+  ADD COLUMN IF NOT EXISTS payment_verification_requested BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS payment_verification_requested_by TEXT,
+  ADD COLUMN IF NOT EXISTS payment_verification_requested_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS payment_verification_note TEXT;
+
+-- 4. Ensure Store Calendar Events & Team Board table + columns exist
+CREATE TABLE IF NOT EXISTS public.calendar_events (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  item_type TEXT NOT NULL DEFAULT 'event' CHECK (item_type IN ('event', 'task')),
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  start_time TEXT,
+  end_time TEXT,
+  all_day BOOLEAN NOT NULL DEFAULT FALSE,
+  completed BOOLEAN NOT NULL DEFAULT FALSE,
+  board_status TEXT,
+  team TEXT,
+  assigned_to_id TEXT,
+  assigned_to_name TEXT,
+  troop_group TEXT,
+  location TEXT,
+  notes TEXT,
+  created_by_id TEXT,
+  created_by_name TEXT NOT NULL DEFAULT 'Staff',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.calendar_events
+  ADD COLUMN IF NOT EXISTS board_status TEXT,
+  ADD COLUMN IF NOT EXISTS team TEXT,
+  ADD COLUMN IF NOT EXISTS assigned_to_id TEXT,
+  ADD COLUMN IF NOT EXISTS assigned_to_name TEXT,
+  ADD COLUMN IF NOT EXISTS troop_group TEXT;
+
+-- 5. Scout Fera2 Default Leaders table (6 Fera2 -> Default Assigned Account)
+CREATE TABLE IF NOT EXISTS public.scout_fera2_leaders (
+  fare2_id TEXT PRIMARY KEY,
+  leader_user_id TEXT NOT NULL,
+  leader_user_name TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 6. Others Category Folders table
+CREATE TABLE IF NOT EXISTS public.others_folders (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  path TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 7. Helpful performance indexes for Teams, Scout Fera2 & Assignments
+CREATE INDEX IF NOT EXISTS idx_bookings_assigned_fare2 ON public.bookings (assigned_fare2);
+CREATE INDEX IF NOT EXISTS idx_bookings_assigned_to_id ON public.bookings (assigned_to_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_team ON public.calendar_events (team);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_troop_group ON public.calendar_events (troop_group);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_assigned_to_id ON public.calendar_events (assigned_to_id);
+
+-- 8. Row Level Security & Policies (safe to re-run)
+ALTER TABLE public.calendar_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scout_fera2_leaders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.others_folders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public all access on calendar_events" ON public.calendar_events;
+CREATE POLICY "Allow public all access on calendar_events" ON public.calendar_events FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public all access on scout_fera2_leaders" ON public.scout_fera2_leaders;
+CREATE POLICY "Allow public all access on scout_fera2_leaders" ON public.scout_fera2_leaders FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public all access on others_folders" ON public.others_folders;
+CREATE POLICY "Allow public all access on others_folders" ON public.others_folders FOR ALL USING (true) WITH CHECK (true);`;
+
+  const fullSchemaSql = `-- ==============================================================================
 -- WEARHOUSE APPAREL INVENTORY - SUPABASE & POSTGRESQL PRODUCTION SCHEMA
 -- ==============================================================================
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -30,7 +128,7 @@ CREATE TABLE public.categories (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- PROFILES & AUTH WITH PENDING APPROVAL
+-- PROFILES & AUTH WITH PENDING APPROVAL + TEAM & FERA2 ASSIGNMENTS
 CREATE TABLE public.profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email TEXT UNIQUE NOT NULL,
@@ -41,9 +139,12 @@ CREATE TABLE public.profiles (
     requested_role user_role NOT NULL DEFAULT 'worker',
     employee_id TEXT,
     avatar_color TEXT DEFAULT '#d97706',
+    assigned_teams JSONB NOT NULL DEFAULT '[]'::jsonb,
+    assigned_fare2 JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     approved_at TIMESTAMPTZ,
-    approved_by UUID REFERENCES public.profiles(id)
+    approved_by UUID REFERENCES public.profiles(id),
+    approved_by_name TEXT
 );
 
 -- PRODUCTS CATALOG (Connected to categories via category_id FK)
@@ -122,11 +223,15 @@ CREATE TABLE public.stock_audit_logs (
     product_name TEXT
 );
 
--- 6. CLIENT BOOKINGS (BULK ORDERS & ADVANCE PAYMENT WORKFLOW)
+-- 6. CLIENT BOOKINGS (BULK ORDERS, SCOUT FERA2 ROUTING & ADVANCE PAYMENT WORKFLOW)
 CREATE TABLE public.bookings (
     id TEXT PRIMARY KEY,
     booking_number TEXT UNIQUE NOT NULL,
     client_name TEXT NOT NULL,
+    troop_group TEXT,
+    assigned_fare2 TEXT,
+    assigned_to_id TEXT,
+    assigned_to_name TEXT,
     client_phone TEXT NOT NULL DEFAULT 'N/A',
     notes TEXT,
     subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0,
@@ -143,6 +248,10 @@ CREATE TABLE public.bookings (
     deposit_paid_at TIMESTAMPTZ,
     final_paid_amount NUMERIC(12, 2) DEFAULT 0,
     final_paid_at TIMESTAMPTZ,
+    payment_verification_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    payment_verification_requested_by TEXT,
+    payment_verification_requested_at TIMESTAMPTZ,
+    payment_verification_note TEXT,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'preparing', 'delivered', 'done')),
     inventory_deducted BOOLEAN NOT NULL DEFAULT FALSE,
     created_by_id TEXT NOT NULL,
@@ -174,7 +283,7 @@ CREATE TABLE public.booking_items (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 8. STORE CALENDAR EVENTS & TASKS
+-- 8. STORE CALENDAR EVENTS & TEAM BOARD TASKS
 CREATE TABLE IF NOT EXISTS public.calendar_events (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -198,6 +307,14 @@ CREATE TABLE IF NOT EXISTS public.calendar_events (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 9. SCOUT FERA2 LEADERS (DEFAULT OWNER FOR EACH OF THE 6 FERA2)
+CREATE TABLE IF NOT EXISTS public.scout_fera2_leaders (
+    fare2_id TEXT PRIMARY KEY,
+    leader_user_id TEXT NOT NULL,
+    leader_user_name TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ENABLE ROW LEVEL SECURITY
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -209,6 +326,7 @@ ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.booking_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.others_folders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.calendar_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.scout_fera2_leaders ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Allow public all access on categories" ON public.categories FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on profiles" ON public.profiles FOR ALL USING (true) WITH CHECK (true);
@@ -220,6 +338,7 @@ CREATE POLICY "Allow public all access on bookings" ON public.bookings FOR ALL U
 CREATE POLICY "Allow public all access on booking_items" ON public.booking_items FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on others_folders" ON public.others_folders FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on calendar_events" ON public.calendar_events FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow public all access on scout_fera2_leaders" ON public.scout_fera2_leaders FOR ALL USING (true) WITH CHECK (true);
 
 -- SEED DATA (ADMIN, WORKERS, CLOTHING ITEMS & VARIANTS)
 INSERT INTO public.profiles (email, password_hash, full_name, role, status, requested_role, employee_id)
@@ -238,6 +357,8 @@ VALUES
   ('prod_pants_05', 'WH-PT-380', 'Heavy French Terry Cuffed Sweatpants', 'Pants & Jeans', 'Women', '380 GSM fleece lounge sweatpants.', '380 GSM 100% Cotton French Terry', 28.00),
   ('prod_kids_06', 'WH-KD-102', 'Kids Everyday Raglan Fleece Crew', 'Hoodies & Sweatshirts', 'Kids', '300 GSM ultra-soft brushed fleece pullover.', '80% Cotton / 20% Poly Fleece', 22.00);`;
 
+  const sqlContent = activeTab === 'migration' ? migrationSql : fullSchemaSql;
+
   const handleCopy = () => {
     navigator.clipboard.writeText(sqlContent);
     setCopied(true);
@@ -249,7 +370,7 @@ VALUES
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'supabase_schema.sql';
+    a.download = activeTab === 'migration' ? 'supabase_migration_update.sql' : 'supabase_schema.sql';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -258,17 +379,17 @@ VALUES
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center font-bold">
               <Database className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                Supabase & PostgreSQL Database SQL Schema
+                Supabase &amp; PostgreSQL Database SQL
               </h2>
               <p className="text-xs text-slate-500 font-medium">
-                Complete database tables, RLS policies, and seed data for Supabase
+                Run the Migration SQL on an existing database, or Full Schema for a fresh setup
               </p>
             </div>
           </div>
@@ -281,31 +402,62 @@ VALUES
           </button>
         </div>
 
-        {/* Instructions banner */}
-        <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>
-              Copy and run this in your <strong>Supabase SQL Editor</strong> to deploy all tables, roles, and initial products.
-            </span>
+        {/* Mode Tabs + Instructions banner */}
+        <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex bg-white border border-slate-200 rounded-xl p-1 gap-1 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setActiveTab('migration')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                  activeTab === 'migration'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Update Migration SQL (Existing DB)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('full')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                  activeTab === 'full'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>Full Fresh Schema</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-100 shadow-sm transition-colors"
+              >
+                {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-slate-600" />}
+                <span>{copied ? 'Copied to Clipboard!' : 'Copy SQL'}</span>
+              </button>
+
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow-sm transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download .sql</span>
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-100 shadow-sm transition-colors"
-            >
-              {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-slate-600" />}
-              <span>{copied ? 'Copied to Clipboard!' : 'Copy SQL'}</span>
-            </button>
-
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow-sm transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              <span>Download .sql</span>
-            </button>
+          <div className="flex items-center gap-2 text-xs text-slate-700">
+            <Terminal className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              {activeTab === 'migration'
+                ? 'Safe to run on your live Supabase database: adds Team/Scout Fera2 columns on profiles & bookings, creates scout_fera2_leaders & calendar_events if missing.'
+                : 'Complete schema for setting up a brand new Supabase database from scratch.'}
+            </span>
           </div>
         </div>
 
@@ -317,7 +469,7 @@ VALUES
         {/* Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <div className="text-xs text-slate-500 font-medium">
-            Saved to root project as <code className="bg-slate-200 px-1.5 py-0.5 rounded text-slate-800">supabase_schema.sql</code>
+            {activeTab === 'migration' ? 'Incremental Supabase migration script' : 'Full PostgreSQL schema'}
           </div>
           <button
             onClick={onClose}
