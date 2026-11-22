@@ -370,9 +370,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                             className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: troopMeta.hex }}
                           />
-                          <span>
-                            {troopMeta.label} ({troopMeta.audience})
-                          </span>
+                          <span>{troopMeta.label}</span>
                         </span>
                       ) : (
                         <>
@@ -389,9 +387,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                                 className="w-2 h-2 rounded-full shrink-0"
                                 style={{ backgroundColor: routedTroopMeta.hex }}
                               />
-                              <span>
-                                → {routedTroopMeta.label} ({routedTroopMeta.audience})
-                              </span>
+                              <span>→ {routedTroopMeta.label}</span>
                             </span>
                           )}
                         </>

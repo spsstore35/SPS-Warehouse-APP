@@ -1610,13 +1610,6 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                           <h3 className="text-sm sm:text-base font-black text-slate-900">
                             {br.branchName}
                           </h3>
-                          {fm && (
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${fm.chipClass}`}
-                            >
-                              {fm.audience}
-                            </span>
-                          )}
                         </div>
                         <div className="text-[11px] font-mono text-slate-500 mt-0.5">
                           {br.ordersCount} order{br.ordersCount === 1 ? '' : 's'} · {br.totalUnits} total pcs
@@ -1872,7 +1865,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                   key={f.id}
                   type="button"
                   onClick={() => toggleAggregatorFare2(f.id)}
-                  title={`${f.label} (${f.audience}) — click to select one or multiple Fera2`}
+                  title={`${f.label} — click to select one or multiple Fera2`}
                   className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap shrink-0 min-h-[34px] flex items-center gap-1.5 cursor-pointer ${
                     isSelected ? f.activeButtonClass : f.chipClass
                   }`}

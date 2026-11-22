@@ -695,7 +695,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                             >
                               <span className={`w-2 h-2 rounded-full shrink-0 ${selectedCoreMeta.dotClass}`} />
                               <span>{selectedCoreMeta.label}</span>
-                              <span className="opacity-75 font-semibold">({selectedCoreMeta.audience})</span>
                             </span>
                           ) : troopGroup === 'Afrad' ? (
                             <div className="flex items-center gap-1.5 flex-wrap min-w-0">
@@ -757,9 +756,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                                     }`}
                                   />
                                   <span className="text-xs font-extrabold">{f.label}</span>
-                                  <span className="text-[11px] font-semibold opacity-80">
-                                    ({f.audience})
-                                  </span>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   {leader?.userName && (
@@ -910,9 +906,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                                     selected ? 'bg-white' : f.dotClass
                                   }`}
                                 />
-                                <span className="truncate">
-                                  {f.label} <span className="opacity-75">({f.audience})</span>
-                                </span>
+                                <span className="truncate">{f.label}</span>
                               </button>
                             );
                           })}

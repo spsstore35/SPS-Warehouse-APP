@@ -710,7 +710,7 @@ This is our official Scout Store number. Through this chat, you can:
                               return (
                                 <span
                                   className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${fm.solidBadgeClass}`}
-                                  title={`${fm.label} (${fm.audience})`}
+                                  title={fm.label}
                                 >
                                   {fm.label}
                                 </span>
@@ -726,7 +726,7 @@ This is our official Scout Store number. Through this chat, you can:
                                 {routedFm && (
                                   <span
                                     className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${routedFm.solidBadgeClass}`}
-                                    title={`Routed to Scout Fera2 → ${routedFm.label} (${routedFm.audience})`}
+                                    title={`Routed to Scout Fera2 → ${routedFm.label}`}
                                   >
                                     → {routedFm.label}
                                   </span>
@@ -967,7 +967,7 @@ This is our official Scout Store number. Through this chat, you can:
                         return (
                           <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-0.5 rounded-md ${fm.solidBadgeClass}`}>
                             <span className="w-2 h-2 rounded-full bg-white/90 shrink-0" />
-                            <span>{fm.label} · {fm.audience}</span>
+                            <span>{fm.label}</span>
                           </span>
                         );
                       }
@@ -980,7 +980,7 @@ This is our official Scout Store number. Through this chat, you can:
                           )}
                           {routedFm && (
                             <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2 py-0.5 rounded-md ${routedFm.solidBadgeClass}`}>
-                              <span>→ {routedFm.label} · {routedFm.audience}</span>
+                              <span>→ {routedFm.label}</span>
                             </span>
                           )}
                         </>
@@ -1203,7 +1203,7 @@ This is our official Scout Store number. Through this chat, you can:
                           <span
                             className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${resolvedMeta.solidBadgeClass}`}
                           >
-                            {resolvedMeta.label} · {resolvedMeta.audience}
+                            {resolvedMeta.label}
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
@@ -1234,7 +1234,7 @@ This is our official Scout Store number. Through this chat, you can:
                           <option value="">-- Not assigned to group (Afrad) --</option>
                           {SCOUT_FERA2_LIST.map((f) => (
                             <option key={f.id} value={f.id}>
-                              {f.label} ({f.audience})
+                              {f.label}
                             </option>
                           ))}
                         </select>

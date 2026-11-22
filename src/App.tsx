@@ -2170,8 +2170,8 @@ export default function App() {
 
     const groupLine = fare2Meta
       ? booking.troopGroup && booking.troopGroup !== fare2Meta.id
-        ? `Order Type: ${booking.troopGroup} → Routed to ${fare2Meta.label} (${fare2Meta.audience})`
-        : `Scout Fera2: ${fare2Meta.label} (${fare2Meta.audience})`
+        ? `Order Type: ${booking.troopGroup} → Routed to ${fare2Meta.label}`
+        : `Scout Fera2: ${fare2Meta.label}`
       : `Order Type: ${booking.troopGroup || 'Afrad (Individual — Not assigned to a group)'}`;
 
     const notesLines = [
@@ -2267,6 +2267,11 @@ export default function App() {
     assignedTeams: StoreTeamId[],
     assignedFare2: string[]
   ) => {
+    const dir = getStoredTeamDirectory();
+    saveStoredTeamDirectory({ ...dir, [userId]: assignedTeams });
+    const f2Map = getStoredUserFare2Map();
+    saveStoredUserFare2Map({ ...f2Map, [userId]: assignedFare2 });
+
     setUsers((prev) => {
       const updated = prev.map((u) =>
         u.id === userId ? { ...u, assignedTeams, assignedFare2 } : u
@@ -3806,6 +3811,7 @@ export default function App() {
             onRejectUser={handleRejectUser}
             onDeleteUser={handleDeleteUser}
             onUpdateUserRole={handleUpdateUserRole}
+            onUpdateUserTeams={handleUserTeamsChange}
             onCreateUserDirectly={handleCreateUserDirectly}
             onApproveProduct={handleApproveProduct}
             onRejectProduct={handleRejectProduct}
@@ -3828,6 +3834,7 @@ export default function App() {
             onRejectUser={handleRejectUser}
             onDeleteUser={handleDeleteUser}
             onUpdateUserRole={handleUpdateUserRole}
+            onUpdateUserTeams={handleUserTeamsChange}
             onCreateUserDirectly={handleCreateUserDirectly}
             onApproveProduct={handleApproveProduct}
             onRejectProduct={handleRejectProduct}

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BoardColumnStatus,
   CalendarItem,
@@ -286,6 +286,41 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     getStoredFare2Leaders()
   );
 
+  useEffect(() => {
+    setTeamDirectory((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      users.forEach((u) => {
+        if (Array.isArray(u.assignedTeams)) {
+          const prevStr = JSON.stringify(prev[u.id] || []);
+          const nextStr = JSON.stringify(u.assignedTeams);
+          if (prevStr !== nextStr) {
+            next[u.id] = u.assignedTeams;
+            changed = true;
+          }
+        }
+      });
+      if (changed) saveStoredTeamDirectory(next);
+      return changed ? next : prev;
+    });
+    setUserFare2Map((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      users.forEach((u) => {
+        if (Array.isArray(u.assignedFare2)) {
+          const prevStr = JSON.stringify(prev[u.id] || []);
+          const nextStr = JSON.stringify(u.assignedFare2);
+          if (prevStr !== nextStr) {
+            next[u.id] = u.assignedFare2;
+            changed = true;
+          }
+        }
+      });
+      if (changed) saveStoredUserFare2Map(next);
+      return changed ? next : prev;
+    });
+  }, [users]);
+
   // Modals: Detail, Edit Confirm, Delete Confirm, Stage Confirm, Member Profile & Form
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [pendingEditItem, setPendingEditItem] = useState<CalendarItem | null>(null);
@@ -499,7 +534,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     if (u && fm) {
       onShowToast?.(
         adding
-          ? `Assigned ${u.name} to Scout Fera2 → ${fm.label} (${fm.audience}).`
+          ? `Assigned ${u.name} to Scout Fera2 → ${fm.label}.`
           : `Removed ${fm.label} from ${u.name}.`
       );
     }
@@ -540,7 +575,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     const fMeta = getScoutFare2Meta(fare2Id);
     if (user && fMeta) {
       onShowToast?.(
-        `Assigned ${user.name} as responsible for ${fMeta.label} (${fMeta.audience}) under Scout Fera2.`
+        `Assigned ${user.name} as responsible for ${fMeta.label} under Scout Fera2.`
       );
     } else if (fMeta) {
       onShowToast?.(`Cleared responsible leader for ${fMeta.label}.`);
@@ -1038,7 +1073,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap shrink-0 flex items-center gap-1.5 transition-colors ${
                         isSelected ? f.activeButtonClass : f.chipClass
                       }`}
-                      title={`${f.label} — ${f.audience}`}
+                      title={f.label}
                     >
                       <span
                         className={`w-2 h-2 rounded-full shrink-0 ${
@@ -1046,7 +1081,6 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         }`}
                       />
                       <span>{f.label}</span>
-                      <span className="opacity-75 font-medium">({f.audience})</span>
                     </button>
                   );
                 })}
@@ -1165,12 +1199,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               return fare2Meta ? (
                                 <span
                                   className={`px-2 py-0.5 rounded-md text-[11px] font-bold inline-flex items-center gap-1 ${fare2Meta.solidBadgeClass}`}
-                                  title={`${fare2Meta.label} (${fare2Meta.audience})`}
+                                  title={fare2Meta.label}
                                 >
                                   <span>{fare2Meta.label}</span>
-                                  <span className="opacity-85 font-medium text-[10px]">
-                                    · {fare2Meta.audience}
-                                  </span>
                                 </span>
                               ) : (
                                 <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
@@ -1565,7 +1596,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                             type="button"
                                             onClick={() => toggleUserFare2(member.id, fid)}
                                             className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${fm.chipClass}`}
-                                            title={`Assigned to ${fm.label} (${fm.audience}) — click to remove`}
+                                            title={`Assigned to ${fm.label} — click to remove`}
                                           >
                                             <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
                                             <span>{fm.label}</span>
@@ -1585,7 +1616,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                         <option value="">+ Assign Fare2...</option>
                                         {SCOUT_FERA2_LIST.filter((f) => !memberFare2List.includes(f.id)).map((f) => (
                                           <option key={f.id} value={f.id}>
-                                            {f.label} ({f.audience})
+                                            {f.label}
                                           </option>
                                         ))}
                                       </select>
@@ -1626,9 +1657,6 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                     <div className="min-w-0">
                                       <div className="text-xs font-bold text-slate-900 truncate">
                                         {fare2.label}
-                                      </div>
-                                      <div className="text-[10px] font-semibold text-slate-500">
-                                        {fare2.audience}
                                       </div>
                                     </div>
                                   </div>
@@ -1835,7 +1863,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                     className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 transition-colors ${
                                       active ? f.activeButtonClass : f.chipClass
                                     }`}
-                                    title={`${f.label} (${f.audience})`}
+                                    title={f.label}
                                   >
                                     <span
                                       className={`w-1.5 h-1.5 rounded-full ${
@@ -2141,7 +2169,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       const fm = getScoutFare2Meta(t);
                       return (
                         <option key={t} value={t}>
-                          {fm ? `${fm.label} (${fm.audience})` : t}
+                          {fm ? fm.label : t}
                         </option>
                       );
                     })}
@@ -2314,9 +2342,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               className="w-2 h-2 rounded-full shrink-0"
                               style={{ backgroundColor: fm.hex }}
                             />
-                            <span>
-                              {fm.label} ({fm.audience})
-                            </span>
+                            <span>{fm.label}</span>
                           </span>
                         ) : (
                           <span className="font-bold text-slate-900">{detailItem.troopGroup}</span>

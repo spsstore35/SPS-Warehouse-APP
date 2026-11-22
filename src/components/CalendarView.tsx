@@ -910,7 +910,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   key={f.id}
                   type="button"
                   onClick={() => toggleFare2Filter(f.id)}
-                  title={`${f.label} (${f.audience}) — tap to multi-select`}
+                  title={`${f.label} — tap to multi-select`}
                   className={`px-2.5 py-1.5 min-h-[34px] rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
                     isActive ? f.activeButtonClass : f.chipClass
                   }`}
@@ -1387,7 +1387,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                                 <span
                                   className={`px-2 py-0.5 rounded text-[11px] font-bold ${fm.solidBadgeClass}`}
                                 >
-                                  {fm.label} · {fm.audience}
+                                  {fm.label}
                                 </span>
                               )}
                               {!fm && item.troopGroup && (
@@ -1583,7 +1583,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                                   <span
                                     className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${fm.solidBadgeClass}`}
                                   >
-                                    {fm.label} · {fm.audience}
+                                    {fm.label}
                                   </span>
                                 </>
                               ) : (
@@ -2043,7 +2043,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                               className={`px-2 py-0.5 rounded text-[11px] font-bold inline-flex items-center gap-1 ${fm.solidBadgeClass}`}
                             >
                               <span>{fm.label}</span>
-                              <span className="opacity-85">({fm.audience})</span>
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1">
@@ -2138,9 +2137,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                               className="w-2 h-2 rounded-full shrink-0"
                               style={{ backgroundColor: fm.hex }}
                             />
-                            <span>
-                              {fm.label} ({fm.audience})
-                            </span>
+                            <span>{fm.label}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-900">

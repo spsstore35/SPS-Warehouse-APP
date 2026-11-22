@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { AdjustmentRequest, User, Role, Product } from '../types/inventory';
+import { AdjustmentRequest, User, Role, Product, StoreTeamId } from '../types/inventory';
+import { STORE_TEAMS } from './CalendarView';
+import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
+import { getStoredTeamDirectory, getStoredUserFare2Map } from '../utils/storage';
 import {
   Check,
   X,
@@ -42,6 +45,11 @@ interface ApprovalsViewProps {
   onRejectUser: (userId: string) => void;
   onDeleteUser?: (userId: string) => void;
   onUpdateUserRole?: (userId: string, newRole: Role) => Promise<void> | void;
+  onUpdateUserTeams?: (
+    userId: string,
+    assignedTeams: StoreTeamId[],
+    assignedFare2: string[]
+  ) => Promise<void> | void;
   onCreateUserDirectly?: (data: {
     name: string;
     email: string;
@@ -66,6 +74,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onRejectUser,
   onDeleteUser,
   onUpdateUserRole,
+  onUpdateUserTeams,
   onCreateUserDirectly,
   onApproveProduct,
   onRejectProduct,
@@ -110,7 +119,22 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [userToEditRole, setUserToEditRole] = useState<User | null>(null);
   const [newSelectedRole, setNewSelectedRole] = useState<Role>('worker');
+  const [newSelectedTeams, setNewSelectedTeams] = useState<StoreTeamId[]>([]);
+  const [newSelectedFare2, setNewSelectedFare2] = useState<string[]>([]);
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
+
+  const openEditAccountModal = (user: User) => {
+    const localTeams = getStoredTeamDirectory()[user.id] || [];
+    const localFare2 = getStoredUserFare2Map()[user.id] || [];
+    const resolvedTeams =
+      user.assignedTeams && user.assignedTeams.length > 0 ? user.assignedTeams : localTeams;
+    const resolvedFare2 =
+      user.assignedFare2 && user.assignedFare2.length > 0 ? user.assignedFare2 : localFare2;
+    setUserToEditRole(user);
+    setNewSelectedRole(user.role);
+    setNewSelectedTeams(resolvedTeams);
+    setNewSelectedFare2(resolvedFare2);
+  };
 
   const handleConfirmDeleteUser = () => {
     if (!userToDelete || !onDeleteUser) return;
@@ -1061,6 +1085,47 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           Registered: {new Date(user.createdAt || Date.now()).toLocaleDateString()}
                         </div>
+                        {(() => {
+                          const userTeams =
+                            user.assignedTeams && user.assignedTeams.length > 0
+                              ? user.assignedTeams
+                              : getStoredTeamDirectory()[user.id] || [];
+                          const userF2 =
+                            user.assignedFare2 && user.assignedFare2.length > 0
+                              ? user.assignedFare2
+                              : getStoredUserFare2Map()[user.id] || [];
+                          if (userTeams.length === 0 && userF2.length === 0) return null;
+                          return (
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                              {userTeams.map((tid) => {
+                                const tm = STORE_TEAMS.find((t) => t.id === tid);
+                                if (!tm) return null;
+                                return (
+                                  <span
+                                    key={tid}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${tm.chipClass}`}
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full ${tm.dotClass}`} />
+                                    <span>{tm.shortLabel}</span>
+                                  </span>
+                                );
+                              })}
+                              {userF2.map((fid) => {
+                                const fm = getScoutFare2Meta(fid);
+                                if (!fm) return null;
+                                return (
+                                  <span
+                                    key={fid}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${fm.chipClass}`}
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
+                                    <span>{fm.label}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1072,6 +1137,16 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                             <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
                             <span>Logged In (Current User)</span>
                           </span>
+                          {(onUpdateUserTeams || onUpdateUserRole) && (
+                            <button
+                              type="button"
+                              onClick={() => openEditAccountModal(user)}
+                              className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
+                              title="Assign Store Teams & Scout Fera2"
+                            >
+                              <Edit3 className="w-4 h-4 text-amber-600" />
+                            </button>
+                          )}
                         </div>
                       ) : isPending ? (
                         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -1096,15 +1171,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                             <Check className="w-3.5 h-3.5 text-emerald-600" />
                             <span>Active & Approved</span>
                           </span>
-                          {onUpdateUserRole && (
+                          {(onUpdateUserRole || onUpdateUserTeams) && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setUserToEditRole(user);
-                                setNewSelectedRole(user.role);
-                              }}
+                              onClick={() => openEditAccountModal(user)}
                               className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
-                              title="Change Account Role (Staff / Admin Authority)"
+                              title="Edit Account Role & Team Assignments"
                             >
                               <Edit3 className="w-4 h-4 text-amber-600" />
                             </button>
@@ -1125,15 +1197,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                             <X className="w-3.5 h-3.5 text-rose-600" />
                             <span>Declined</span>
                           </span>
-                          {onUpdateUserRole && (
+                          {(onUpdateUserRole || onUpdateUserTeams) && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setUserToEditRole(user);
-                                setNewSelectedRole(user.role);
-                              }}
+                              onClick={() => openEditAccountModal(user)}
                               className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
-                              title="Change Account Role (Staff / Admin Authority)"
+                              title="Edit Account Role & Team Assignments"
                             >
                               <Edit3 className="w-4 h-4 text-amber-600" />
                             </button>
@@ -1541,123 +1610,269 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         onCancel={() => setUserToDelete(null)}
       />
 
-      {/* Yellow Edit Modal: Change User Account Role (Staff <-> Admin) */}
-      {userToEditRole && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
-                  <ShieldAlert className="w-5 h-5" />
+      {/* Yellow Edit Modal: Edit Account Role & Store Team / Scout Fera2 Assignments */}
+      {userToEditRole && (() => {
+        const isEditingCurrentUser =
+          currentUser &&
+          (userToEditRole.id === currentUser.id ||
+            userToEditRole.email.toLowerCase() === currentUser.email.toLowerCase());
+        const hasTroopsTeam = newSelectedTeams.includes('troops');
+
+        return (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in max-h-[92vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Edit Account Role &amp; Teams
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium truncate max-w-[280px]">
+                      {userToEditRole.name} • {userToEditRole.email}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">Change Account Role</h3>
-                  <p className="text-xs text-slate-500 font-medium truncate max-w-[260px]">
-                    {userToEditRole.name} • {userToEditRole.email}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setUserToEditRole(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
-                Assign System Role & Permissions:
-              </label>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setNewSelectedRole('worker')}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    newSelectedRole === 'worker'
-                      ? 'border-sky-500 bg-sky-50/70 text-sky-950 ring-2 ring-sky-500/20'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                  }`}
+                  onClick={() => setUserToEditRole(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
                 >
-                  <div className="font-bold text-xs flex items-center gap-1.5">
-                    <UserIcon className="w-3.5 h-3.5 text-sky-600" />
-                    <span>Staff</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-1">
-                    Request stock edits, create bookings &amp; request payment confirmation.
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setNewSelectedRole('leader')}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    newSelectedRole === 'leader'
-                      ? 'border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs flex items-center gap-1.5">
-                    <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Scout Leader</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-1">
-                    Read-only view of catalog items &amp; prices only.
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setNewSelectedRole('admin')}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    newSelectedRole === 'admin'
-                      ? 'border-amber-500 bg-amber-50/70 text-amber-950 ring-2 ring-amber-500/20'
-                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Admin</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-1">
-                    Full authority including analytics, approvals &amp; direct edits.
-                  </div>
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setUserToEditRole(null)}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[40px]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isUpdatingRole}
-                onClick={async () => {
-                  if (!userToEditRole || !onUpdateUserRole) return;
-                  setIsUpdatingRole(true);
-                  try {
-                    await onUpdateUserRole(userToEditRole.id, newSelectedRole);
-                    setUserToEditRole(null);
-                  } finally {
-                    setIsUpdatingRole(false);
-                  }
-                }}
-                className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs flex items-center gap-1.5 min-h-[40px] transition-all"
-              >
-                <Check className="w-4 h-4 stroke-[3]" />
-                <span>{isUpdatingRole ? 'Saving...' : 'Save New Role'}</span>
-              </button>
+              {/* Section 1: System Role */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                    Assign System Role &amp; Permissions:
+                  </label>
+                  {isEditingCurrentUser && (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                      Current Admin Locked
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <button
+                    type="button"
+                    disabled={Boolean(isEditingCurrentUser)}
+                    onClick={() => setNewSelectedRole('worker')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      newSelectedRole === 'worker'
+                        ? 'border-sky-500 bg-sky-50/70 text-sky-950 ring-2 ring-sky-500/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <UserIcon className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Staff</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Request stock edits, create bookings &amp; request payment confirmation.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={Boolean(isEditingCurrentUser)}
+                    onClick={() => setNewSelectedRole('leader')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      newSelectedRole === 'leader'
+                        ? 'border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Scout Leader</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Read-only view of catalog items &amp; prices only.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={Boolean(isEditingCurrentUser)}
+                    onClick={() => setNewSelectedRole('admin')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      newSelectedRole === 'admin'
+                        ? 'border-amber-500 bg-amber-50/70 text-amber-950 ring-2 ring-amber-500/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Admin</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Full authority including analytics, approvals &amp; direct edits.
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Section 2: Store Teams Assignment (6 Teams) */}
+              {newSelectedRole !== 'leader' && (
+                <div className="space-y-2.5 pt-3 border-t border-slate-100">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                      Assign Store Teams (6 Teams):
+                    </label>
+                    {newSelectedTeams.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewSelectedTeams([]);
+                          setNewSelectedFare2([]);
+                        }}
+                        className="text-[11px] font-bold text-rose-600 hover:underline"
+                      >
+                        Clear Teams
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {STORE_TEAMS.map((team) => {
+                      const active = newSelectedTeams.includes(team.id);
+                      return (
+                        <button
+                          key={team.id}
+                          type="button"
+                          onClick={() => {
+                            setNewSelectedTeams((prev) => {
+                              const next = prev.includes(team.id)
+                                ? prev.filter((id) => id !== team.id)
+                                : [...prev, team.id];
+                              if (team.id === 'troops' && prev.includes('troops')) {
+                                setNewSelectedFare2([]);
+                              }
+                              return next;
+                            });
+                          }}
+                          className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-between gap-1.5 transition-colors cursor-pointer ${
+                            active ? team.activeButtonClass : team.chipClass
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                active ? 'bg-white' : team.dotClass
+                              }`}
+                            />
+                            <span className="truncate">{team.shortLabel}</span>
+                          </span>
+                          {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 3: Scout Fera2 Sub-Teams (Appears when Scout Fera2 is selected) */}
+              {newSelectedRole !== 'leader' && hasTroopsTeam && (
+                <div className="space-y-2.5 p-3.5 rounded-xl bg-emerald-50/50 border border-emerald-200 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-emerald-950 uppercase tracking-wider block">
+                      Assign Scout Fera2 (from the 6 Fera2):
+                    </label>
+                    {newSelectedFare2.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSelectedFare2([])}
+                        className="text-[11px] font-bold text-emerald-800 hover:underline"
+                      >
+                        Clear Fera2
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {SCOUT_FERA2_LIST.map((f) => {
+                      const active = newSelectedFare2.includes(f.id);
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => {
+                            setNewSelectedFare2((prev) =>
+                              prev.includes(f.id)
+                                ? prev.filter((id) => id !== f.id)
+                                : [...prev, f.id]
+                            );
+                          }}
+                          className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-between gap-1.5 transition-colors cursor-pointer ${
+                            active ? f.activeButtonClass : f.chipClass
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                active ? 'bg-white' : f.dotClass
+                              }`}
+                            />
+                            <span className="truncate">{f.label}</span>
+                          </span>
+                          {active && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setUserToEditRole(null)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[40px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isUpdatingRole}
+                  onClick={async () => {
+                    if (!userToEditRole) return;
+                    setIsUpdatingRole(true);
+                    try {
+                      if (
+                        !isEditingCurrentUser &&
+                        onUpdateUserRole &&
+                        newSelectedRole !== userToEditRole.role
+                      ) {
+                        await onUpdateUserRole(userToEditRole.id, newSelectedRole);
+                      }
+                      if (onUpdateUserTeams) {
+                        const finalTeams = newSelectedRole === 'leader' ? [] : newSelectedTeams;
+                        const finalFare2 =
+                          newSelectedRole !== 'leader' && finalTeams.includes('troops')
+                            ? newSelectedFare2
+                            : [];
+                        await onUpdateUserTeams(userToEditRole.id, finalTeams, finalFare2);
+                      }
+                      setUserToEditRole(null);
+                    } finally {
+                      setIsUpdatingRole(false);
+                    }
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs flex items-center gap-1.5 min-h-[40px] transition-all"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>{isUpdatingRole ? 'Saving...' : 'Save Account Changes'}</span>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
     </div>
   );
