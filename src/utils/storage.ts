@@ -450,3 +450,75 @@ export function saveStoredUserFare2Map(map: Record<string, string[]>): void {
   } catch {}
 }
 
+import type {
+  Vendor,
+  ProductWorkflow,
+  ProductStageVendor,
+  VendorPriceEntry,
+  ProductionBatch,
+} from '../types/inventory';
+
+const SOURCING_KEYS = {
+  VENDORS: 'sps_sourcing_vendors_v1',
+  WORKFLOWS: 'sps_sourcing_workflows_v1',
+  STAGE_VENDORS: 'sps_sourcing_stage_vendors_v1',
+  PRICE_HISTORY: 'sps_sourcing_price_history_v1',
+  BATCHES: 'sps_sourcing_batches_v1',
+  SEEDED: 'sps_sourcing_seeded_v1',
+};
+
+function loadJsonArray<T>(key: string): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveJsonArray<T>(key: string, items: T[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(items));
+  } catch (err) {
+    console.error(`Failed saving ${key}:`, err);
+  }
+}
+
+export const getStoredVendors = (): Vendor[] => loadJsonArray<Vendor>(SOURCING_KEYS.VENDORS);
+export const saveStoredVendors = (items: Vendor[]): void => saveJsonArray(SOURCING_KEYS.VENDORS, items);
+
+export const getStoredProductWorkflows = (): ProductWorkflow[] =>
+  loadJsonArray<ProductWorkflow>(SOURCING_KEYS.WORKFLOWS);
+export const saveStoredProductWorkflows = (items: ProductWorkflow[]): void =>
+  saveJsonArray(SOURCING_KEYS.WORKFLOWS, items);
+
+export const getStoredProductStageVendors = (): ProductStageVendor[] =>
+  loadJsonArray<ProductStageVendor>(SOURCING_KEYS.STAGE_VENDORS);
+export const saveStoredProductStageVendors = (items: ProductStageVendor[]): void =>
+  saveJsonArray(SOURCING_KEYS.STAGE_VENDORS, items);
+
+export const getStoredVendorPriceHistory = (): VendorPriceEntry[] =>
+  loadJsonArray<VendorPriceEntry>(SOURCING_KEYS.PRICE_HISTORY);
+export const saveStoredVendorPriceHistory = (items: VendorPriceEntry[]): void =>
+  saveJsonArray(SOURCING_KEYS.PRICE_HISTORY, items);
+
+export const getStoredProductionBatches = (): ProductionBatch[] =>
+  loadJsonArray<ProductionBatch>(SOURCING_KEYS.BATCHES);
+export const saveStoredProductionBatches = (items: ProductionBatch[]): void =>
+  saveJsonArray(SOURCING_KEYS.BATCHES, items);
+
+export const isSourcingSeeded = (): boolean => {
+  try {
+    return localStorage.getItem(SOURCING_KEYS.SEEDED) === 'true';
+  } catch {
+    return false;
+  }
+};
+
+export const markSourcingSeeded = (): void => {
+  try {
+    localStorage.setItem(SOURCING_KEYS.SEEDED, 'true');
+  } catch {}
+};

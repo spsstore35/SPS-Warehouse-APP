@@ -329,6 +329,34 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     item: CalendarItem;
     nextStatus: BoardColumnStatus;
   } | null>(null);
+  const [pendingMemberChange, setPendingMemberChange] = useState<
+    | {
+        kind: 'add-team';
+        user: User;
+        team: StoreTeamMeta;
+        existingTeams: StoreTeamMeta[];
+      }
+    | {
+        kind: 'remove-team';
+        user: User;
+        team: StoreTeamMeta;
+        remainingTeams: StoreTeamMeta[];
+      }
+    | {
+        kind: 'toggle-fare2';
+        user: User;
+        fare2Id: string;
+        adding: boolean;
+        existingFare2Ids: string[];
+      }
+    | {
+        kind: 'set-fare2-leader';
+        fare2Id: string;
+        newUser: User | null;
+        previousLeaderName: string | null;
+      }
+    | null
+  >(null);
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CalendarItem | null>(null);
@@ -502,6 +530,60 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     if (u && t) {
       onShowToast?.(`Assigned ${u.name} to ${t.label}.`);
     }
+  };
+
+  const requestAddUserToTeam = (userId: string, teamId: StoreTeamId) => {
+    const user = activeMembers.find((m) => m.id === userId);
+    const team = getTeamMeta(teamId);
+    if (!user || !team) return;
+    const currentSet = effectiveUserTeams.get(userId) || new Set<StoreTeamId>();
+    if (currentSet.has(teamId)) return;
+    const existingTeams = Array.from(currentSet)
+      .map((tid) => getTeamMeta(tid))
+      .filter((t): t is StoreTeamMeta => Boolean(t));
+    setPendingMemberChange({ kind: 'add-team', user, team, existingTeams });
+  };
+
+  const requestRemoveUserFromTeam = (userId: string, teamId: StoreTeamId) => {
+    const user = activeMembers.find((m) => m.id === userId);
+    const team = getTeamMeta(teamId);
+    if (!user || !team) return;
+    const currentSet = effectiveUserTeams.get(userId) || new Set<StoreTeamId>();
+    if (!currentSet.has(teamId)) return;
+    const remainingTeams = Array.from(currentSet)
+      .filter((tid) => tid !== teamId)
+      .map((tid) => getTeamMeta(tid))
+      .filter((t): t is StoreTeamMeta => Boolean(t));
+    setPendingMemberChange({ kind: 'remove-team', user, team, remainingTeams });
+  };
+
+  const requestToggleUserFare2 = (userId: string, fare2Id: string) => {
+    const user = activeMembers.find((m) => m.id === userId);
+    if (!user) return;
+    const currentFare2 = Array.from(
+      new Set(userFare2Map[userId] ?? Array.from(effectiveUserFare2.get(userId) || []))
+    );
+    const adding = !currentFare2.includes(fare2Id);
+    const existingFare2Ids = currentFare2.filter((id) => id !== fare2Id);
+    setPendingMemberChange({
+      kind: 'toggle-fare2',
+      user,
+      fare2Id,
+      adding,
+      existingFare2Ids,
+    });
+  };
+
+  const requestSetFare2Leader = (fare2Id: string, userId: string) => {
+    const currentLeader = fare2Leaders[fare2Id];
+    if ((currentLeader?.userId || '') === userId) return;
+    const newUser = activeMembers.find((m) => m.id === userId) || null;
+    setPendingMemberChange({
+      kind: 'set-fare2-leader',
+      fare2Id,
+      newUser,
+      previousLeaderName: currentLeader?.userName || null,
+    });
   };
 
   const toggleUserFare2 = (userId: string, fare2Id: string) => {
@@ -1573,14 +1655,6 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                       >
                                         Cards
                                       </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleUserTeam(member.id, team.id)}
-                                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                                        title={`Remove ${member.name} from ${team.shortLabel}`}
-                                      >
-                                        <X className="w-3.5 h-3.5" />
-                                      </button>
                                     </div>
                                   </div>
 
@@ -1594,7 +1668,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                           <button
                                             key={fid}
                                             type="button"
-                                            onClick={() => toggleUserFare2(member.id, fid)}
+                                            onClick={() => requestToggleUserFare2(member.id, fid)}
                                             className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${fm.chipClass}`}
                                             title={`Assigned to ${fm.label} — click to remove`}
                                           >
@@ -1608,7 +1682,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                         value=""
                                         onChange={(e) => {
                                           if (e.target.value) {
-                                            toggleUserFare2(member.id, e.target.value);
+                                            requestToggleUserFare2(member.id, e.target.value);
                                           }
                                         }}
                                         className="px-2 py-0.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-600 focus:outline-none focus:border-blue-500"
@@ -1663,7 +1737,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                   <select
                                     value={leader?.userId || ''}
                                     onChange={(e) =>
-                                      handleSetFare2Leader(fare2.id, e.target.value)
+                                      requestSetFare2Leader(fare2.id, e.target.value)
                                     }
                                     className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-800 max-w-[145px] focus:outline-none focus:border-blue-500"
                                     title={`Select leader responsible for ${fare2.label} orders`}
@@ -1691,17 +1765,23 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               value=""
                               onChange={(e) => {
                                 if (e.target.value) {
-                                  assignUserToTeam(e.target.value, team.id);
+                                  requestAddUserToTeam(e.target.value, team.id);
                                 }
                               }}
                               className="w-full px-2.5 py-2 min-h-[38px] rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700 focus:outline-none focus:border-blue-500"
                             >
                               <option value="">+ Add person to {team.shortLabel}...</option>
-                              {unassignedToThisTeam.map((u) => (
-                                <option key={u.id} value={u.id}>
-                                  {u.name}
-                                </option>
-                              ))}
+                              {unassignedToThisTeam.map((u) => {
+                                const currentTeamCount = effectiveUserTeams.get(u.id)?.size || 0;
+                                return (
+                                  <option key={u.id} value={u.id}>
+                                    {u.name}
+                                    {currentTeamCount > 0
+                                      ? ` (in ${currentTeamCount} team${currentTeamCount > 1 ? 's' : ''})`
+                                      : ''}
+                                  </option>
+                                );
+                              })}
                             </select>
                           </div>
                         </div>
@@ -1827,7 +1907,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                 <button
                                   key={team.id}
                                   type="button"
-                                  onClick={() => toggleUserTeam(member.id, team.id)}
+                                  onClick={() => {
+                                    if (!active) {
+                                      requestAddUserToTeam(member.id, team.id);
+                                    } else {
+                                      requestRemoveUserFromTeam(member.id, team.id);
+                                    }
+                                  }}
                                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
                                     active
                                       ? team.activeButtonClass
@@ -1859,7 +1945,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                   <button
                                     key={f.id}
                                     type="button"
-                                    onClick={() => toggleUserFare2(member.id, f.id)}
+                                    onClick={() => requestToggleUserFare2(member.id, f.id)}
                                     className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 transition-colors ${
                                       active ? f.activeButtonClass : f.chipClass
                                     }`}
@@ -2830,6 +2916,269 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 >
                   Close
                 </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* CONFIRM TEAM / FERA2 / LEADER CHANGE MODAL (Green Yes / Red No) */}
+      {pendingMemberChange && (() => {
+        const dotClass =
+          pendingMemberChange.kind === 'add-team' || pendingMemberChange.kind === 'remove-team'
+            ? pendingMemberChange.team.dotClass
+            : getScoutFare2Meta(pendingMemberChange.fare2Id)?.dotClass || 'bg-emerald-600';
+
+        const headerTitle =
+          pendingMemberChange.kind === 'add-team' || pendingMemberChange.kind === 'remove-team'
+            ? 'Confirm Team Assignment'
+            : pendingMemberChange.kind === 'toggle-fare2'
+            ? 'Confirm Scout Fera2 Change'
+            : 'Confirm Fera2 Leader Change';
+
+        const handleConfirm = () => {
+          if (pendingMemberChange.kind === 'add-team') {
+            assignUserToTeam(pendingMemberChange.user.id, pendingMemberChange.team.id);
+          } else if (pendingMemberChange.kind === 'remove-team') {
+            toggleUserTeam(pendingMemberChange.user.id, pendingMemberChange.team.id);
+          } else if (pendingMemberChange.kind === 'toggle-fare2') {
+            toggleUserFare2(pendingMemberChange.user.id, pendingMemberChange.fare2Id);
+          } else if (pendingMemberChange.kind === 'set-fare2-leader') {
+            handleSetFare2Leader(
+              pendingMemberChange.fare2Id,
+              pendingMemberChange.newUser?.id || ''
+            );
+          }
+          setPendingMemberChange(null);
+        };
+
+        return (
+          <div className="fixed inset-0 z-[130] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`w-3 h-3 rounded-full ${dotClass}`} />
+                  <h3 className="text-base font-black text-slate-900">{headerTitle}</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingMemberChange(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-3">
+                {pendingMemberChange.kind === 'add-team' && (
+                  <>
+                    <p className="text-sm font-bold text-slate-900">
+                      Are you sure you want to add{' '}
+                      <span className="text-blue-700">{pendingMemberChange.user.name}</span> to{' '}
+                      <span className="underline decoration-slate-300 underline-offset-2">
+                        {pendingMemberChange.team.label}
+                      </span>
+                      ?
+                    </p>
+
+                    {pendingMemberChange.existingTeams.length > 0 && (
+                      <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                        <div className="text-xs font-bold text-amber-900">
+                          {pendingMemberChange.user.name} is already assigned to{' '}
+                          {pendingMemberChange.existingTeams.map((t) => t.label).join(', ')}. Adding
+                          them to {pendingMemberChange.team.label} means they will now be in{' '}
+                          <span className="font-black">
+                            {pendingMemberChange.existingTeams.length + 1} teams
+                          </span>
+                          .
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {pendingMemberChange.existingTeams.map((t) => (
+                            <span
+                              key={t.id}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${t.chipClass}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${t.dotClass}`} />
+                              {t.shortLabel}
+                            </span>
+                          ))}
+                          <span className="text-xs font-black text-amber-700">+</span>
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${pendingMemberChange.team.chipClass}`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${pendingMemberChange.team.dotClass}`}
+                            />
+                            {pendingMemberChange.team.shortLabel}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {pendingMemberChange.kind === 'remove-team' && (
+                  <>
+                    <p className="text-sm font-bold text-slate-900">
+                      Are you sure you want to remove{' '}
+                      <span className="text-blue-700">{pendingMemberChange.user.name}</span> from{' '}
+                      <span className="underline decoration-slate-300 underline-offset-2">
+                        {pendingMemberChange.team.label}
+                      </span>
+                      ?
+                    </p>
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                      <div className="text-xs font-bold text-amber-900">
+                        {pendingMemberChange.remainingTeams.length > 0
+                          ? `They will remain assigned to ${pendingMemberChange.remainingTeams
+                              .map((t) => t.label)
+                              .join(', ')} (${pendingMemberChange.remainingTeams.length} team${
+                              pendingMemberChange.remainingTeams.length > 1 ? 's' : ''
+                            }).`
+                          : 'They will no longer be assigned to any store team.'}
+                      </div>
+                      {pendingMemberChange.remainingTeams.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {pendingMemberChange.remainingTeams.map((t) => (
+                            <span
+                              key={t.id}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${t.chipClass}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${t.dotClass}`} />
+                              {t.shortLabel}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {pendingMemberChange.kind === 'toggle-fare2' && (() => {
+                  const fm = getScoutFare2Meta(pendingMemberChange.fare2Id);
+                  const existingMeta = pendingMemberChange.existingFare2Ids
+                    .map((id) => getScoutFare2Meta(id))
+                    .filter((m): m is NonNullable<ReturnType<typeof getScoutFare2Meta>> => Boolean(m));
+                  return (
+                    <>
+                      <p className="text-sm font-bold text-slate-900">
+                        {pendingMemberChange.adding ? (
+                          <>
+                            Are you sure you want to add{' '}
+                            <span className="text-blue-700">{pendingMemberChange.user.name}</span> to{' '}
+                            <span className="underline decoration-slate-300 underline-offset-2">
+                              {fm?.label || pendingMemberChange.fare2Id}
+                            </span>
+                            ?
+                          </>
+                        ) : (
+                          <>
+                            Are you sure you want to remove{' '}
+                            <span className="text-blue-700">{pendingMemberChange.user.name}</span>{' '}
+                            from{' '}
+                            <span className="underline decoration-slate-300 underline-offset-2">
+                              {fm?.label || pendingMemberChange.fare2Id}
+                            </span>
+                            ?
+                          </>
+                        )}
+                      </p>
+                      {pendingMemberChange.adding && existingMeta.length > 0 && fm && (
+                        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                          <div className="text-xs font-bold text-amber-900">
+                            {pendingMemberChange.user.name} is already assigned to{' '}
+                            {existingMeta.map((m) => m.label).join(', ')}. Adding {fm.label} means
+                            they will now be in{' '}
+                            <span className="font-black">
+                              {existingMeta.length + 1} Scout Fera2
+                            </span>
+                            .
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {existingMeta.map((m) => (
+                              <span
+                                key={m.id}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${m.chipClass}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${m.dotClass}`} />
+                                {m.label}
+                              </span>
+                            ))}
+                            <span className="text-xs font-black text-amber-700">+</span>
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${fm.chipClass}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
+                              {fm.label}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+
+                {pendingMemberChange.kind === 'set-fare2-leader' && (() => {
+                  const fm = getScoutFare2Meta(pendingMemberChange.fare2Id);
+                  return (
+                    <p className="text-sm font-bold text-slate-900">
+                      {pendingMemberChange.previousLeaderName && pendingMemberChange.newUser ? (
+                        <>
+                          Are you sure you want to change the{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {fm?.label || pendingMemberChange.fare2Id}
+                          </span>{' '}
+                          leader from{' '}
+                          <span className="text-rose-700">
+                            {pendingMemberChange.previousLeaderName}
+                          </span>{' '}
+                          to{' '}
+                          <span className="text-blue-700">{pendingMemberChange.newUser.name}</span>?
+                        </>
+                      ) : pendingMemberChange.newUser ? (
+                        <>
+                          Are you sure you want to assign{' '}
+                          <span className="text-blue-700">{pendingMemberChange.newUser.name}</span>{' '}
+                          as leader of{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {fm?.label || pendingMemberChange.fare2Id}
+                          </span>
+                          ?
+                        </>
+                      ) : (
+                        <>
+                          Are you sure you want to remove{' '}
+                          <span className="text-rose-700">
+                            {pendingMemberChange.previousLeaderName}
+                          </span>{' '}
+                          as leader of{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {fm?.label || pendingMemberChange.fare2Id}
+                          </span>
+                          ?
+                        </>
+                      )}
+                    </p>
+                  );
+                })()}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setPendingMemberChange(null)}
+                    className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-xs transition-colors"
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirm}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs transition-colors"
+                  >
+                    Yes
+                  </button>
+                </div>
               </div>
             </div>
           </div>

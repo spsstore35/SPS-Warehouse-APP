@@ -254,4 +254,81 @@ export interface CalendarItem {
   updatedAt: string;
 }
 
+export type VendorBehaviorTag =
+  | 'regular'
+  | 'occasional'
+  | 'negotiable'
+  | 'fixed_price'
+  | 'on_time'
+  | 'delays'
+  | 'easy_smooth'
+  | 'difficult';
 
+export interface Vendor {
+  id: string;
+  name: string;
+  location: string;
+  mapsUrl?: string;
+  contactPerson?: string;
+  phone?: string;
+  tags: VendorBehaviorTag[];
+  generalNotes?: string;
+  createdAt: string;
+}
+
+export type WorkflowType = 'manufactured' | 'ready_made';
+
+export type OperationStageKey =
+  | 'raw_material'
+  | 'manufacturing'
+  | 'tailor'
+  | 'supplier_sourcing'
+  | 'packaging'
+  | 'stock_in';
+
+export interface ProductWorkflow {
+  id: string;
+  productId: string;
+  workflowType: WorkflowType;
+  activeStages: OperationStageKey[];
+  updatedAt?: string;
+}
+
+export interface ProductStageVendor {
+  id: string;
+  productId: string;
+  stageKey: OperationStageKey;
+  vendorId: string;
+  isPrimary: boolean;
+  approxOrderQty: string;
+  orderScriptNotes: string;
+}
+
+export interface VendorPriceEntry {
+  id: string;
+  productStageVendorId: string;
+  purchaseDate: string; // YYYY-MM-DD
+  unitPrice: number;
+  quantity: string;
+  notes?: string;
+}
+
+export interface BatchStageAssignment {
+  vendorId?: string;
+  cost?: number;
+  notes?: string;
+}
+
+export interface ProductionBatch {
+  id: string;
+  batchCode: string;
+  productId: string;
+  variantId?: string;
+  quantity: number;
+  targetDate?: string;
+  currentStageKey: OperationStageKey;
+  status: 'in_progress' | 'completed';
+  stageAssignments: Record<string, BatchStageAssignment>;
+  createdAt: string;
+  completedAt?: string;
+}

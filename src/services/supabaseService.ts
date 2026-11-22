@@ -17,6 +17,13 @@ import {
   BookingStatus,
   CalendarItem,
   StoreTeamId,
+  Vendor,
+  ProductWorkflow,
+  ProductStageVendor,
+  VendorPriceEntry,
+  ProductionBatch,
+  OperationStageKey,
+  VendorBehaviorTag,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -1742,6 +1749,196 @@ export async function upsertFare2LeaderInDb(
     return { ok: false, error: err?.message || 'Sync error' };
   }
 }
+
+/**
+ * SOURCING & PRODUCTION OPERATIONS
+ * Relational tables: vendors, product_workflows, product_stage_vendors, vendor_price_history, production_batches
+ */
+
+export async function fetchSourcingDataFromDb(): Promise<{
+  tablesReady: boolean;
+  vendors: Vendor[];
+  workflows: ProductWorkflow[];
+  stageVendors: ProductStageVendor[];
+  priceHistory: VendorPriceEntry[];
+  batches: ProductionBatch[];
+} | null> {
+  try {
+    const [vRes, wfRes, psvRes, phRes, bRes] = await Promise.all([
+      fetchAllRows('vendors', { orderColumn: 'created_at', ascending: false }),
+      fetchAllRows('product_workflows', { orderColumn: 'id', ascending: true }),
+      fetchAllRows('product_stage_vendors', { orderColumn: 'id', ascending: true }),
+      fetchAllRows('vendor_price_history', { orderColumn: 'purchase_date', ascending: false }),
+      fetchAllRows('production_batches', { orderColumn: 'created_at', ascending: false }),
+    ]);
+
+    if (vRes.error || wfRes.error || psvRes.error || phRes.error || bRes.error) {
+      return null;
+    }
+
+    const vendors: Vendor[] = (vRes.data || []).map((r: any) => ({
+      id: String(r.id),
+      name: String(r.name || ''),
+      location: String(r.location || ''),
+      mapsUrl: r.maps_url || undefined,
+      contactPerson: r.contact_person || undefined,
+      phone: r.phone || undefined,
+      tags: Array.isArray(r.tags) ? (r.tags as VendorBehaviorTag[]) : [],
+      generalNotes: r.general_notes || undefined,
+      createdAt: String(r.created_at || new Date().toISOString()),
+    }));
+
+    const workflows: ProductWorkflow[] = (wfRes.data || []).map((r: any) => ({
+      id: String(r.id),
+      productId: String(r.product_id),
+      workflowType: r.workflow_type === 'ready_made' ? 'ready_made' : 'manufactured',
+      activeStages: Array.isArray(r.active_stages)
+        ? (r.active_stages as OperationStageKey[])
+        : [],
+      updatedAt: r.updated_at || undefined,
+    }));
+
+    const stageVendors: ProductStageVendor[] = (psvRes.data || []).map((r: any) => ({
+      id: String(r.id),
+      productId: String(r.product_id),
+      stageKey: r.stage_key as OperationStageKey,
+      vendorId: String(r.vendor_id),
+      isPrimary: Boolean(r.is_primary),
+      approxOrderQty: String(r.approx_order_qty || ''),
+      orderScriptNotes: String(r.order_script_notes || ''),
+    }));
+
+    const priceHistory: VendorPriceEntry[] = (phRes.data || []).map((r: any) => ({
+      id: String(r.id),
+      productStageVendorId: String(r.product_stage_vendor_id),
+      purchaseDate: String(r.purchase_date || '').slice(0, 10),
+      unitPrice: Number(r.unit_price || 0),
+      quantity: String(r.quantity || ''),
+      notes: r.notes || '',
+    }));
+
+    const batches: ProductionBatch[] = (bRes.data || []).map((r: any) => ({
+      id: String(r.id),
+      batchCode: String(r.batch_code || ''),
+      productId: String(r.product_id),
+      variantId: r.variant_id || undefined,
+      quantity: Number(r.quantity || 0),
+      targetDate: r.target_date ? String(r.target_date).slice(0, 10) : undefined,
+      currentStageKey: r.current_stage_key as OperationStageKey,
+      status: r.status === 'completed' ? 'completed' : 'in_progress',
+      stageAssignments:
+        r.stage_assignments && typeof r.stage_assignments === 'object' ? r.stage_assignments : {},
+      createdAt: String(r.created_at || new Date().toISOString()),
+      completedAt: r.completed_at || undefined,
+    }));
+
+    return {
+      tablesReady: true,
+      vendors,
+      workflows,
+      stageVendors,
+      priceHistory,
+      batches,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertVendorToDb(vendor: Vendor): Promise<void> {
+  try {
+    await supabase.from('vendors').upsert({
+      id: vendor.id,
+      name: vendor.name,
+      location: vendor.location || '',
+      maps_url: vendor.mapsUrl || null,
+      contact_person: vendor.contactPerson || null,
+      phone: vendor.phone || null,
+      tags: vendor.tags || [],
+      general_notes: vendor.generalNotes || null,
+      created_at: vendor.createdAt,
+    });
+  } catch {}
+}
+
+export async function deleteVendorFromDb(vendorId: string): Promise<void> {
+  try {
+    await supabase.from('vendors').delete().eq('id', vendorId);
+  } catch {}
+}
+
+export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<void> {
+  try {
+    await supabase.from('product_workflows').upsert(
+      {
+        id: wf.id,
+        product_id: wf.productId,
+        workflow_type: wf.workflowType,
+        active_stages: wf.activeStages,
+        updated_at: wf.updatedAt || new Date().toISOString(),
+      },
+      { onConflict: 'product_id' }
+    );
+  } catch {}
+}
+
+export async function upsertProductStageVendorToDb(psv: ProductStageVendor): Promise<void> {
+  try {
+    await supabase.from('product_stage_vendors').upsert({
+      id: psv.id,
+      product_id: psv.productId,
+      stage_key: psv.stageKey,
+      vendor_id: psv.vendorId,
+      is_primary: Boolean(psv.isPrimary),
+      approx_order_qty: psv.approxOrderQty || '',
+      order_script_notes: psv.orderScriptNotes || '',
+    });
+  } catch {}
+}
+
+export async function deleteProductStageVendorFromDb(psvId: string): Promise<void> {
+  try {
+    await supabase.from('product_stage_vendors').delete().eq('id', psvId);
+  } catch {}
+}
+
+export async function insertVendorPriceEntryToDb(entry: VendorPriceEntry): Promise<void> {
+  try {
+    await supabase.from('vendor_price_history').upsert({
+      id: entry.id,
+      product_stage_vendor_id: entry.productStageVendorId,
+      purchase_date: entry.purchaseDate,
+      unit_price: entry.unitPrice,
+      quantity: entry.quantity || '',
+      notes: entry.notes || '',
+    });
+  } catch {}
+}
+
+export async function upsertProductionBatchToDb(batch: ProductionBatch): Promise<void> {
+  try {
+    await supabase.from('production_batches').upsert({
+      id: batch.id,
+      batch_code: batch.batchCode,
+      product_id: batch.productId,
+      variant_id: batch.variantId || null,
+      quantity: batch.quantity,
+      target_date: batch.targetDate || null,
+      current_stage_key: batch.currentStageKey,
+      status: batch.status,
+      stage_assignments: batch.stageAssignments || {},
+      created_at: batch.createdAt,
+      completed_at: batch.completedAt || null,
+    });
+  } catch {}
+}
+
+export async function deleteProductionBatchFromDb(batchId: string): Promise<void> {
+  try {
+    await supabase.from('production_batches').delete().eq('id', batchId);
+  } catch {}
+}
+
 
 
 

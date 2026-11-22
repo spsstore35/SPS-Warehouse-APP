@@ -121,7 +121,20 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [newSelectedRole, setNewSelectedRole] = useState<Role>('worker');
   const [newSelectedTeams, setNewSelectedTeams] = useState<StoreTeamId[]>([]);
   const [newSelectedFare2, setNewSelectedFare2] = useState<string[]>([]);
+  const [originalEditTeams, setOriginalEditTeams] = useState<StoreTeamId[]>([]);
+  const [originalEditFare2, setOriginalEditFare2] = useState<string[]>([]);
+  const [showEditConfirmModal, setShowEditConfirmModal] = useState(false);
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
+
+  const getRoleDisplayName = (r: Role): string =>
+    r === 'admin' ? 'Admin' : r === 'leader' ? 'Scout Leader' : 'Staff';
+
+  const getRoleBadgeClass = (r: Role): string =>
+    r === 'admin'
+      ? 'bg-amber-50 text-amber-800 border-amber-300'
+      : r === 'leader'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+      : 'bg-sky-50 text-sky-800 border-sky-300';
 
   const openEditAccountModal = (user: User) => {
     const localTeams = getStoredTeamDirectory()[user.id] || [];
@@ -134,6 +147,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     setNewSelectedRole(user.role);
     setNewSelectedTeams(resolvedTeams);
     setNewSelectedFare2(resolvedFare2);
+    setOriginalEditTeams(resolvedTeams);
+    setOriginalEditFare2(resolvedFare2);
+    setShowEditConfirmModal(false);
   };
 
   const handleConfirmDeleteUser = () => {
@@ -1831,7 +1847,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setUserToEditRole(null)}
+                  onClick={() => {
+                    setShowEditConfirmModal(false);
+                    setUserToEditRole(null);
+                  }}
                   className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[40px]"
                 >
                   Cancel
@@ -1839,35 +1858,372 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <button
                   type="button"
                   disabled={isUpdatingRole}
-                  onClick={async () => {
+                  onClick={() => {
                     if (!userToEditRole) return;
-                    setIsUpdatingRole(true);
-                    try {
-                      if (
-                        !isEditingCurrentUser &&
-                        onUpdateUserRole &&
-                        newSelectedRole !== userToEditRole.role
-                      ) {
-                        await onUpdateUserRole(userToEditRole.id, newSelectedRole);
-                      }
-                      if (onUpdateUserTeams) {
-                        const finalTeams = newSelectedRole === 'leader' ? [] : newSelectedTeams;
-                        const finalFare2 =
-                          newSelectedRole !== 'leader' && finalTeams.includes('troops')
-                            ? newSelectedFare2
-                            : [];
-                        await onUpdateUserTeams(userToEditRole.id, finalTeams, finalFare2);
-                      }
+                    const effectiveRole = isEditingCurrentUser ? userToEditRole.role : newSelectedRole;
+                    const roleChanged = effectiveRole !== userToEditRole.role;
+                    const finalTeams = effectiveRole === 'leader' ? [] : newSelectedTeams;
+                    const finalFare2 =
+                      effectiveRole !== 'leader' && finalTeams.includes('troops')
+                        ? newSelectedFare2
+                        : [];
+
+                    const teamsChanged =
+                      originalEditTeams.length !== finalTeams.length ||
+                      originalEditTeams.some((id) => !finalTeams.includes(id));
+                    const fare2Changed =
+                      originalEditFare2.length !== finalFare2.length ||
+                      originalEditFare2.some((id) => !finalFare2.includes(id));
+
+                    if (!roleChanged && !teamsChanged && !fare2Changed) {
                       setUserToEditRole(null);
-                    } finally {
-                      setIsUpdatingRole(false);
+                      return;
                     }
+                    setShowEditConfirmModal(true);
                   }}
                   className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs flex items-center gap-1.5 min-h-[40px] transition-all"
                 >
                   <Check className="w-4 h-4 stroke-[3]" />
                   <span>{isUpdatingRole ? 'Saving...' : 'Save Account Changes'}</span>
                 </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Confirmation Modal for Account Role / Team / Scout Fera2 Changes (Green Yes / Red No) */}
+      {userToEditRole && showEditConfirmModal && (() => {
+        const isEditingCurrentUser =
+          currentUser &&
+          (userToEditRole.id === currentUser.id ||
+            userToEditRole.email.toLowerCase() === currentUser.email.toLowerCase());
+        const effectiveRole = isEditingCurrentUser ? userToEditRole.role : newSelectedRole;
+        const roleChanged = effectiveRole !== userToEditRole.role;
+
+        const finalTeams: StoreTeamId[] = effectiveRole === 'leader' ? [] : newSelectedTeams;
+        const finalFare2: string[] =
+          effectiveRole !== 'leader' && finalTeams.includes('troops') ? newSelectedFare2 : [];
+
+        const addedTeams = finalTeams.filter((id) => !originalEditTeams.includes(id));
+        const removedTeams = originalEditTeams.filter((id) => !finalTeams.includes(id));
+        const keptTeams = originalEditTeams.filter((id) => finalTeams.includes(id));
+        const teamsChanged = addedTeams.length > 0 || removedTeams.length > 0;
+
+        const addedFare2 = finalFare2.filter((id) => !originalEditFare2.includes(id));
+        const removedFare2 = originalEditFare2.filter((id) => !finalFare2.includes(id));
+        const fare2Changed = addedFare2.length > 0 || removedFare2.length > 0;
+
+        const getTeamObj = (id: StoreTeamId) => STORE_TEAMS.find((t) => t.id === id);
+        const formatTeamLabels = (ids: StoreTeamId[]) =>
+          ids
+            .map((id) => getTeamObj(id)?.label || id)
+            .join(', ');
+        const formatFare2Labels = (ids: string[]) =>
+          ids
+            .map((id) => getScoutFare2Meta(id)?.label || id)
+            .join(', ');
+
+        const handleConfirmAccountChanges = async () => {
+          setIsUpdatingRole(true);
+          try {
+            if (!isEditingCurrentUser && onUpdateUserRole && roleChanged) {
+              await onUpdateUserRole(userToEditRole.id, effectiveRole);
+            }
+            if (onUpdateUserTeams) {
+              await onUpdateUserTeams(userToEditRole.id, finalTeams, finalFare2);
+            }
+            setShowEditConfirmModal(false);
+            setUserToEditRole(null);
+          } finally {
+            setIsUpdatingRole(false);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-[130] bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-600" />
+                  <h3 className="text-base font-black text-slate-900">
+                    Confirm Account Changes
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditConfirmModal(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-3 max-h-[75vh] overflow-y-auto">
+                {/* 1. System Role Change Summary */}
+                {roleChanged && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-bold text-slate-900">
+                      Are you sure you want to change{' '}
+                      <span className="text-blue-700">{userToEditRole.name}</span> from{' '}
+                      <span className="underline decoration-slate-300 underline-offset-2">
+                        {getRoleDisplayName(userToEditRole.role)}
+                      </span>{' '}
+                      to{' '}
+                      <span className="underline decoration-slate-300 underline-offset-2">
+                        {getRoleDisplayName(effectiveRole)}
+                      </span>
+                      ?
+                    </p>
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center gap-2">
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold border ${getRoleBadgeClass(
+                          userToEditRole.role
+                        )}`}
+                      >
+                        {getRoleDisplayName(userToEditRole.role)}
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-amber-700" />
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-bold border ${getRoleBadgeClass(
+                          effectiveRole
+                        )}`}
+                      >
+                        {getRoleDisplayName(effectiveRole)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Store Teams Change Summary */}
+                {teamsChanged && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-bold text-slate-900">
+                      {originalEditTeams.length > 0 &&
+                      removedTeams.length === 0 &&
+                      addedTeams.length > 0 ? (
+                        <>
+                          Are you sure you want to add{' '}
+                          <span className="text-blue-700">{userToEditRole.name}</span> to{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatTeamLabels(addedTeams)}
+                          </span>
+                          ?
+                        </>
+                      ) : originalEditTeams.length === 0 && addedTeams.length > 0 ? (
+                        <>
+                          Are you sure you want to add{' '}
+                          <span className="text-blue-700">{userToEditRole.name}</span> to{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatTeamLabels(addedTeams)}
+                          </span>
+                          ?
+                        </>
+                      ) : finalTeams.length === 0 ? (
+                        <>
+                          Are you sure you want to remove{' '}
+                          <span className="text-blue-700">{userToEditRole.name}</span> from{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatTeamLabels(originalEditTeams)}
+                          </span>
+                          ?
+                        </>
+                      ) : (
+                        <>
+                          Are you sure you want to change{' '}
+                          <span className="text-blue-700">{userToEditRole.name}</span> from{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatTeamLabels(originalEditTeams)}
+                          </span>{' '}
+                          to{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatTeamLabels(finalTeams)}
+                          </span>
+                          ?
+                        </>
+                      )}
+                    </p>
+
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                      {originalEditTeams.length > 0 &&
+                      removedTeams.length === 0 &&
+                      addedTeams.length > 0 ? (
+                        <>
+                          <div className="text-xs font-bold text-amber-900">
+                            {userToEditRole.name} is already assigned to{' '}
+                            {formatTeamLabels(keptTeams)}. Adding them to{' '}
+                            {formatTeamLabels(addedTeams)} means they will now be in{' '}
+                            <span className="font-black">{finalTeams.length} teams</span>.
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {keptTeams.map((id) => {
+                              const tm = getTeamObj(id);
+                              if (!tm) return null;
+                              return (
+                                <span
+                                  key={id}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${tm.chipClass}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tm.dotClass}`} />
+                                  {tm.shortLabel}
+                                </span>
+                              );
+                            })}
+                            <span className="text-xs font-black text-amber-700">+</span>
+                            {addedTeams.map((id) => {
+                              const tm = getTeamObj(id);
+                              if (!tm) return null;
+                              return (
+                                <span
+                                  key={id}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${tm.chipClass}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tm.dotClass}`} />
+                                  {tm.shortLabel}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {originalEditTeams.length > 0 ? (
+                            originalEditTeams.map((id) => {
+                              const tm = getTeamObj(id);
+                              if (!tm) return null;
+                              return (
+                                <span
+                                  key={id}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${tm.chipClass}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tm.dotClass}`} />
+                                  {tm.shortLabel}
+                                </span>
+                              );
+                            })
+                          ) : (
+                            <span className="text-[11px] font-bold text-slate-500">No team</span>
+                          )}
+                          <ArrowRight className="w-3.5 h-3.5 text-amber-700" />
+                          {finalTeams.length > 0 ? (
+                            finalTeams.map((id) => {
+                              const tm = getTeamObj(id);
+                              if (!tm) return null;
+                              return (
+                                <span
+                                  key={id}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${tm.chipClass}`}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tm.dotClass}`} />
+                                  {tm.shortLabel}
+                                </span>
+                              );
+                            })
+                          ) : (
+                            <span className="text-[11px] font-bold text-rose-700">No teams</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Scout Fera2 Change Summary */}
+                {fare2Changed && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-bold text-slate-900">
+                      {originalEditFare2.length > 0 && finalFare2.length > 0 ? (
+                        <>
+                          Are you sure you want to change Scout Fera2 for{' '}
+                          <span className="text-blue-700">{userToEditRole.name}</span> from{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatFare2Labels(originalEditFare2)}
+                          </span>{' '}
+                          to{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatFare2Labels(finalFare2)}
+                          </span>
+                          ?
+                        </>
+                      ) : finalFare2.length > 0 ? (
+                        <>
+                          Are you sure you want to assign{' '}
+                          <span className="text-blue-700">{userToEditRole.name}</span> to Scout
+                          Fera2:{' '}
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatFare2Labels(finalFare2)}
+                          </span>
+                          ?
+                        </>
+                      ) : (
+                        <>
+                          Are you sure you want to remove Scout Fera2 (
+                          <span className="underline decoration-slate-300 underline-offset-2">
+                            {formatFare2Labels(originalEditFare2)}
+                          </span>
+                          ) from <span className="text-blue-700">{userToEditRole.name}</span>?
+                        </>
+                      )}
+                    </p>
+                    <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 flex flex-wrap items-center gap-1.5">
+                      {originalEditFare2.length > 0 ? (
+                        originalEditFare2.map((fid) => {
+                          const fm = getScoutFare2Meta(fid);
+                          if (!fm) return null;
+                          return (
+                            <span
+                              key={fid}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${fm.chipClass}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
+                              {fm.label}
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="text-[11px] font-bold text-slate-500">None</span>
+                      )}
+                      <ArrowRight className="w-3.5 h-3.5 text-emerald-700" />
+                      {finalFare2.length > 0 ? (
+                        finalFare2.map((fid) => {
+                          const fm = getScoutFare2Meta(fid);
+                          if (!fm) return null;
+                          return (
+                            <span
+                              key={fid}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${fm.chipClass}`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
+                              {fm.label}
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="text-[11px] font-bold text-rose-700">None</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={isUpdatingRole}
+                    onClick={() => setShowEditConfirmModal(false)}
+                    className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-xs transition-colors"
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isUpdatingRole}
+                    onClick={handleConfirmAccountChanges}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-xs transition-colors"
+                  >
+                    {isUpdatingRole ? 'Saving...' : 'Yes'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

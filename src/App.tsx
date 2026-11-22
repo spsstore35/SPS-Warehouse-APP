@@ -13,6 +13,11 @@ import {
   CalendarItem,
   BoardColumnStatus,
   StoreTeamId,
+  Vendor,
+  ProductWorkflow,
+  ProductStageVendor,
+  VendorPriceEntry,
+  ProductionBatch,
 } from './types/inventory';
 import {
   getStoredProducts,
@@ -49,7 +54,20 @@ import {
   getStoredBookingAssignmentMap,
   saveStoredBookingAssignmentMap,
   Fare2LeaderAssignment,
+  getStoredVendors,
+  saveStoredVendors,
+  getStoredProductWorkflows,
+  saveStoredProductWorkflows,
+  getStoredProductStageVendors,
+  saveStoredProductStageVendors,
+  getStoredVendorPriceHistory,
+  saveStoredVendorPriceHistory,
+  getStoredProductionBatches,
+  saveStoredProductionBatches,
+  isSourcingSeeded,
+  markSourcingSeeded,
 } from './utils/storage';
+import { buildInitialSourcingSeed, getStageMeta } from './utils/sourcing';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import { isUserAdmin, isUserLeader, normalizeRole, getRoleDisplayName } from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
@@ -85,6 +103,15 @@ import {
   updateUserTeamAssignmentsInDb,
   fetchFare2LeadersFromDb,
   upsertFare2LeaderInDb,
+  fetchSourcingDataFromDb,
+  upsertVendorToDb,
+  deleteVendorFromDb,
+  upsertProductWorkflowToDb,
+  upsertProductStageVendorToDb,
+  deleteProductStageVendorFromDb,
+  insertVendorPriceEntryToDb,
+  upsertProductionBatchToDb,
+  deleteProductionBatchFromDb,
   fetchActivitySnapshot,
   CATEGORY_MAP,
   DbConnectionStatus,
@@ -109,6 +136,7 @@ import { BookingPrintModal } from './components/BookingPrintModal';
 import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
+import { SourcingOperationsView } from './components/SourcingOperationsView';
 import { MobileNotificationBanner } from './components/MobileNotificationBanner';
 import {
   registerServiceWorker,
@@ -508,6 +536,41 @@ export default function App() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>(() => getStoredCalendarEvents());
   const lastCalendarMutationAtRef = useRef<number>(0);
 
+  // Sourcing & Production Operations state
+  const [vendors, setVendors] = useState<Vendor[]>(() => getStoredVendors());
+  const [productWorkflows, setProductWorkflows] = useState<ProductWorkflow[]>(() => getStoredProductWorkflows());
+  const [productStageVendors, setProductStageVendors] = useState<ProductStageVendor[]>(() =>
+    getStoredProductStageVendors()
+  );
+  const [vendorPriceHistory, setVendorPriceHistory] = useState<VendorPriceEntry[]>(() =>
+    getStoredVendorPriceHistory()
+  );
+  const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>(() =>
+    getStoredProductionBatches()
+  );
+
+  // Auto-seed realistic Sourcing & Operations starter bundle once products exist
+  useEffect(() => {
+    if (isSourcingSeeded()) return;
+    if (products.length === 0) return;
+    if (vendors.length > 0 || productStageVendors.length > 0 || productionBatches.length > 0) {
+      markSourcingSeeded();
+      return;
+    }
+    const seed = buildInitialSourcingSeed(products);
+    setVendors(seed.vendors);
+    saveStoredVendors(seed.vendors);
+    setProductWorkflows(seed.workflows);
+    saveStoredProductWorkflows(seed.workflows);
+    setProductStageVendors(seed.stageVendors);
+    saveStoredProductStageVendors(seed.stageVendors);
+    setVendorPriceHistory(seed.priceHistory);
+    saveStoredVendorPriceHistory(seed.priceHistory);
+    setProductionBatches(seed.batches);
+    saveStoredProductionBatches(seed.batches);
+    markSourcingSeeded();
+  }, [products, vendors.length, productStageVendors.length, productionBatches.length]);
+
   const handleOpenBookingDetails = (bookingNumberOrId: string) => {
     const cleanQuery = bookingNumberOrId.trim().toLowerCase();
     const match = bookings.find(
@@ -825,6 +888,7 @@ export default function App() {
           dbFolders,
           dbCalendar,
           dbFare2Leaders,
+          dbSourcing,
         ] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
@@ -835,6 +899,7 @@ export default function App() {
           fetchOthersFoldersFromDb(),
           fetchCalendarEventsFromDb(),
           fetchFare2LeadersFromDb(),
+          fetchSourcingDataFromDb(),
         ]);
 
         let dbProductFolders: string[] = [];
@@ -1060,6 +1125,30 @@ export default function App() {
             saveStoredCalendarEvents(finalCalendar);
             return finalCalendar;
           });
+        }
+
+        // Sync Sourcing & Operations relational tables from Supabase when available
+        if (dbSourcing.status === 'fulfilled' && dbSourcing.value !== null && dbSourcing.value.tablesReady) {
+          const remote = dbSourcing.value;
+          const hasRemoteSourcing =
+            remote.vendors.length > 0 ||
+            remote.workflows.length > 0 ||
+            remote.stageVendors.length > 0 ||
+            remote.priceHistory.length > 0 ||
+            remote.batches.length > 0;
+          if (hasRemoteSourcing) {
+            setVendors(remote.vendors);
+            saveStoredVendors(remote.vendors);
+            setProductWorkflows(remote.workflows);
+            saveStoredProductWorkflows(remote.workflows);
+            setProductStageVendors(remote.stageVendors);
+            saveStoredProductStageVendors(remote.stageVendors);
+            setVendorPriceHistory(remote.priceHistory);
+            saveStoredVendorPriceHistory(remote.priceHistory);
+            setProductionBatches(remote.batches);
+            saveStoredProductionBatches(remote.batches);
+            markSourcingSeeded();
+          }
         }
 
         if (notify) {
@@ -3005,6 +3094,291 @@ export default function App() {
     showToast(`Moved "${updatedItem.title}" to ${stageLabel}.`);
   };
 
+  // Sourcing & Operations CRUD Handlers
+  const handleSaveVendor = (vendor: Vendor) => {
+    setVendors((prev) => {
+      const exists = prev.some((v) => v.id === vendor.id);
+      const next = exists ? prev.map((v) => (v.id === vendor.id ? vendor : v)) : [vendor, ...prev];
+      saveStoredVendors(next);
+      return next;
+    });
+    upsertVendorToDb(vendor).catch(() => {});
+    showToast(`Saved vendor "${vendor.name}".`);
+  };
+
+  const handleDeleteVendor = (vendorId: string) => {
+    const target = vendors.find((v) => v.id === vendorId);
+    setVendors((prev) => {
+      const next = prev.filter((v) => v.id !== vendorId);
+      saveStoredVendors(next);
+      return next;
+    });
+    setProductStageVendors((prev) => {
+      const next = prev.filter((psv) => psv.vendorId !== vendorId);
+      saveStoredProductStageVendors(next);
+      return next;
+    });
+    deleteVendorFromDb(vendorId).catch(() => {});
+    showToast(`Removed vendor "${target?.name || 'Vendor'}".`);
+  };
+
+  const handleSaveWorkflow = (workflow: ProductWorkflow) => {
+    setProductWorkflows((prev) => {
+      const exists = prev.some((w) => w.productId === workflow.productId);
+      const next = exists
+        ? prev.map((w) => (w.productId === workflow.productId ? workflow : w))
+        : [workflow, ...prev];
+      saveStoredProductWorkflows(next);
+      return next;
+    });
+    upsertProductWorkflowToDb(workflow).catch(() => {});
+  };
+
+  const handleSaveStageVendor = (link: ProductStageVendor) => {
+    setProductStageVendors((prev) => {
+      const exists = prev.some((l) => l.id === link.id);
+      let next = exists ? prev.map((l) => (l.id === link.id ? link : l)) : [...prev, link];
+      if (link.isPrimary) {
+        next = next.map((l) =>
+          l.productId === link.productId && l.stageKey === link.stageKey && l.id !== link.id
+            ? { ...l, isPrimary: false }
+            : l
+        );
+      }
+      saveStoredProductStageVendors(next);
+      return next;
+    });
+    upsertProductStageVendorToDb(link).catch(() => {});
+  };
+
+  const handleDeleteStageVendor = (linkId: string) => {
+    setProductStageVendors((prev) => {
+      const next = prev.filter((l) => l.id !== linkId);
+      saveStoredProductStageVendors(next);
+      return next;
+    });
+    deleteProductStageVendorFromDb(linkId).catch(() => {});
+  };
+
+  const handleAddPriceEntry = (entry: VendorPriceEntry) => {
+    setVendorPriceHistory((prev) => {
+      const next = [entry, ...prev];
+      saveStoredVendorPriceHistory(next);
+      return next;
+    });
+    insertVendorPriceEntryToDb(entry).catch(() => {});
+    showToast(`Logged price ${entry.unitPrice.toLocaleString()} EGP.`);
+  };
+
+  const handleSaveBatch = (batch: ProductionBatch) => {
+    setProductionBatches((prev) => {
+      const exists = prev.some((b) => b.id === batch.id);
+      const next = exists ? prev.map((b) => (b.id === batch.id ? batch : b)) : [batch, ...prev];
+      saveStoredProductionBatches(next);
+      return next;
+    });
+    upsertProductionBatchToDb(batch).catch(() => {});
+  };
+
+  const handleDeleteBatch = (batchId: string) => {
+    const target = productionBatches.find((b) => b.id === batchId);
+    setProductionBatches((prev) => {
+      const next = prev.filter((b) => b.id !== batchId);
+      saveStoredProductionBatches(next);
+      return next;
+    });
+    deleteProductionBatchFromDb(batchId).catch(() => {});
+    showToast(`Deleted batch ${target?.batchCode || ''}.`);
+  };
+
+  const handleSeedStarterCatalog = () => {
+    let targetProducts = products;
+    if (targetProducts.length === 0) {
+      targetProducts = SEED_CATALOG_DATA;
+      setProducts(targetProducts);
+      saveStoredProducts(targetProducts);
+      targetProducts.forEach((p) => {
+        upsertProductToDb(p).catch(() => {});
+      });
+    }
+    const seed = buildInitialSourcingSeed(targetProducts);
+    setVendors(seed.vendors);
+    saveStoredVendors(seed.vendors);
+    seed.vendors.forEach((v) => upsertVendorToDb(v).catch(() => {}));
+
+    setProductWorkflows(seed.workflows);
+    saveStoredProductWorkflows(seed.workflows);
+    seed.workflows.forEach((w) => upsertProductWorkflowToDb(w).catch(() => {}));
+
+    setProductStageVendors(seed.stageVendors);
+    saveStoredProductStageVendors(seed.stageVendors);
+    seed.stageVendors.forEach((sv) => upsertProductStageVendorToDb(sv).catch(() => {}));
+
+    setVendorPriceHistory(seed.priceHistory);
+    saveStoredVendorPriceHistory(seed.priceHistory);
+    seed.priceHistory.forEach((ph) => insertVendorPriceEntryToDb(ph).catch(() => {}));
+
+    setProductionBatches(seed.batches);
+    saveStoredProductionBatches(seed.batches);
+    seed.batches.forEach((b) => upsertProductionBatchToDb(b).catch(() => {}));
+
+    markSourcingSeeded();
+    showToast('Loaded starter catalog items, supply chain vendors, and Batch #104.');
+  };
+
+  const handleCompleteBatchStockIn = ({
+    batchId,
+    finalQuantity,
+    variantId,
+  }: {
+    batchId: string;
+    finalQuantity: number;
+    variantId: string;
+  }) => {
+    const batch = productionBatches.find((b) => b.id === batchId);
+    const product = products.find((p) => p.id === batch?.productId);
+    if (!batch || !product) {
+      showToast('Batch or product not found.');
+      return;
+    }
+
+    const qtyToAdd = Math.max(1, Math.round(finalQuantity));
+    const targetVariant = product.variants.find((v) => v.id === variantId) || product.variants[0];
+    if (!targetVariant) {
+      showToast('No variant found on product to receive stock.');
+      return;
+    }
+
+    const oldQty = targetVariant.quantity;
+    const newQty = oldQty + qtyToAdd;
+    const oldTotal = product.totalQuantity;
+
+    const updatedVariants = product.variants.map((v) =>
+      v.id === targetVariant.id ? { ...v, quantity: newQty } : v
+    );
+    const newTotal = updatedVariants.reduce((sum, v) => sum + v.quantity, 0);
+    const updatedProduct: Product = {
+      ...product,
+      variants: updatedVariants,
+      totalQuantity: newTotal,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextProducts = products.map((p) => (p.id === product.id ? updatedProduct : p));
+    setProducts(nextProducts);
+    saveStoredProducts(nextProducts);
+    updateVariantQuantityInDb(targetVariant.id, newQty).catch(() => {});
+
+    // Log audit entry for Gard stock-in
+    const sizeText =
+      targetVariant.size === 'One Size' || targetVariant.size === 'Standard'
+        ? 'Standard Size'
+        : targetVariant.size;
+    const newLog: AuditLogEntry = {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      action: 'stock_adjusted',
+      actorName: currentUser?.name || 'Operations',
+      actorRole: currentUser?.role || 'admin',
+      productId: product.id,
+      productName: product.name,
+      productImage: product.image,
+      variantSize: sizeText,
+      variantColor: targetVariant.colorName,
+      oldQuantity: oldQty,
+      newQuantity: newQty,
+      delta: qtyToAdd,
+      totalQuantityBefore: oldTotal,
+      totalQuantityAfter: newTotal,
+      reason: `Batch Stock-In (Gard): ${batch.batchCode}`,
+      summary: `Batch ${batch.batchCode} Stocked In (+${qtyToAdd}): "${product.name}" [${sizeText} / ${targetVariant.colorName}] (${oldQty} -> ${newQty})`,
+      details: `Completed production batch ${batch.batchCode}. Stock added via Gard: +${qtyToAdd} pcs (${sizeText} / ${targetVariant.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
+    };
+    setAuditLogs((prev) => {
+      const nextLogs = [newLog, ...prev];
+      saveStoredAuditLogs(nextLogs);
+      return nextLogs;
+    });
+    insertAuditLogInDb(newLog).catch(() => {});
+
+    // Auto-log batch stage costs into Vendor Price History
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const createdLinks: ProductStageVendor[] = [];
+    const createdPrices: VendorPriceEntry[] = [];
+
+    Object.entries(batch.stageAssignments || {}).forEach(([stageKeyRaw, assignment]) => {
+      const stageKey = stageKeyRaw as ProductStageVendor['stageKey'];
+      if (!assignment?.vendorId || !assignment.cost || assignment.cost <= 0) return;
+
+      let link = productStageVendors.find(
+        (l) =>
+          l.productId === product.id &&
+          l.stageKey === stageKey &&
+          l.vendorId === assignment.vendorId
+      );
+      if (!link) {
+        link = {
+          id: `psv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          productId: product.id,
+          stageKey,
+          vendorId: assignment.vendorId,
+          isPrimary: false,
+          approxOrderQty: `${qtyToAdd} ${getStageMeta(stageKey).defaultUnit}`,
+          orderScriptNotes: '',
+        };
+        createdLinks.push(link);
+      }
+
+      createdPrices.push({
+        id: `vph_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        productStageVendorId: link.id,
+        purchaseDate: todayIso,
+        unitPrice: Number(assignment.cost),
+        quantity: `${qtyToAdd} pcs`,
+        notes: `Auto-logged from ${batch.batchCode}`,
+      });
+    });
+
+    if (createdLinks.length > 0) {
+      setProductStageVendors((prev) => {
+        const next = [...prev, ...createdLinks];
+        saveStoredProductStageVendors(next);
+        return next;
+      });
+      createdLinks.forEach((lnk) => upsertProductStageVendorToDb(lnk).catch(() => {}));
+    }
+
+    if (createdPrices.length > 0) {
+      setVendorPriceHistory((prev) => {
+        const next = [...createdPrices, ...prev];
+        saveStoredVendorPriceHistory(next);
+        return next;
+      });
+      createdPrices.forEach((entry) => insertVendorPriceEntryToDb(entry).catch(() => {}));
+    }
+
+    // Mark batch completed
+    const completedBatch: ProductionBatch = {
+      ...batch,
+      quantity: qtyToAdd,
+      variantId: targetVariant.id,
+      currentStageKey: 'stock_in',
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+    };
+    setProductionBatches((prev) => {
+      const next = prev.map((b) => (b.id === batch.id ? completedBatch : b));
+      saveStoredProductionBatches(next);
+      return next;
+    });
+    upsertProductionBatchToDb(completedBatch).catch(() => {});
+
+    showToast(
+      `Batch ${batch.batchCode} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
+      newLog
+    );
+  };
+
   // Refresh data from Supabase
   const handleResetData = () => {
     refreshFromSupabase(true);
@@ -3939,6 +4313,28 @@ export default function App() {
             onMoveItemStatus={handleMoveBoardItem}
             onFare2LeaderChange={handleFare2LeaderChange}
             onUserTeamsChange={handleUserTeamsChange}
+            onShowToast={(msg) => showToast(msg)}
+          />
+        )}
+
+        {effectiveView === 'sourcing' && !isLeader && (
+          <SourcingOperationsView
+            products={products}
+            vendors={vendors}
+            workflows={productWorkflows}
+            stageVendors={productStageVendors}
+            priceHistory={vendorPriceHistory}
+            batches={productionBatches}
+            onSaveVendor={handleSaveVendor}
+            onDeleteVendor={handleDeleteVendor}
+            onSaveWorkflow={handleSaveWorkflow}
+            onSaveStageVendor={handleSaveStageVendor}
+            onDeleteStageVendor={handleDeleteStageVendor}
+            onAddPriceEntry={handleAddPriceEntry}
+            onSaveBatch={handleSaveBatch}
+            onDeleteBatch={handleDeleteBatch}
+            onCompleteBatchStockIn={handleCompleteBatchStockIn}
+            onSeedStarterCatalog={handleSeedStarterCatalog}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
