@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Role, ProductVariant } from '../types/inventory';
-import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Clock, Check, CalendarCheck } from 'lucide-react';
+import { Product, Role, ProductVariant, MarketingOffer } from '../types/inventory';
+import { getEffectiveProductOffer } from '../utils/offers';
+import { Layers, AlertCircle, SlidersHorizontal, Edit3, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Clock, Check, Tag } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
   userRole: Role;
+  canEditMedia?: boolean;
+  activeOffer?: MarketingOffer | null;
   onOpenDetails: (product: Product) => void;
   onRequestAdjustment: (product: Product, variant?: ProductVariant) => void;
   onEditProduct?: (product: Product) => void;
@@ -16,6 +19,8 @@ interface ProductCardProps {
 export const ProductCard: React.FC<ProductCardProps> = ({
   product,
   userRole,
+  canEditMedia = false,
+  activeOffer,
   onOpenDetails,
   onRequestAdjustment,
   onEditProduct,
@@ -25,7 +30,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const [imageError, setImageError] = useState(false);
   const [activeImgIdx, setActiveImgIdx] = useState(0);
-  const isAdmin = userRole === 'admin';
+  const isAdmin = userRole === 'admin' || userRole === 'full_admin';
   const isLeader = userRole === 'leader';
 
   // Gather all photos available
@@ -59,7 +64,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     (product.variants[0].colorName === 'Standard' || !product.variants[0].colorName);
 
   const isPending = product.status === 'pending';
-  const displayPrice = typeof product.price === 'number' ? product.price : 0;
+  const resolvedOffer = getEffectiveProductOffer(product, activeOffer ? [activeOffer] : []);
+  const displayPrice = resolvedOffer.isActive
+    ? resolvedOffer.effectivePrice
+    : typeof product.price === 'number'
+    ? product.price
+    : 0;
 
   return (
     <div
@@ -166,6 +176,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         )}
 
+        {/* Active Marketing Offer Badge */}
+        {resolvedOffer.isActive && (
+          <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1 rounded-md bg-rose-600 text-white text-[11px] font-bold shadow-md flex items-center gap-1">
+            <Tag className="w-3 h-3" />
+            <span>{resolvedOffer.badgeText}</span>
+          </div>
+        )}
+
         {/* Multi-photo badge */}
         {product.images && product.images.length > 1 && (
           <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-md bg-slate-900/80 backdrop-blur-sm text-[10px] font-bold text-white shadow-sm flex items-center gap-1 border border-white/20">
@@ -268,10 +286,27 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </div>
 
             <div className="text-right">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Unit Price</div>
-              <div className="text-base sm:text-lg font-black font-mono tabular-nums text-emerald-700 flex items-baseline justify-end gap-1">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                {resolvedOffer.isActive ? 'Offer Price' : 'Unit Price'}
+              </div>
+              <div
+                className={`text-base sm:text-lg font-black font-mono tabular-nums flex items-baseline justify-end gap-1.5 ${
+                  resolvedOffer.isActive ? 'text-rose-700' : 'text-emerald-700'
+                }`}
+              >
+                {resolvedOffer.isActive && resolvedOffer.originalPrice > displayPrice && (
+                  <span className="text-xs line-through text-slate-400 font-semibold">
+                    {resolvedOffer.originalPrice}
+                  </span>
+                )}
                 <span>{displayPrice}</span>
-                <span className="text-xs font-bold text-emerald-600 font-sans">EGP / pc</span>
+                <span
+                  className={`text-xs font-bold font-sans ${
+                    resolvedOffer.isActive ? 'text-rose-600' : 'text-emerald-600'
+                  }`}
+                >
+                  EGP / pc
+                </span>
               </div>
             </div>
           </div>
@@ -337,7 +372,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 )}
               </div>
             ) : !isLeader ? (
-              <div className="flex items-center gap-1.5 w-full">
+              <div className="space-y-1.5 w-full">
+                {canEditMedia && onEditProduct && (
+                  <button
+                    type="button"
+                    onClick={() => onEditProduct(product)}
+                    className="w-full py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 text-xs font-bold transition-all flex items-center justify-center gap-1.5 min-h-[40px]"
+                    title="Marketing Portal: Add/remove photos, colors & edit description"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Edit Photos, Colors &amp; Desc</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onRequestAdjustment(product)}

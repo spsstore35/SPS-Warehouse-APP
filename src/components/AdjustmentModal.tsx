@@ -66,7 +66,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
   onSubmitWorkerRequest,
   onAdminDirectAdjust,
 }) => {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = currentUser.role === 'admin' || currentUser.role === 'full_admin';
 
   // Deduplicate variants
   const dedupedMap = new Map<string, ProductVariant>();

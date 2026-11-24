@@ -20,6 +20,7 @@ import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 interface ProductDetailModalProps {
   product: Product;
   userRole: Role;
+  canEditMedia?: boolean;
   onClose: () => void;
   onRequestAdjustment: (product: Product, variant: ProductVariant) => void;
   onDeleteProduct?: (productId: string) => void;
@@ -31,6 +32,7 @@ interface ProductDetailModalProps {
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   product,
   userRole,
+  canEditMedia = false,
   onClose,
   onRequestAdjustment,
   onDeleteProduct,
@@ -38,7 +40,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onEditProduct,
   onApproveProduct,
 }) => {
-  const isAdmin = userRole === 'admin';
+  const isAdmin = userRole === 'admin' || userRole === 'full_admin';
   const isLeader = userRole === 'leader';
 
   // Images list
@@ -133,17 +135,23 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {isAdmin && onEditProduct && (
+            {(isAdmin || (!isLeader && canEditMedia)) && onEditProduct && (
               <button
                 onClick={() => {
                   onClose();
                   onEditProduct(product);
                 }}
-                className="p-2 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold border border-slate-200"
-                title="Edit Item"
+                className={`p-2 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold border ${
+                  isAdmin
+                    ? 'text-slate-600 hover:text-amber-700 hover:bg-amber-50 border-slate-200'
+                    : 'text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200'
+                }`}
+                title={isAdmin ? 'Edit Item' : 'Edit Photos, Colors & Description'}
               >
                 <Edit3 className="w-4 h-4" />
-                <span className="hidden sm:inline">Edit</span>
+                <span className="hidden sm:inline">
+                  {isAdmin ? 'Edit' : 'Edit Media & Colors'}
+                </span>
               </button>
             )}
 

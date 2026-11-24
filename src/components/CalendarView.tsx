@@ -1,8 +1,9 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { CalendarItem, CalendarItemType, StoreTeamId, User } from '../types/inventory';
+import { CalendarItem, CalendarItemType, ScoutSeason, StoreTeamId, User } from '../types/inventory';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   Calendar as CalendarIcon,
+  CalendarRange,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -28,9 +29,12 @@ interface CalendarViewProps {
   items: CalendarItem[];
   users?: User[];
   currentUser: User;
+  scoutSeasons?: ScoutSeason[];
   onSaveItem: (item: CalendarItem) => void;
   onDeleteItem: (id: string) => void;
   onToggleTaskComplete: (id: string) => void;
+  onSaveScoutSeason?: (season: ScoutSeason) => void;
+  onDeleteScoutSeason?: (id: string) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -197,13 +201,25 @@ const toIcsUtcStamp = (iso?: string): string => {
   );
 };
 
+const SEASON_COLOR_PRESETS = [
+  { label: 'Emerald', hex: '#059669' },
+  { label: 'Blue', hex: '#2563EB' },
+  { label: 'Amber', hex: '#D97706' },
+  { label: 'Rose', hex: '#E11D48' },
+  { label: 'Indigo', hex: '#4F46E5' },
+  { label: 'Teal', hex: '#0D9488' },
+];
+
 export const CalendarView: React.FC<CalendarViewProps> = ({
   items,
   users = [],
   currentUser,
+  scoutSeasons = [],
   onSaveItem,
   onDeleteItem,
   onToggleTaskComplete,
+  onSaveScoutSeason,
+  onDeleteScoutSeason,
   onShowToast,
 }) => {
   const todayKey = toDateKey(new Date());
@@ -261,6 +277,95 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [pendingEditItem, setPendingEditItem] = useState<CalendarItem | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Scout Seasons / Time Frames Manager Modal state
+  const [isSeasonsModalOpen, setIsSeasonsModalOpen] = useState<boolean>(false);
+  const [editingSeason, setEditingSeason] = useState<ScoutSeason | null>(null);
+  const [seasonName, setSeasonName] = useState<string>('');
+  const [seasonStartDate, setSeasonStartDate] = useState<string>(todayKey);
+  const [seasonEndDate, setSeasonEndDate] = useState<string>(addDaysToDateKey(todayKey, 90));
+  const [seasonColorHex, setSeasonColorHex] = useState<string>('#059669');
+  const [seasonNotes, setSeasonNotes] = useState<string>('');
+  const [seasonError, setSeasonError] = useState<string>('');
+  const [confirmDeleteSeasonId, setConfirmDeleteSeasonId] = useState<string | null>(null);
+
+  const openSeasonForm = (season?: ScoutSeason) => {
+    if (season) {
+      setEditingSeason(season);
+      setSeasonName(season.name);
+      setSeasonStartDate(season.startDate);
+      setSeasonEndDate(season.endDate);
+      setSeasonColorHex(season.colorHex || '#059669');
+      setSeasonNotes(season.notes || '');
+    } else {
+      setEditingSeason(null);
+      setSeasonName('');
+      setSeasonStartDate(selectedDate || todayKey);
+      setSeasonEndDate(addDaysToDateKey(selectedDate || todayKey, 90));
+      setSeasonColorHex('#059669');
+      setSeasonNotes('');
+    }
+    setSeasonError('');
+  };
+
+  const handleSaveSeasonSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSeasonError('');
+    if (!seasonName.trim()) {
+      setSeasonError('Please enter the Scout Season name (e.g., Term 1 / Summer Camp / Mo2tamar).');
+      return;
+    }
+    if (!seasonStartDate || !seasonEndDate) {
+      setSeasonError('Please choose both start and end dates.');
+      return;
+    }
+    if (seasonEndDate < seasonStartDate) {
+      setSeasonError('End date must be on or after the start date.');
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const payload: ScoutSeason = {
+      id: editingSeason ? editingSeason.id : `season_${Date.now()}`,
+      name: seasonName.trim(),
+      startDate: seasonStartDate,
+      endDate: seasonEndDate,
+      colorHex: seasonColorHex || '#059669',
+      notes: seasonNotes.trim() || undefined,
+      createdByName: editingSeason?.createdByName || currentUser.name,
+      createdAt: editingSeason?.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+    onSaveScoutSeason?.(payload);
+    openSeasonForm();
+  };
+
+  const sortedScoutSeasons = useMemo(
+    () => [...scoutSeasons].sort((a, b) => b.startDate.localeCompare(a.startDate)),
+    [scoutSeasons]
+  );
+
+  const activeSeasonsForView = useMemo(() => {
+    if (sortedScoutSeasons.length === 0) return [];
+    let rangeStart = selectedDate;
+    let rangeEnd = selectedDate;
+    if (calendarMode === 'month') {
+      const y = cursorMonth.getFullYear();
+      const m = cursorMonth.getMonth();
+      rangeStart = toDateKey(new Date(y, m, 1));
+      rangeEnd = toDateKey(new Date(y, m + 1, 0));
+    } else if (calendarMode === 'week') {
+      const anchor = parseDateKey(selectedDate);
+      const startOfWeek = new Date(anchor);
+      startOfWeek.setDate(anchor.getDate() - anchor.getDay());
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      rangeStart = toDateKey(startOfWeek);
+      rangeEnd = toDateKey(endOfWeek);
+    }
+    return sortedScoutSeasons.filter(
+      (s) => s.startDate <= rangeEnd && s.endDate >= rangeStart
+    );
+  }, [sortedScoutSeasons, calendarMode, cursorMonth, selectedDate]);
 
   const getItemStage = (item: CalendarItem): 'upcoming' | 'in_progress' | 'done' => {
     if (item.completed || item.boardStatus === 'done') return 'done';
@@ -718,7 +823,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {onSaveScoutSeason && (
+            <button
+              type="button"
+              onClick={() => {
+                openSeasonForm();
+                setIsSeasonsModalOpen(true);
+              }}
+              className="px-3.5 py-2.5 min-h-[44px] rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-950 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              title="Define Scout Seasons / Time Frames synced directly with Budgeting Sales"
+            >
+              <CalendarRange className="w-4 h-4 text-emerald-700" />
+              <span>Scout Seasons</span>
+              <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white font-mono text-[10px] tabular-nums">
+                {scoutSeasons.length}
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => openCreateModal(selectedDate, 'task')}
@@ -1032,6 +1154,50 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Active Scout Season Time Frame Banner (Synced with Budgeting) */}
+          {activeSeasonsForView.length > 0 && (
+            <div className="px-4 py-2.5 border-b border-slate-200 bg-emerald-50/60 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                  <CalendarRange className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>Scout Season:</span>
+                </span>
+                {activeSeasonsForView.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      openSeasonForm(s);
+                      setIsSeasonsModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-emerald-200 hover:border-emerald-400 text-xs font-bold text-slate-900 transition-colors cursor-pointer"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: s.colorHex || '#059669' }}
+                    />
+                    <span>{s.name}</span>
+                    <span className="text-[11px] font-mono tabular-nums text-slate-500">
+                      ({s.startDate} → {s.endDate})
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {onSaveScoutSeason && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    openSeasonForm();
+                    setIsSeasonsModalOpen(true);
+                  }}
+                  className="text-[11px] font-bold text-emerald-800 hover:underline cursor-pointer"
+                >
+                  Manage Seasons
+                </button>
+              )}
+            </div>
+          )}
 
           {/* MODE 1: MONTH GRID */}
           {calendarMode === 'month' && (
@@ -2329,6 +2495,257 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         );
       })()}
+
+      {/* Modal: Scout Seasons / Time Frames Manager (Connected to Budgeting) */}
+      {isSeasonsModalOpen && (
+        <div
+          onClick={() => setIsSeasonsModalOpen(false)}
+          className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-2xl bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl max-h-[92vh] flex flex-col overflow-hidden"
+          >
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center">
+                  <CalendarRange className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Scout Seasons &amp; Time Frames
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Set official Scout seasons/terms here — Budgeting automatically tracks revenue, COGS &amp; profit per season.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSeasonsModalOpen(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-5">
+              {/* Create / Edit Scout Season Form */}
+              <form
+                onSubmit={handleSaveSeasonSubmit}
+                className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3.5"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-black uppercase tracking-wider text-slate-700">
+                    {editingSeason ? `Edit Season: ${editingSeason.name}` : 'Add New Scout Season / Time Frame'}
+                  </div>
+                  {editingSeason && (
+                    <button
+                      type="button"
+                      onClick={() => openSeasonForm()}
+                      className="text-[11px] font-bold text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                    >
+                      + Create New Instead
+                    </button>
+                  )}
+                </div>
+
+                {seasonError && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700">
+                    {seasonError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Season / Time Frame Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={seasonName}
+                      onChange={(e) => setSeasonName(e.target.value)}
+                      placeholder="e.g., First Term 2026, Summer Camp Season, Easter Season..."
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Start Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={seasonStartDate}
+                      onChange={(e) => setSeasonStartDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-mono text-slate-900 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      End Date *
+                    </label>
+                    <input
+                      type="date"
+                      value={seasonEndDate}
+                      onChange={(e) => setSeasonEndDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-mono text-slate-900 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Color Tag
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {SEASON_COLOR_PRESETS.map((c) => (
+                        <button
+                          key={c.hex}
+                          type="button"
+                          onClick={() => setSeasonColorHex(c.hex)}
+                          className={`w-6 h-6 rounded-full border-2 transition-transform cursor-pointer ${
+                            seasonColorHex === c.hex
+                              ? 'border-slate-900 scale-110'
+                              : 'border-white hover:scale-105'
+                          }`}
+                          style={{ backgroundColor: c.hex }}
+                          title={c.label}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Notes (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={seasonNotes}
+                      onChange={(e) => setSeasonNotes(e.target.value)}
+                      placeholder="Key camp or uniform focus..."
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    className="px-4 py-2.5 min-h-[40px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{editingSeason ? 'Save Season Changes' : 'Add Scout Season'}</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Defined Scout Seasons List */}
+              <div className="space-y-2.5">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-600">
+                  Configured Scout Seasons ({sortedScoutSeasons.length})
+                </div>
+
+                {sortedScoutSeasons.length === 0 ? (
+                  <div className="p-6 rounded-xl border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                    No Scout Seasons defined yet. Add your first Scout Season or Time Frame above so Budgeting can group sales &amp; Fare2 revenue by season.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {sortedScoutSeasons.map((s) => (
+                      <div
+                        key={s.id}
+                        className="p-3.5 rounded-xl bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-3"
+                      >
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <span
+                            className="w-3 h-3 rounded-full mt-1 shrink-0"
+                            style={{ backgroundColor: s.colorHex || '#059669' }}
+                          />
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-slate-900 truncate">
+                              {s.name}
+                            </div>
+                            <div className="text-xs font-mono tabular-nums text-slate-600 mt-0.5">
+                              {s.startDate} → {s.endDate}
+                            </div>
+                            {s.notes && (
+                              <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                                {s.notes}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {confirmDeleteSeasonId === s.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-bold text-rose-700 mr-1">
+                              Delete?
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteSeasonId(null)}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                            >
+                              No
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onDeleteScoutSeason?.(s.id);
+                                setConfirmDeleteSeasonId(null);
+                                if (editingSeason?.id === s.id) openSeasonForm();
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
+                            >
+                              Yes
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCursorMonth(new Date(parseDateKey(s.startDate).getFullYear(), parseDateKey(s.startDate).getMonth(), 1));
+                                setSelectedDate(s.startDate);
+                                setIsSeasonsModalOpen(false);
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700 cursor-pointer"
+                            >
+                              Jump to Date
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openSeasonForm(s)}
+                              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:text-amber-700 hover:bg-amber-50 cursor-pointer"
+                              title="Edit Season"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            {onDeleteScoutSeason && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteSeasonId(s.id)}
+                                className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:text-rose-700 hover:bg-rose-50 cursor-pointer"
+                                title="Delete Season"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

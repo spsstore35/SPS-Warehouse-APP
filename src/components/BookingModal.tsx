@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Product, ProductVariant, Booking, BookingItem, User, Role } from '../types/inventory';
+import { Product, ProductVariant, Booking, BookingItem, User, Role, MarketingOffer } from '../types/inventory';
+import { getEffectiveProductOffer } from '../utils/offers';
 import {
   SCOUT_FERA2_LIST,
   getScoutFare2Meta,
@@ -35,6 +36,7 @@ interface BookingModalProps {
   onClose: () => void;
   products: Product[];
   users?: User[];
+  marketingOffers?: MarketingOffer[];
   initialProduct?: Product;
   bookingToEdit?: Booking | null;
   currentUser: User;
@@ -97,13 +99,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onClose,
   products,
   users = [],
+  marketingOffers = [],
   initialProduct,
   bookingToEdit,
   currentUser,
   existingBookings = [],
   onSaveBooking,
 }) => {
-  const isUserAdmin = currentUser.role === 'admin';
+  const isUserAdmin = currentUser.role === 'admin' || currentUser.role === 'full_admin';
   const isEditMode = Boolean(bookingToEdit);
 
   const fare2Leaders = useMemo(() => getStoredFare2Leaders(), [isOpen]);
@@ -187,7 +190,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       const v = initialProduct.variants[0];
       const avail = v.quantity || 0;
       const defaultQty = 1;
-      const unitPrice = typeof initialProduct.price === 'number' ? initialProduct.price : 0;
+      const offerRes = getEffectiveProductOffer(initialProduct, marketingOffers);
+      const unitPrice = offerRes.isActive
+        ? offerRes.effectivePrice
+        : typeof initialProduct.price === 'number'
+        ? initialProduct.price
+        : 0;
       const deficit = Math.max(0, defaultQty - avail);
       const threshold = v.minThreshold || 5;
       const recProd =
@@ -291,9 +299,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   // Order quantity BLANK by default as requested!
   const [newQty, setNewQty] = useState<number | ''>('');
-  const [newPrice, setNewPrice] = useState<number | ''>(
-    typeof selectedProduct?.price === 'number' ? selectedProduct.price : 0
-  );
+  const [newPrice, setNewPrice] = useState<number | ''>(() => {
+    if (!selectedProduct) return 0;
+    const offerRes = getEffectiveProductOffer(selectedProduct, marketingOffers);
+    return offerRes.isActive
+      ? offerRes.effectivePrice
+      : typeof selectedProduct.price === 'number'
+      ? selectedProduct.price
+      : 0;
+  });
   const [isEditingPrice, setIsEditingPrice] = useState<boolean>(false);
   const [formError, setFormError] = useState<string>('');
   const [addItemError, setAddItemError] = useState<string>('');
@@ -336,7 +350,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       } else {
         setSelectedVariantId('');
       }
-      setNewPrice(typeof prod.price === 'number' ? prod.price : 0);
+      const offerRes = getEffectiveProductOffer(prod, marketingOffers);
+      setNewPrice(
+        offerRes.isActive
+          ? offerRes.effectivePrice
+          : typeof prod.price === 'number'
+          ? prod.price
+          : 0
+      );
     } else {
       setSelectedColorName('Standard');
       setSelectedVariantId('');

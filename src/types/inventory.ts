@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'worker' | 'leader';
+export type Role = 'full_admin' | 'admin' | 'worker' | 'leader';
 export type UserStatus = 'active' | 'pending' | 'rejected';
 
 export interface User {
@@ -162,6 +162,12 @@ export interface AuditLogEntry {
 
 export type BookingStatus = 'pending' | 'preparing' | 'delivered' | 'done';
 
+export type BookingStockCheckStatus =
+  | 'in_stock'
+  | 'needs_production'
+  | 'in_production'
+  | 'ready_for_handover';
+
 export interface BookingItem {
   id: string;
   productId: string;
@@ -211,6 +217,7 @@ export interface Booking {
   paymentVerificationRequestedAt?: string;
   paymentVerificationNote?: string;
   status: BookingStatus;
+  stockCheckStatus?: BookingStockCheckStatus;
   inventoryDeducted: boolean;
   createdById: string;
   createdByName: string;
@@ -248,6 +255,10 @@ export interface CalendarItem {
   troopGroup?: string;
   location?: string;
   notes?: string;
+  linkedBookingId?: string;
+  linkedBatchId?: string;
+  linkedOfferId?: string;
+  workflowStage?: string;
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -329,6 +340,81 @@ export interface ProductionBatch {
   currentStageKey: OperationStageKey;
   status: 'in_progress' | 'completed';
   stageAssignments: Record<string, BatchStageAssignment>;
+  linkedBookingId?: string;
+  linkedBookingNumber?: string;
+  requestedByTeam?: string;
   createdAt: string;
   completedAt?: string;
+}
+
+export type MarketingOfferType = 'percentage' | 'fixed_price' | 'bundle_note';
+export type MarketingOfferStatus = 'active' | 'scheduled' | 'paused' | 'ended';
+
+export interface MarketingOffer {
+  id: string;
+  productId: string;
+  title: string;
+  offerType: MarketingOfferType;
+  discountPercent: number;
+  offerPrice?: number;
+  badgeText: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  status: MarketingOfferStatus;
+  notes?: string;
+  createdById?: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BudgetExpenseCategory =
+  | 'production_extras'
+  | 'packaging'
+  | 'transport'
+  | 'rent_utilities'
+  | 'marketing'
+  | 'hardship_subsidy'
+  | 'other';
+
+export interface ProductBudgetProfile {
+  productId: string;
+  manufacturingCost: number;
+  extraPrepCost: number;
+  targetMarginPercent?: number;
+  hardshipDiscountType?: 'percentage' | 'fixed_amount';
+  hardshipDiscountValue?: number;
+  notes?: string;
+  updatedAt: string;
+}
+
+export interface BudgetExpenseEntry {
+  id: string;
+  title: string;
+  category: BudgetExpenseCategory;
+  amount: number;
+  expenseDate: string; // YYYY-MM-DD
+  linkedProductId?: string;
+  notes?: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+export interface BudgetSettings {
+  id: string;
+  cashOnHand?: number;
+  reserveBuffer: number;
+  updatedAt: string;
+}
+
+export interface ScoutSeason {
+  id: string;
+  name: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  colorHex?: string;
+  notes?: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt: string;
 }

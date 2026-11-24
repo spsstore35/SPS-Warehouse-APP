@@ -18,11 +18,11 @@ export const INITIAL_USERS: User[] = [
   {
     id: 'user_admin_01',
     name: 'Admin Boss (Owner)',
-    role: 'admin',
+    role: 'full_admin',
     email: 'admin@wearhouse.com',
     password: 'admin123',
     status: 'active',
-    requestedRole: 'admin',
+    requestedRole: 'full_admin',
     employeeId: 'WH-ADM-01',
     avatarColor: '#d97706',
     createdAt: new Date().toISOString(),

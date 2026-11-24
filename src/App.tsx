@@ -18,6 +18,11 @@ import {
   ProductStageVendor,
   VendorPriceEntry,
   ProductionBatch,
+  MarketingOffer,
+  ProductBudgetProfile,
+  BudgetExpenseEntry,
+  BudgetSettings,
+  ScoutSeason,
 } from './types/inventory';
 import {
   getStoredProducts,
@@ -66,10 +71,33 @@ import {
   saveStoredProductionBatches,
   isSourcingSeeded,
   markSourcingSeeded,
+  getStoredMarketingOffers,
+  saveStoredMarketingOffers,
+  getStoredBookingStockCheckMap,
+  saveStoredBookingStockCheckMap,
+  getStoredBudgetProfiles,
+  saveStoredBudgetProfiles,
+  getStoredBudgetExpenses,
+  saveStoredBudgetExpenses,
+  getStoredBudgetSettings,
+  saveStoredBudgetSettings,
+  getStoredScoutSeasons,
+  saveStoredScoutSeasons,
+  getStoredFullAdminIds,
+  setUserFullAdminFlag,
 } from './utils/storage';
 import { buildInitialSourcingSeed, getStageMeta } from './utils/sourcing';
+import { getEffectiveProductOffer } from './utils/offers';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
-import { isUserAdmin, isUserLeader, normalizeRole, getRoleDisplayName } from './utils/security';
+import {
+  isUserAdmin,
+  isUserLeader,
+  isUserMarketingMember,
+  canEditProductMediaAndColors,
+  canUserAccessView,
+  normalizeRole,
+  getRoleDisplayName,
+} from './utils/security';
 import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
 import {
   checkSupabaseConnection,
@@ -112,6 +140,17 @@ import {
   insertVendorPriceEntryToDb,
   upsertProductionBatchToDb,
   deleteProductionBatchFromDb,
+  fetchMarketingOffersFromDb,
+  upsertMarketingOfferToDb,
+  deleteMarketingOfferFromDb,
+  fetchBudgetingDataFromDb,
+  upsertProductBudgetProfileToDb,
+  upsertBudgetExpenseToDb,
+  deleteBudgetExpenseFromDb,
+  upsertBudgetSettingsToDb,
+  fetchScoutSeasonsFromDb,
+  upsertScoutSeasonToDb,
+  deleteScoutSeasonFromDb,
   fetchActivitySnapshot,
   CATEGORY_MAP,
   DbConnectionStatus,
@@ -137,6 +176,8 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
+import { MarketingOffersView } from './components/MarketingOffersView';
+import { BudgetingView } from './components/BudgetingView';
 import { MobileNotificationBanner } from './components/MobileNotificationBanner';
 import {
   registerServiceWorker,
@@ -495,6 +536,9 @@ export default function App() {
   } | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | undefined>(undefined);
+  const [productEditScope, setProductEditScope] = useState<'full' | 'marketing' | undefined>(
+    undefined
+  );
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
 
   // Rich Toast notification & Activity Detail
@@ -534,6 +578,7 @@ export default function App() {
 
   // Store Calendar & Tasks state
   const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>(() => getStoredCalendarEvents());
+  const [scoutSeasons, setScoutSeasons] = useState<ScoutSeason[]>(() => getStoredScoutSeasons());
   const lastCalendarMutationAtRef = useRef<number>(0);
 
   // Sourcing & Production Operations state
@@ -548,6 +593,23 @@ export default function App() {
   const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>(() =>
     getStoredProductionBatches()
   );
+
+  // Marketing & Store Offers state
+  const [marketingOffers, setMarketingOffers] = useState<MarketingOffer[]>(() =>
+    getStoredMarketingOffers()
+  );
+
+  // Budgeting, Unit Costs, Expenses & Liquidity state
+  const [budgetProfiles, setBudgetProfiles] = useState<Record<string, ProductBudgetProfile>>(() =>
+    getStoredBudgetProfiles()
+  );
+  const [budgetExpenses, setBudgetExpenses] = useState<BudgetExpenseEntry[]>(() =>
+    getStoredBudgetExpenses()
+  );
+  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>(() =>
+    getStoredBudgetSettings()
+  );
+  const [isBudgetingUnlocked, setIsBudgetingUnlocked] = useState<boolean>(false);
 
   // Auto-seed realistic Sourcing & Operations starter bundle once products exist
   useEffect(() => {
@@ -617,6 +679,10 @@ export default function App() {
   useEffect(() => {
     saveStoredCalendarEvents(calendarEvents);
   }, [calendarEvents]);
+
+  useEffect(() => {
+    saveStoredScoutSeasons(scoutSeasons);
+  }, [scoutSeasons]);
 
   // Category handlers
   const handleAddCategory = async (name: string, description?: string) => {
@@ -822,6 +888,7 @@ export default function App() {
 
     const targetUser = users.find((u) => u.id === userId);
     const oldRole = targetUser?.role || 'worker';
+    setUserFullAdminFlag(userId, newRole === 'full_admin');
 
     const nextUsers = users.map((u) => {
       if (u.id !== userId) return u;
@@ -829,7 +896,14 @@ export default function App() {
         ...u,
         role: newRole,
         requestedRole: newRole,
-        avatarColor: newRole === 'admin' ? '#d97706' : newRole === 'leader' ? '#059669' : '#0284c7',
+        avatarColor:
+          newRole === 'full_admin'
+            ? '#b45309'
+            : newRole === 'admin'
+            ? '#d97706'
+            : newRole === 'leader'
+            ? '#059669'
+            : '#0284c7',
       };
     });
 
@@ -889,6 +963,9 @@ export default function App() {
           dbCalendar,
           dbFare2Leaders,
           dbSourcing,
+          dbOffers,
+          dbBudgeting,
+          dbScoutSeasons,
         ] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
@@ -900,6 +977,9 @@ export default function App() {
           fetchCalendarEventsFromDb(),
           fetchFare2LeadersFromDb(),
           fetchSourcingDataFromDb(),
+          fetchMarketingOffersFromDb(),
+          fetchBudgetingDataFromDb(),
+          fetchScoutSeasonsFromDb(),
         ]);
 
         let dbProductFolders: string[] = [];
@@ -948,7 +1028,14 @@ export default function App() {
           const localFare2Map = getStoredUserFare2Map();
           let dirDirty = false;
           let fare2Dirty = false;
+          const fullAdminIds = new Set(getStoredFullAdminIds());
           const enrichedUsers = dbUsers.value.map((u) => {
+            if (u.role === 'full_admin') {
+              setUserFullAdminFlag(u.id, true);
+              fullAdminIds.add(u.id);
+            }
+            const resolvedRole: Role =
+              u.role === 'admin' && fullAdminIds.has(u.id) ? 'full_admin' : u.role;
             const dbTeams =
               Array.isArray(u.assignedTeams) && u.assignedTeams.length > 0
                 ? u.assignedTeams
@@ -967,6 +1054,7 @@ export default function App() {
             }
             return {
               ...u,
+              role: resolvedRole,
               assignedTeams: dbTeams || localTeamDir[u.id] || [],
               assignedFare2: dbFare2 || localFare2Map[u.id] || [],
             };
@@ -975,6 +1063,36 @@ export default function App() {
           if (fare2Dirty) saveStoredUserFare2Map(localFare2Map);
           setUsers(enrichedUsers);
           saveStoredUsers(enrichedUsers);
+          setCurrentUser((prevUser) => {
+            if (!prevUser) return prevUser;
+            const matched = enrichedUsers.find(
+              (u) =>
+                u.id === prevUser.id ||
+                (u.email && prevUser.email && u.email.toLowerCase() === prevUser.email.toLowerCase())
+            );
+            if (!matched) return prevUser;
+            const prevTeams = JSON.stringify(prevUser.assignedTeams ?? []);
+            const nextTeams = JSON.stringify(matched.assignedTeams ?? []);
+            const prevFare2 = JSON.stringify(prevUser.assignedFare2 ?? []);
+            const nextFare2 = JSON.stringify(matched.assignedFare2 ?? []);
+            if (
+              matched.role === prevUser.role &&
+              matched.status === prevUser.status &&
+              prevTeams === nextTeams &&
+              prevFare2 === nextFare2
+            ) {
+              return prevUser;
+            }
+            const updatedCurrentUser: User = {
+              ...prevUser,
+              role: matched.role,
+              status: matched.status,
+              assignedTeams: matched.assignedTeams,
+              assignedFare2: matched.assignedFare2,
+            };
+            saveStoredUser(updatedCurrentUser);
+            return updatedCurrentUser;
+          });
         }
         if (dbCategories.status === 'fulfilled') {
           const cats = dbCategories.value.length > 0 ? dbCategories.value : INITIAL_CATEGORIES;
@@ -1008,6 +1126,7 @@ export default function App() {
         }
         if (dbBookings.status === 'fulfilled') {
           const assignmentMap = getStoredBookingAssignmentMap();
+          const stockCheckMap = getStoredBookingStockCheckMap();
           setBookings((prev) => {
             const merged = dbBookings.value.map((b) => {
               const localMatch = prev.find((lb) => lb.id === b.id);
@@ -1029,6 +1148,8 @@ export default function App() {
                 assignedFare2: resolvedFare2,
                 assignedToId: b.assignedToId || savedAssign?.assignedToId || localMatch?.assignedToId,
                 assignedToName: b.assignedToName || savedAssign?.assignedToName || localMatch?.assignedToName,
+                stockCheckStatus:
+                  b.stockCheckStatus || stockCheckMap[b.id] || localMatch?.stockCheckStatus,
                 paymentVerificationRequested: isPaidNow
                   ? false
                   : Boolean(b.paymentVerificationRequested || localMatch?.paymentVerificationRequested),
@@ -1106,6 +1227,10 @@ export default function App() {
                 team: item.team || localMatch?.team,
                 assignedToId: item.assignedToId || localMatch?.assignedToId,
                 assignedToName: item.assignedToName || localMatch?.assignedToName,
+                linkedBookingId: item.linkedBookingId || localMatch?.linkedBookingId,
+                linkedBatchId: item.linkedBatchId || localMatch?.linkedBatchId,
+                linkedOfferId: item.linkedOfferId || localMatch?.linkedOfferId,
+                workflowStage: item.workflowStage || localMatch?.workflowStage,
               };
             });
 
@@ -1148,6 +1273,40 @@ export default function App() {
             setProductionBatches(remote.batches);
             saveStoredProductionBatches(remote.batches);
             markSourcingSeeded();
+          }
+        }
+
+        // Sync Marketing Offers
+        if (dbOffers.status === 'fulfilled' && dbOffers.value !== null) {
+          setMarketingOffers(dbOffers.value);
+          saveStoredMarketingOffers(dbOffers.value);
+        }
+
+        // Sync Budgeting Profiles, Expenses & Liquidity Settings
+        if (dbBudgeting.status === 'fulfilled' && dbBudgeting.value !== null) {
+          const bData = dbBudgeting.value;
+          if (Object.keys(bData.profiles).length > 0) {
+            setBudgetProfiles((prev) => {
+              const merged = { ...prev, ...bData.profiles };
+              saveStoredBudgetProfiles(merged);
+              return merged;
+            });
+          }
+          if (bData.expenses.length > 0) {
+            setBudgetExpenses(bData.expenses);
+            saveStoredBudgetExpenses(bData.expenses);
+          }
+          if (bData.settings) {
+            setBudgetSettings(bData.settings);
+            saveStoredBudgetSettings(bData.settings);
+          }
+        }
+
+        // Sync Calendar Scout Seasons
+        if (dbScoutSeasons.status === 'fulfilled' && dbScoutSeasons.value !== null) {
+          if (dbScoutSeasons.value.length > 0) {
+            setScoutSeasons(dbScoutSeasons.value);
+            saveStoredScoutSeasons(dbScoutSeasons.value);
           }
         }
 
@@ -1286,19 +1445,22 @@ export default function App() {
 
   // Auth Handlers
   const handleLogin = (user: User) => {
+    setIsBudgetingUnlocked(false);
     setCurrentUser(user);
     setActiveView('inventory');
     showToast(`Signed in as ${user.name} (${getRoleDisplayName(user.role)})`);
   };
 
   const handleLogout = () => {
+    setIsBudgetingUnlocked(false);
     setCurrentUser(null);
     setActiveView('inventory');
   };
 
   const handleSwitchRole = () => {
     if (!currentUser) return;
-    if (currentUser.role === 'admin') {
+    setIsBudgetingUnlocked(false);
+    if (isUserAdmin(currentUser)) {
       const worker = users.find((u) => u.role === 'worker' && u.status === 'active') || {
         id: 'user_worker_01',
         name: 'Staff Member',
@@ -1309,15 +1471,16 @@ export default function App() {
       setCurrentUser(worker as User);
       showToast(`Switched to Staff: ${worker.name}`);
     } else {
-      const admin = users.find((u) => u.role === 'admin' && u.status === 'active') || {
-        id: 'user_admin_01',
-        name: 'Warehouse Admin',
-        role: 'admin',
-        email: 'admin@wearhouse.com',
-        status: 'active',
-      };
+      const admin =
+        users.find((u) => (u.role === 'full_admin' || u.role === 'admin') && u.status === 'active') || {
+          id: 'user_admin_01',
+          name: 'Warehouse Admin',
+          role: 'full_admin',
+          email: 'admin@wearhouse.com',
+          status: 'active',
+        };
       setCurrentUser(admin as User);
-      showToast(`Switched to Warehouse Admin`);
+      showToast(`Switched to ${getRoleDisplayName(admin.role)}`);
     }
   };
 
@@ -1326,15 +1489,41 @@ export default function App() {
     const existingProd = products.find((p) => p.id === product.id);
     const isEdit = Boolean(existingProd);
     const isAdmin = isUserAdmin(currentUser);
+    const isMarketingRestrictedSave = Boolean(
+      isEdit && existingProd && !isAdmin && isUserMarketingMember(currentUser)
+    );
 
-    // If staff is creating a product (not editing existing approved), it is pending approval
-    const finalProd: Product = {
-      ...product,
-      status: isEdit ? (product.status || 'active') : (isAdmin ? 'active' : 'pending'),
-      createdByRole: product.createdByRole || (isAdmin ? 'admin' : 'worker'),
-      createdByName: product.createdByName || currentUser?.name || 'Staff',
-      createdById: product.createdById || currentUser?.id,
-    };
+    // If Marketing staff edits an existing product, preserve protected Admin fields (name, SKU, price, category, status, stock counts)
+    const finalProd: Product = isMarketingRestrictedSave && existingProd
+      ? {
+          ...existingProd,
+          description: product.description,
+          fabricDetails: product.fabricDetails,
+          image: product.image,
+          images: product.images,
+          variants: product.variants.map((v) => {
+            const match = existingProd.variants.find(
+              (ev) => ev.id === v.id || (ev.size === v.size && ev.colorName === v.colorName)
+            );
+            return match
+              ? { ...v, quantity: match.quantity, minThreshold: match.minThreshold }
+              : { ...v, quantity: 0 };
+          }),
+          totalQuantity: existingProd.variants.reduce((sum, v) => {
+            const kept = product.variants.some(
+              (nv) => nv.id === v.id || (nv.size === v.size && nv.colorName === v.colorName)
+            );
+            return kept ? sum + v.quantity : sum;
+          }, 0),
+          updatedAt: new Date().toISOString(),
+        }
+      : {
+          ...product,
+          status: isEdit ? (product.status || 'active') : (isAdmin ? 'active' : 'pending'),
+          createdByRole: product.createdByRole || (isAdmin ? 'admin' : 'worker'),
+          createdByName: product.createdByName || currentUser?.name || 'Staff',
+          createdById: product.createdById || currentUser?.id,
+        };
 
     if (finalProd.folder && !customFolders.some((f) => f.toLowerCase() === finalProd.folder!.toLowerCase())) {
       const nextFolders = [...customFolders, finalProd.folder];
@@ -2031,8 +2220,10 @@ export default function App() {
     email: string;
     password?: string;
     role: Role;
+    assignedTeams?: StoreTeamId[];
   }): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = data.email.toLowerCase().trim();
+    const initialTeams = data.role === 'leader' ? [] : data.assignedTeams || [];
 
     // 1. Check local state
     const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
@@ -2045,6 +2236,7 @@ export default function App() {
       const { hashPassword } = await import('./utils/security');
       const plainPassword = data.password && data.password.trim().length >= 4 ? data.password.trim() : '123456';
       const securePasswordHash = await hashPassword(plainPassword);
+      const dbRoleFallback = data.role === 'full_admin' ? 'admin' : data.role;
 
       // 2. Check if user already exists in remote Supabase profiles table
       const { data: existingProfile, error: existingErr } = await supabase
@@ -2056,12 +2248,13 @@ export default function App() {
       if (existingErr) throw existingErr;
 
       if (existingProfile) {
-        // If profile already exists (e.g. pending or previously registered), update to active and set password hash
+        setUserFullAdminFlag(existingProfile.id, data.role === 'full_admin');
         const updatePayload: Record<string, any> = {
           full_name: data.name.trim(),
           role: data.role,
           status: 'active',
           requested_role: data.role,
+          assigned_teams: initialTeams,
           approved_at: new Date().toISOString(),
           approved_by_name: currentUser?.name || 'Admin',
         };
@@ -2069,17 +2262,29 @@ export default function App() {
           updatePayload.password_hash = securePasswordHash;
         }
 
-        const { error: updateErr } = await supabase
+        let { error: updateErr } = await supabase
           .from('profiles')
           .update(updatePayload)
           .eq('id', existingProfile.id);
 
+        if (updateErr && data.role === 'full_admin') {
+          const retryRes = await supabase
+            .from('profiles')
+            .update({ ...updatePayload, role: dbRoleFallback, requested_role: dbRoleFallback })
+            .eq('id', existingProfile.id);
+          updateErr = retryRes.error;
+        }
+
         if (updateErr) throw updateErr;
+
+        if (initialTeams.length > 0) {
+          handleUserTeamsChange(existingProfile.id, initialTeams, []);
+        }
 
         setUsers((prev) =>
           prev.map((u) =>
             u.email.toLowerCase() === cleanEmail
-              ? { ...u, status: 'active', role: data.role, name: data.name.trim() }
+              ? { ...u, status: 'active', role: data.role, name: data.name.trim(), assignedTeams: initialTeams }
               : u
           )
         );
@@ -2090,6 +2295,7 @@ export default function App() {
 
       // 3. Insert new user profile with secure password hash
       const newId = crypto.randomUUID();
+      setUserFullAdminFlag(newId, data.role === 'full_admin');
       const newUser: User = {
         id: newId,
         name: data.name.trim(),
@@ -2097,11 +2303,19 @@ export default function App() {
         role: data.role,
         status: 'active',
         requestedRole: data.role,
+        assignedTeams: initialTeams,
         createdAt: new Date().toISOString(),
-        avatarColor: data.role === 'admin' ? '#d97706' : data.role === 'leader' ? '#059669' : '#0284c7',
+        avatarColor:
+          data.role === 'full_admin'
+            ? '#b45309'
+            : data.role === 'admin'
+            ? '#d97706'
+            : data.role === 'leader'
+            ? '#059669'
+            : '#0284c7',
       };
 
-      const { error: insertErr } = await supabase.from('profiles').insert({
+      const insertPayload: Record<string, any> = {
         id: newUser.id,
         full_name: newUser.name,
         email: newUser.email,
@@ -2109,11 +2323,21 @@ export default function App() {
         role: newUser.role,
         status: 'active',
         requested_role: newUser.role,
+        assigned_teams: initialTeams,
         avatar_color: newUser.avatarColor,
         approved_at: new Date().toISOString(),
         approved_by_name: currentUser?.name || 'Admin',
         created_at: newUser.createdAt,
-      });
+      };
+
+      let { error: insertErr } = await supabase.from('profiles').insert(insertPayload);
+
+      if (insertErr && data.role === 'full_admin' && String(insertErr.message || '').includes('user_role')) {
+        const retryInsert = await supabase
+          .from('profiles')
+          .insert({ ...insertPayload, role: dbRoleFallback, requested_role: dbRoleFallback });
+        insertErr = retryInsert.error;
+      }
 
       if (insertErr) {
         // If unique constraint on email was hit, update existing row instead
@@ -2122,18 +2346,34 @@ export default function App() {
           insertErr.message?.includes('profiles_email_key') ||
           insertErr.message?.includes('duplicate key')
         ) {
-          await supabase
+          const { error: dupRetryErr } = await supabase
             .from('profiles')
             .update({
               status: 'active',
               role: newUser.role,
               requested_role: newUser.role,
+              assigned_teams: initialTeams,
               full_name: newUser.name,
               password_hash: securePasswordHash,
               approved_at: new Date().toISOString(),
               approved_by_name: currentUser?.name || 'Admin',
             })
             .ilike('email', cleanEmail);
+          if (dupRetryErr && data.role === 'full_admin') {
+            await supabase
+              .from('profiles')
+              .update({
+                status: 'active',
+                role: dbRoleFallback,
+                requested_role: dbRoleFallback,
+                assigned_teams: initialTeams,
+                full_name: newUser.name,
+                password_hash: securePasswordHash,
+                approved_at: new Date().toISOString(),
+                approved_by_name: currentUser?.name || 'Admin',
+              })
+              .ilike('email', cleanEmail);
+          }
 
           refreshFromSupabase();
           showToast(`Account for ${cleanEmail} activated.`);
@@ -2142,6 +2382,10 @@ export default function App() {
         throw insertErr;
       }
 
+      if (initialTeams.length > 0) {
+        const dir = getStoredTeamDirectory();
+        saveStoredTeamDirectory({ ...dir, [newUser.id]: initialTeams });
+      }
       setUsers((prev) => [newUser, ...prev]);
 
       // Local account cache
@@ -2209,14 +2453,117 @@ export default function App() {
     }
   };
 
-  // Auto-sync Orders to Scout Fera2 Tasks (6 Fera2 color-coded sub-teams)
-  // Afrad / Individual orders remain unassigned to any group unless manually assigned.
+  // Batch upsert helper for cross-team Calendar & Board cards
+  const upsertCalendarItemsBatch = (itemsToUpsert: CalendarItem[]) => {
+    if (itemsToUpsert.length === 0) return;
+    lastCalendarMutationAtRef.current = Date.now();
+    const byId = new Map(itemsToUpsert.map((it) => [it.id, it]));
+    const boardMap = getStoredBoardStatusMap();
+
+    setCalendarEvents((prev) => {
+      const updatedExisting = prev.map((ev) => byId.get(ev.id) || ev);
+      const existingIds = new Set(prev.map((ev) => ev.id));
+      const freshOnes = itemsToUpsert.filter((it) => !existingIds.has(it.id));
+      const finalList = [...freshOnes, ...updatedExisting];
+      saveStoredCalendarEvents(finalList);
+      return finalList;
+    });
+
+    itemsToUpsert.forEach((it) => {
+      markCalendarIdUnsynced(it.id);
+      if (it.boardStatus) boardMap[it.id] = it.boardStatus;
+      upsertCalendarEventToDb(it).then((res) => {
+        if (res.ok) clearCalendarIdUnsynced(it.id);
+      });
+    });
+    saveStoredBoardStatusMap(boardMap);
+  };
+
+  // Connected Order Sync across Scout Fera2 Team, Inventory Mgmt Team & Calendar
   const syncOrderTaskToScoutFera2 = (booking: Booking) => {
     const fare2Meta =
       getScoutFare2Meta(booking.troopGroup) ||
       getScoutFare2Meta(booking.assignedFare2);
     const taskId = `task_order_${booking.id}`;
+    const invTaskId = `task_inv_${booking.id}`;
     const assignMap = getStoredBookingAssignmentMap();
+    const createdDate = (booking.createdAt || new Date().toISOString()).slice(0, 10);
+    const totalUnits = booking.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
+    const itemsSummary = booking.items
+      .map(
+        (it) =>
+          `• ${it.productName} (${!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard' : it.size} / ${it.colorName}) × ${it.quantity}`
+      )
+      .join('\n');
+
+    // Compute live stock shortages for Inventory Mgmt Calendar & Board card
+    const shortLines: string[] = [];
+    let totalShortUnits = 0;
+    booking.items.forEach((it) => {
+      const prod = products.find((p) => p.id === it.productId);
+      const variant = prod?.variants.find((v) => v.id === it.variantId);
+      const avail = booking.inventoryDeducted ? it.quantity : (variant ? variant.quantity : 0);
+      const shortQty = Math.max(0, it.quantity - avail);
+      if (shortQty > 0) {
+        totalShortUnits += shortQty;
+        shortLines.push(`• ${it.productName} (${it.size || 'Std'} / ${it.colorName}): Need ${shortQty} more`);
+      }
+    });
+
+    const isOrderCompletedOrDelivered = booking.status === 'delivered' || booking.status === 'done';
+    const isStockReady = booking.stockCheckStatus === 'ready_for_handover' || isOrderCompletedOrDelivered;
+
+    // 1. Always sync Inventory Management Stock Check Task to Calendar & Board
+    const existingInvTask = calendarEvents.find((ev) => ev.id === invTaskId);
+    const invBoardStatus: BoardColumnStatus = isStockReady
+      ? 'done'
+      : booking.stockCheckStatus === 'in_production'
+      ? 'in_progress'
+      : existingInvTask?.boardStatus || 'upcoming';
+    const invMember = users.find(
+      (u) => u.status === 'active' && (u.assignedTeams || []).includes('inventory')
+    );
+
+    const invTask: CalendarItem = {
+      id: invTaskId,
+      title: isStockReady
+        ? `[Stock Ready] Order #${booking.bookingNumber} — ${booking.clientName}`
+        : totalShortUnits > 0
+        ? `[Inventory Check] Order #${booking.bookingNumber} (${totalShortUnits} pcs short)`
+        : `[Inventory Check] Order #${booking.bookingNumber} — In Stock`,
+      itemType: 'task',
+      startDate: existingInvTask?.startDate || createdDate,
+      endDate: existingInvTask?.endDate || createdDate,
+      allDay: true,
+      completed: invBoardStatus === 'done',
+      boardStatus: invBoardStatus,
+      team: 'inventory',
+      assignedToId: existingInvTask?.assignedToId || invMember?.id,
+      assignedToName: existingInvTask?.assignedToName || invMember?.name,
+      troopGroup: fare2Meta?.id,
+      location: 'SPS Warehouse',
+      linkedBookingId: booking.id,
+      workflowStage: 'inventory_check',
+      notes: [
+        `Order #${booking.bookingNumber} · ${booking.clientName}`,
+        totalShortUnits > 0
+          ? `Shortage Detected (${totalShortUnits} pcs):\n${shortLines.join('\n')}`
+          : 'All requested units are available in warehouse stock.',
+        booking.stockCheckStatus === 'in_production'
+          ? 'Status: Sent to Purchases / Sourcing for production & restock.'
+          : isStockReady
+          ? 'Status: Stock confirmed ready for Scout Fera2 handover.'
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      createdById: existingInvTask?.createdById || currentUser?.id || 'system',
+      createdByName: existingInvTask?.createdByName || currentUser?.name || 'System',
+      createdAt: existingInvTask?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const tasksToSync: CalendarItem[] = [invTask];
 
     if (!fare2Meta && !booking.assignedToId) {
       if (assignMap[booking.id]) {
@@ -2231,6 +2578,7 @@ export default function App() {
       });
       clearCalendarIdUnsynced(taskId);
       deleteCalendarEventFromDb(taskId).catch(() => {});
+      upsertCalendarItemsBatch(tasksToSync);
       return;
     }
 
@@ -2248,14 +2596,6 @@ export default function App() {
     saveStoredBookingAssignmentMap(assignMap);
 
     const existingTask = calendarEvents.find((ev) => ev.id === taskId);
-    const createdDate = (booking.createdAt || new Date().toISOString()).slice(0, 10);
-    const totalUnits = booking.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
-    const itemsSummary = booking.items
-      .map(
-        (it) =>
-          `• ${it.productName} (${!it.size || it.size === 'One Size' || it.size === 'Standard' ? 'Standard' : it.size} / ${it.colorName}) × ${it.quantity}`
-      )
-      .join('\n');
 
     const groupLine = fare2Meta
       ? booking.troopGroup && booking.troopGroup !== fare2Meta.id
@@ -2263,10 +2603,21 @@ export default function App() {
         : `Scout Fera2: ${fare2Meta.label}`
       : `Order Type: ${booking.troopGroup || 'Afrad (Individual — Not assigned to a group)'}`;
 
+    const workflowNote = isOrderCompletedOrDelivered
+      ? 'Handover Status: Delivered to requesting Scout Fera2'
+      : booking.stockCheckStatus === 'ready_for_handover'
+      ? 'Handover Status: READY AT WAREHOUSE — Collect & deliver to requesting Fera2'
+      : booking.stockCheckStatus === 'in_production'
+      ? 'Handover Status: In Production / Purchases (awaiting Gard stock-in)'
+      : totalShortUnits > 0
+      ? `Stock Status: Needs ${totalShortUnits} pcs from Purchases/Production`
+      : 'Stock Status: Available in Stock';
+
     const notesLines = [
       `Order #${booking.bookingNumber} · Client: ${booking.clientName}`,
-      booking.clientPhone && booking.clientPhone !== 'N/A' ? `Phone: ${booking.clientPhone}` : '',
+      booking.clientPhone && booking.clientPhone !== 'N/A' ? `WhatsApp / Phone: ${booking.clientPhone}` : '',
       groupLine,
+      workflowNote,
       `Total: ${totalUnits} units · ${booking.total.toFixed(2)} EGP`,
       itemsSummary,
       booking.notes ? `Order Notes: ${booking.notes}` : '',
@@ -2274,10 +2625,18 @@ export default function App() {
       .filter(Boolean)
       .join('\n');
 
-    const nextBoardStatus: BoardColumnStatus = existingTask?.boardStatus || 'upcoming';
+    const nextBoardStatus: BoardColumnStatus = isOrderCompletedOrDelivered
+      ? 'done'
+      : booking.stockCheckStatus === 'ready_for_handover'
+      ? 'in_progress'
+      : existingTask?.boardStatus || 'upcoming';
+
     const nextTask: CalendarItem = {
       id: taskId,
-      title: `Order #${booking.bookingNumber} — ${booking.clientName}`,
+      title:
+        booking.stockCheckStatus === 'ready_for_handover' && !isOrderCompletedOrDelivered
+          ? `[Ready to Deliver] Order #${booking.bookingNumber} — ${booking.clientName}`
+          : `Order #${booking.bookingNumber} — ${booking.clientName}`,
       itemType: 'task',
       startDate: existingTask?.startDate || createdDate,
       endDate: existingTask?.endDate || createdDate,
@@ -2291,6 +2650,8 @@ export default function App() {
       assignedToName,
       troopGroup: fare2Meta?.id,
       location: 'SPS Warehouse',
+      linkedBookingId: booking.id,
+      workflowStage: booking.stockCheckStatus === 'ready_for_handover' ? 'fera2_handover' : 'order_intake',
       notes: notesLines,
       createdById: existingTask?.createdById || currentUser?.id || 'system',
       createdByName: existingTask?.createdByName || currentUser?.name || 'System',
@@ -2298,24 +2659,144 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     };
 
-    lastCalendarMutationAtRef.current = Date.now();
-    setCalendarEvents((prev) => {
-      const exists = prev.some((ev) => ev.id === taskId);
-      const updated = exists
-        ? prev.map((ev) => (ev.id === taskId ? nextTask : ev))
-        : [nextTask, ...prev];
-      saveStoredCalendarEvents(updated);
-      return updated;
-    });
-    markCalendarIdUnsynced(taskId);
+    tasksToSync.push(nextTask);
+    upsertCalendarItemsBatch(tasksToSync);
+  };
 
-    const boardMap = getStoredBoardStatusMap();
-    boardMap[taskId] = nextBoardStatus;
-    saveStoredBoardStatusMap(boardMap);
+  // Inventory Mgmt -> Purchases Team & Calendar Handoff when stock shortage exists
+  const handleSendShortageToPurchases = (booking: Booking, targetDate?: string) => {
+    const shortItems = booking.items
+      .map((it) => {
+        const prod = products.find((p) => p.id === it.productId);
+        const variant = prod?.variants.find((v) => v.id === it.variantId);
+        const available = variant ? variant.quantity : 0;
+        const shortQty = Math.max(0, it.quantity - available);
+        return { item: it, prod, variant, shortQty };
+      })
+      .filter((entry) => entry.shortQty > 0);
 
-    upsertCalendarEventToDb(nextTask).then((res) => {
-      if (res.ok) clearCalendarIdUnsynced(taskId);
+    if (shortItems.length === 0) {
+      showToast(`Order #${booking.bookingNumber} already has enough stock in warehouse!`);
+      return;
+    }
+
+    const expectedDate =
+      targetDate || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const purchasesMember = users.find(
+      (u) => u.status === 'active' && (u.assignedTeams || []).includes('purchases')
+    );
+    const fare2Meta =
+      getScoutFare2Meta(booking.troopGroup) || getScoutFare2Meta(booking.assignedFare2);
+
+    const createdBatches: ProductionBatch[] = [];
+    const createdCalendarTasks: CalendarItem[] = [];
+
+    shortItems.forEach((entry, idx) => {
+      const wf = productWorkflows.find((w) => w.productId === entry.item.productId);
+      const batchId = `batch_ord_${booking.id}_${entry.item.variantId}_${Date.now()}_${idx}`;
+      const batchCode = `PO-#${booking.bookingNumber}-${idx + 1}`;
+      const stageKey = wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material';
+
+      const newBatch: ProductionBatch = {
+        id: batchId,
+        productId: entry.item.productId,
+        variantId: entry.item.variantId,
+        batchCode,
+        quantity: entry.shortQty,
+        currentStageKey: stageKey,
+        status: 'in_progress',
+        targetDate: expectedDate,
+        stageAssignments: {
+          [stageKey]: {
+            notes: `Shortage for Order #${booking.bookingNumber} (${booking.clientName}) — ${entry.item.size || 'Std'} / ${entry.item.colorName}`,
+          },
+        },
+        linkedBookingId: booking.id,
+        linkedBookingNumber: booking.bookingNumber,
+        requestedByTeam: 'inventory',
+        createdAt: new Date().toISOString(),
+      };
+      createdBatches.push(newBatch);
+
+      createdCalendarTasks.push({
+        id: `task_purchase_${batchId}`,
+        title: `[Purchases] ${entry.item.productName} (${entry.shortQty} pcs) — Order #${booking.bookingNumber}`,
+        itemType: 'task',
+        startDate: expectedDate,
+        endDate: expectedDate,
+        allDay: true,
+        completed: false,
+        boardStatus: 'in_progress',
+        team: 'purchases',
+        assignedToId: purchasesMember?.id,
+        assignedToName: purchasesMember?.name,
+        troopGroup: fare2Meta?.id,
+        location: 'Purchases / Suppliers',
+        linkedBookingId: booking.id,
+        linkedBatchId: batchId,
+        workflowStage: 'purchase_order',
+        notes: `Requested by Inventory Management for Order #${booking.bookingNumber} (${booking.clientName}).\nItem: ${entry.item.productName} (${entry.item.size || 'Std'} / ${entry.item.colorName})\nShortage Qty: ${entry.shortQty} pcs\nBatch Code: ${batchCode}\nExpected Arrival / Gard Date: ${expectedDate}`,
+        createdById: currentUser?.id || 'system',
+        createdByName: currentUser?.name || 'System',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     });
+
+    setProductionBatches((prev) => {
+      const next = [...createdBatches, ...prev];
+      saveStoredProductionBatches(next);
+      return next;
+    });
+    createdBatches.forEach((b) => upsertProductionBatchToDb(b).catch(() => {}));
+
+    const stockMap = getStoredBookingStockCheckMap();
+    stockMap[booking.id] = 'in_production';
+    saveStoredBookingStockCheckMap(stockMap);
+
+    const updatedBooking: Booking = {
+      ...booking,
+      stockCheckStatus: 'in_production',
+      updatedAt: new Date().toISOString(),
+    };
+    setBookings((prev) => {
+      const next = prev.map((b) => (b.id === booking.id ? updatedBooking : b));
+      saveStoredBookings(next);
+      return next;
+    });
+    updateBookingInDb(booking.id, updatedBooking).catch(() => {});
+
+    upsertCalendarItemsBatch(createdCalendarTasks);
+    syncOrderTaskToScoutFera2(updatedBooking);
+
+    showToast(
+      `Sent ${createdBatches.length} shortage batch(es) to Purchases Team, Sourcing & Calendar (Target: ${expectedDate}).`
+    );
+  };
+
+  // Inventory Mgmt confirms stock is ready -> Handover to Scout Fera2 Team for client delivery
+  const handleConfirmBookingStockReady = (booking: Booking) => {
+    const stockMap = getStoredBookingStockCheckMap();
+    stockMap[booking.id] = 'ready_for_handover';
+    saveStoredBookingStockCheckMap(stockMap);
+
+    const updatedBooking: Booking = {
+      ...booking,
+      stockCheckStatus: 'ready_for_handover',
+      updatedAt: new Date().toISOString(),
+    };
+    setBookings((prev) => {
+      const next = prev.map((b) => (b.id === booking.id ? updatedBooking : b));
+      saveStoredBookings(next);
+      return next;
+    });
+    updateBookingInDb(booking.id, updatedBooking).catch(() => {});
+    syncOrderTaskToScoutFera2(updatedBooking);
+
+    showToast(
+      `Inventory confirmed ready! Scout Fera2 notified to deliver Order #${booking.bookingNumber}.`
+    );
   };
 
   const handleFare2LeaderChange = (fare2Id: string, leader: Fare2LeaderAssignment | null) => {
@@ -2356,6 +2837,10 @@ export default function App() {
     assignedTeams: StoreTeamId[],
     assignedFare2: string[]
   ) => {
+    if (currentUser && !isUserAdmin(currentUser)) {
+      showToast('Only Admins can modify Store Team assignments.');
+      return;
+    }
     const dir = getStoredTeamDirectory();
     saveStoredTeamDirectory({ ...dir, [userId]: assignedTeams });
     const f2Map = getStoredUserFare2Map();
@@ -2843,6 +3328,11 @@ export default function App() {
       setBookings(updatedBookings);
       saveStoredBookings(updatedBookings);
 
+      const finalAffected = updatedBookings.find((b) => b.id === bookingId);
+      if (finalAffected) {
+        syncOrderTaskToScoutFera2(finalAffected);
+      }
+
       const pct = affectedBooking.depositPercentage || (affectedBooking.depositRate ? Math.round(affectedBooking.depositRate * 100) : 50);
       let actionText = '';
       let reasonText = '';
@@ -2899,19 +3389,26 @@ export default function App() {
       console.warn('Notice deleting booking in Supabase:', err?.message);
     });
 
-    // Clean up linked order task & assignment map
-    const linkedTaskId = `task_order_${bookingId}`;
+    // Clean up linked order & inventory tasks & assignment/stock-check maps
+    const linkedTaskIds = [`task_order_${bookingId}`, `task_inv_${bookingId}`];
     const assignMap = getStoredBookingAssignmentMap();
     if (assignMap[bookingId]) {
       delete assignMap[bookingId];
       saveStoredBookingAssignmentMap(assignMap);
     }
+    const stockCheckMap = getStoredBookingStockCheckMap();
+    if (stockCheckMap[bookingId]) {
+      delete stockCheckMap[bookingId];
+      saveStoredBookingStockCheckMap(stockCheckMap);
+    }
     setCalendarEvents((prev) => {
-      if (!prev.some((ev) => ev.id === linkedTaskId)) return prev;
-      const filtered = prev.filter((ev) => ev.id !== linkedTaskId);
+      if (!prev.some((ev) => linkedTaskIds.includes(ev.id))) return prev;
+      const filtered = prev.filter((ev) => !linkedTaskIds.includes(ev.id));
       saveStoredCalendarEvents(filtered);
-      clearCalendarIdUnsynced(linkedTaskId);
-      deleteCalendarEventFromDb(linkedTaskId).catch(() => {});
+      linkedTaskIds.forEach((tid) => {
+        clearCalendarIdUnsynced(tid);
+        deleteCalendarEventFromDb(tid).catch(() => {});
+      });
       return filtered;
     });
 
@@ -3016,6 +3513,30 @@ export default function App() {
     if (target) {
       showToast(`Removed "${target.title}" from calendar.`);
     }
+  };
+
+  // Scout Seasons (Calendar-defined time frames connected to Budgeting)
+  const handleSaveScoutSeason = (season: ScoutSeason) => {
+    setScoutSeasons((prev) => {
+      const exists = prev.some((s) => s.id === season.id);
+      const next = exists
+        ? prev.map((s) => (s.id === season.id ? season : s))
+        : [...prev, season];
+      saveStoredScoutSeasons(next);
+      return next;
+    });
+    upsertScoutSeasonToDb(season).catch(() => {});
+    showToast(`Scout Season "${season.name}" saved.`);
+  };
+
+  const handleDeleteScoutSeason = (seasonId: string) => {
+    setScoutSeasons((prev) => {
+      const next = prev.filter((s) => s.id !== seasonId);
+      saveStoredScoutSeasons(next);
+      return next;
+    });
+    deleteScoutSeasonFromDb(seasonId).catch(() => {});
+    showToast('Scout Season removed.');
   };
 
   const handleToggleCalendarTask = (id: string) => {
@@ -3366,17 +3887,202 @@ export default function App() {
       status: 'completed',
       completedAt: new Date().toISOString(),
     };
-    setProductionBatches((prev) => {
-      const next = prev.map((b) => (b.id === batch.id ? completedBatch : b));
-      saveStoredProductionBatches(next);
-      return next;
-    });
+    const nextBatches = productionBatches.map((b) => (b.id === batch.id ? completedBatch : b));
+    setProductionBatches(nextBatches);
+    saveStoredProductionBatches(nextBatches);
     upsertProductionBatchToDb(completedBatch).catch(() => {});
 
+    // Mark any linked Purchases Team Calendar / Board card as Done
+    const purchaseTaskId = `task_purchase_${batch.id}`;
+    const purchaseTask = calendarEvents.find(
+      (ev) => ev.id === purchaseTaskId || ev.linkedBatchId === batch.id
+    );
+    if (purchaseTask) {
+      upsertCalendarItemsBatch([
+        {
+          ...purchaseTask,
+          completed: true,
+          boardStatus: 'done',
+          notes: `${purchaseTask.notes ? `${purchaseTask.notes}\n\n` : ''}Gard Stock-In Completed (+${qtyToAdd} pcs) on ${todayIso}`,
+          updatedAt: new Date().toISOString(),
+        },
+      ]);
+    }
+
+    // If batch was triggered by an Order shortage & all batches for that booking are completed -> Ready for Scout Fera2 Delivery!
+    if (batch.linkedBookingId) {
+      const stillOpenForOrder = nextBatches.some(
+        (b) => b.linkedBookingId === batch.linkedBookingId && b.status !== 'completed'
+      );
+      const linkedOrder = bookings.find((b) => b.id === batch.linkedBookingId);
+      if (linkedOrder && !stillOpenForOrder) {
+        const stockMap = getStoredBookingStockCheckMap();
+        stockMap[linkedOrder.id] = 'ready_for_handover';
+        saveStoredBookingStockCheckMap(stockMap);
+
+        const readyOrder: Booking = {
+          ...linkedOrder,
+          stockCheckStatus: 'ready_for_handover',
+          updatedAt: new Date().toISOString(),
+        };
+        setBookings((prev) => {
+          const updatedList = prev.map((b) => (b.id === linkedOrder.id ? readyOrder : b));
+          saveStoredBookings(updatedList);
+          return updatedList;
+        });
+        updateBookingInDb(linkedOrder.id, readyOrder).catch(() => {});
+        syncOrderTaskToScoutFera2(readyOrder);
+      }
+    }
+
     showToast(
-      `Batch ${batch.batchCode} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
+      batch.linkedBookingNumber
+        ? `Batch ${batch.batchCode} Gard stock-in complete (+${qtyToAdd} pcs)! Order #${batch.linkedBookingNumber} updated for Scout Fera2 delivery.`
+        : `Batch ${batch.batchCode} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
       newLog
     );
+  };
+
+  // Marketing & Offers CRUD Handlers (synced to Calendar & Marketing Team Board)
+  const handleSaveMarketingOffer = (offer: MarketingOffer, syncToCalendar: boolean) => {
+    setMarketingOffers((prev) => {
+      const exists = prev.some((o) => o.id === offer.id);
+      const next = exists ? prev.map((o) => (o.id === offer.id ? offer : o)) : [offer, ...prev];
+      saveStoredMarketingOffers(next);
+      return next;
+    });
+    upsertMarketingOfferToDb(offer).catch(() => {});
+
+    const eventId = `event_offer_${offer.id}`;
+    if (syncToCalendar) {
+      const prod = products.find((p) => p.id === offer.productId);
+      const mktMember = users.find(
+        (u) => u.status === 'active' && (u.assignedTeams || []).includes('marketing')
+      );
+      const existingEv = calendarEvents.find((ev) => ev.id === eventId);
+      const discountDesc =
+        offer.offerType === 'percentage'
+          ? `${offer.discountPercent}% OFF`
+          : offer.offerType === 'fixed_price'
+          ? `${offer.offerPrice ?? 0} EGP Promo Price`
+          : offer.badgeText || 'Promo Offer';
+
+      upsertCalendarItemsBatch([
+        {
+          id: eventId,
+          title: `[Marketing Offer] ${offer.title} — ${prod?.name || offer.productId} (${discountDesc})`,
+          itemType: 'event',
+          startDate: offer.startDate,
+          endDate: offer.endDate || offer.startDate,
+          allDay: true,
+          completed: offer.status === 'ended',
+          boardStatus:
+            offer.status === 'ended'
+              ? 'done'
+              : offer.status === 'active'
+              ? 'in_progress'
+              : 'upcoming',
+          team: 'marketing',
+          assignedToId: existingEv?.assignedToId || mktMember?.id,
+          assignedToName: existingEv?.assignedToName || mktMember?.name,
+          location: 'SPS Store & Online Catalog',
+          linkedOfferId: offer.id,
+          workflowStage: 'marketing_promo',
+          notes: [
+            `Campaign: ${offer.title}`,
+            prod ? `Product: ${prod.name} (${prod.sku})` : '',
+            `Offer: ${discountDesc}`,
+            offer.notes || '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          createdById: existingEv?.createdById || currentUser?.id || 'system',
+          createdByName: existingEv?.createdByName || currentUser?.name || 'Marketing Team',
+          createdAt: existingEv?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]);
+    } else if (calendarEvents.some((ev) => ev.id === eventId)) {
+      handleDeleteCalendarEvent(eventId);
+    }
+
+    showToast(`Saved Marketing Offer "${offer.title}".`);
+  };
+
+  const handleDeleteMarketingOffer = (offerId: string) => {
+    const target = marketingOffers.find((o) => o.id === offerId);
+    setMarketingOffers((prev) => {
+      const next = prev.filter((o) => o.id !== offerId);
+      saveStoredMarketingOffers(next);
+      return next;
+    });
+    deleteMarketingOfferFromDb(offerId).catch(() => {});
+
+    const linkedEv = calendarEvents.find((ev) => ev.id === `event_offer_${offerId}`);
+    if (linkedEv) {
+      setCalendarEvents((prev) => {
+        const filtered = prev.filter((ev) => ev.id !== linkedEv.id);
+        saveStoredCalendarEvents(filtered);
+        return filtered;
+      });
+      clearCalendarIdUnsynced(linkedEv.id);
+      deleteCalendarEventFromDb(linkedEv.id).catch(() => {});
+    }
+
+    showToast(`Deleted Marketing Offer "${target?.title || ''}".`);
+  };
+
+  // Budgeting CRUD Handlers
+  const handleSaveBudgetProfile = (profile: ProductBudgetProfile) => {
+    setBudgetProfiles((prev) => {
+      const next = { ...prev, [profile.productId]: profile };
+      saveStoredBudgetProfiles(next);
+      return next;
+    });
+    upsertProductBudgetProfileToDb(profile).catch(() => {});
+  };
+
+  const handleAddBudgetExpense = (expense: BudgetExpenseEntry) => {
+    setBudgetExpenses((prev) => {
+      const next = [expense, ...prev];
+      saveStoredBudgetExpenses(next);
+      return next;
+    });
+    upsertBudgetExpenseToDb(expense).catch(() => {});
+    showToast(`Logged expense "${expense.title}" (${expense.amount} EGP).`);
+  };
+
+  const handleDeleteBudgetExpense = (expenseId: string) => {
+    setBudgetExpenses((prev) => {
+      const next = prev.filter((e) => e.id !== expenseId);
+      saveStoredBudgetExpenses(next);
+      return next;
+    });
+    deleteBudgetExpenseFromDb(expenseId).catch(() => {});
+    showToast('Deleted expense entry.');
+  };
+
+  const handleSaveBudgetSettings = (settings: BudgetSettings) => {
+    setBudgetSettings(settings);
+    saveStoredBudgetSettings(settings);
+    upsertBudgetSettingsToDb(settings).catch(() => {});
+  };
+
+  const handleBudgetUpdateProductPrice = (productId: string, newPrice: number) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const updated: Product = {
+      ...target,
+      price: Math.max(0, newPrice),
+      updatedAt: new Date().toISOString(),
+    };
+    setProducts((prev) => {
+      const next = prev.map((p) => (p.id === productId ? updated : p));
+      saveStoredProducts(next);
+      return next;
+    });
+    upsertProductToDb(updated).catch(() => {});
+    showToast(`Updated "${target.name}" catalog price to ${newPrice} EGP.`);
   };
 
   // Refresh data from Supabase
@@ -3479,8 +4185,10 @@ export default function App() {
       setActiveView('inventory');
       return;
     }
-    if (view === 'analytics' && !isUserAdmin(currentUser)) {
-      showToast('Only Admins can access the Analytics & Production Dashboard.');
+    if (!canUserAccessView(currentUser, view)) {
+      showToast(
+        'You do not have access to this page. Assign the corresponding Store Team in Account Approvals.'
+      );
       return;
     }
     if (view === 'add-product') {
@@ -3589,11 +4297,21 @@ export default function App() {
 
   const isAdmin = isUserAdmin(currentUser);
   const isLeader = isUserLeader(currentUser);
-  const effectiveView = isLeader
+  const canEditProductMedia = canEditProductMediaAndColors(currentUser);
+  const resolvedActiveView =
+    activeView === 'approvals'
+      ? approvalsTab === 'staff'
+        ? 'account-approvals'
+        : 'stock-approvals'
+      : activeView;
+  const effectiveView = !canUserAccessView(currentUser, resolvedActiveView)
     ? 'inventory'
-    : activeView === 'analytics' && !isAdmin
-    ? 'inventory'
-    : activeView;
+    : resolvedActiveView;
+  const showAccountKpi = canUserAccessView(currentUser, 'account-approvals');
+  const showStockKpi = !showAccountKpi && canUserAccessView(currentUser, 'stock-approvals');
+  const showWorkerReqKpi =
+    !showAccountKpi && !showStockKpi && canUserAccessView(currentUser, 'worker-requests');
+  const showQueueKpiCard = !isLeader && (showAccountKpi || showStockKpi || showWorkerReqKpi);
 
   return (
     <>
@@ -3628,7 +4346,7 @@ export default function App() {
             )}
 
             {/* KPI Metric Strip in Clean Light Mode */}
-            <div className={`grid grid-cols-2 ${isLeader ? 'sm:grid-cols-3' : 'sm:grid-cols-4'} gap-3`}>
+            <div className={`grid grid-cols-2 ${showQueueKpiCard ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
               <button
                 type="button"
                 onClick={() => {
@@ -3677,27 +4395,41 @@ export default function App() {
                 <div className="text-[11px] text-slate-500 mt-0.5">Sum of all size/colors</div>
               </div>
 
-              {/* Account Approvals / My Requests KPI Card (Hidden for Leaders) */}
-              {!isLeader && (
+              {/* Account Approvals / Stock Approvals / My Requests KPI Card (RBAC-scoped) */}
+              {showQueueKpiCard && (
                 <div
-                  onClick={() => handleNavigate(isAdmin ? 'account-approvals' : 'worker-requests')}
+                  onClick={() =>
+                    handleNavigate(
+                      showAccountKpi
+                        ? 'account-approvals'
+                        : showStockKpi
+                        ? 'stock-approvals'
+                        : 'worker-requests'
+                    )
+                  }
                   className={`p-4 rounded-2xl border shadow-sm cursor-pointer transition-all ${
-                    (isAdmin ? pendingUsersCount : pendingRequestsCount) > 0
+                    (showAccountKpi ? pendingUsersCount : pendingRequestsCount) > 0
                       ? 'bg-amber-50 border-amber-300 hover:border-amber-400'
                       : 'bg-white border-slate-200/90 hover:border-slate-300'
                   }`}
                 >
                   <div className="text-[10px] font-bold text-amber-800 uppercase tracking-wider flex items-center justify-between">
-                    <span>{isAdmin ? 'Account Approvals' : 'My Requests'}</span>
-                    {(isAdmin ? pendingUsersCount : pendingRequestsCount) > 0 && (
+                    <span>
+                      {showAccountKpi
+                        ? 'Account Approvals'
+                        : showStockKpi
+                        ? 'Stock Approvals'
+                        : 'My Requests'}
+                    </span>
+                    {(showAccountKpi ? pendingUsersCount : pendingRequestsCount) > 0 && (
                       <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                     )}
                   </div>
                   <div className="text-2xl font-black font-mono tabular-nums text-amber-900 mt-1">
-                    {isAdmin ? pendingUsersCount : pendingRequestsCount}
+                    {showAccountKpi ? pendingUsersCount : pendingRequestsCount}
                   </div>
                   <div className="text-[11px] text-amber-700 mt-0.5 font-medium">
-                    {isAdmin
+                    {showAccountKpi
                       ? pendingUsersCount > 0
                         ? `${pendingUsersCount} staff account${pendingUsersCount > 1 ? 's' : ''} awaiting approval`
                         : 'All accounts active • 0 pending'
@@ -3769,7 +4501,7 @@ export default function App() {
                   </button>
                 )}
 
-                {!isLeader && (
+                {!isLeader && canUserAccessView(currentUser, 'add-product') && (
                   <button
                     onClick={() => {
                       setProductToEdit(undefined);
@@ -4127,40 +4859,51 @@ export default function App() {
                   );
                 })}
 
-                {filteredProducts.map((product) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
-                    userRole={normalizeRole(currentUser.role)}
-                    onOpenDetails={(p) => setDetailProduct(p)}
-                    onRequestAdjustment={(p, variant) => {
-                      if (isLeader) return;
-                      setAdjustmentTarget({ product: p, variant });
-                    }}
-                    onEditProduct={(p) => {
-                      if (isLeader) return;
-                      setProductToEdit(p);
-                      setShowAddModal(true);
-                    }}
-                    onDeleteProduct={(p) => {
-                      if (!isAdmin) return;
-                      setProductToDelete(p);
-                    }}
-                    onApproveProduct={handleApproveProduct}
-                    onOpenBooking={(p) => {
-                      if (isLeader) return;
-                      setBookingModalProduct(p);
-                      setIsBookingModalOpen(true);
-                    }}
-                  />
-                ))}
+                {filteredProducts.map((product) => {
+                  const promoInfo = getEffectiveProductOffer(product, marketingOffers);
+                  return (
+                    <ProductCard
+                      key={product.id}
+                      product={product}
+                      userRole={normalizeRole(currentUser.role)}
+                      canEditMedia={canEditProductMedia}
+                      activeOffer={promoInfo?.offer || null}
+                      onOpenDetails={(p) => setDetailProduct(p)}
+                      onRequestAdjustment={(p, variant) => {
+                        if (isLeader) return;
+                        setAdjustmentTarget({ product: p, variant });
+                      }}
+                      onEditProduct={(p) => {
+                        if (isLeader || (!isAdmin && !canEditProductMedia)) return;
+                        setProductToEdit(p);
+                        setProductEditScope(isAdmin ? 'full' : 'marketing');
+                        setShowAddModal(true);
+                      }}
+                      onDeleteProduct={(p) => {
+                        if (!isAdmin) return;
+                        setProductToDelete(p);
+                      }}
+                      onApproveProduct={handleApproveProduct}
+                      onOpenBooking={(p) => {
+                        if (isLeader || !canUserAccessView(currentUser, 'bookings')) {
+                          if (!isLeader) {
+                            showToast('Orders & Bookings requires Scout Fera2 Team access.');
+                          }
+                          return;
+                        }
+                        setBookingModalProduct(p);
+                        setIsBookingModalOpen(true);
+                      }}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
         )}
 
-        {/* VIEW 1B: ADMIN ANALYTICS & PRODUCTION DASHBOARD (Strictly Admin Only) */}
-        {effectiveView === 'analytics' && isAdmin && (
+        {/* VIEW 1B: ADMIN ANALYTICS & PRODUCTION DASHBOARD */}
+        {effectiveView === 'analytics' && canUserAccessView(currentUser, 'analytics') && (
           <AdminAnalyticsView
             bookings={bookings}
             products={products}
@@ -4170,7 +4913,7 @@ export default function App() {
         )}
 
         {/* VIEW 2A: STOCK APPROVALS (Stock adjustments queue + New item submissions) */}
-        {(effectiveView === 'stock-approvals' || (effectiveView === 'approvals' && approvalsTab !== 'staff')) && isAdmin && (
+        {effectiveView === 'stock-approvals' && canUserAccessView(currentUser, 'stock-approvals') && (
           <ApprovalsView
             mode="stock"
             requests={requests}
@@ -4193,7 +4936,7 @@ export default function App() {
         )}
 
         {/* VIEW 2B: ACCOUNT APPROVALS (Dedicated Staff Accounts & Registration Approvals) */}
-        {(effectiveView === 'account-approvals' || (effectiveView === 'approvals' && approvalsTab === 'staff')) && isAdmin && (
+        {effectiveView === 'account-approvals' && canUserAccessView(currentUser, 'account-approvals') && (
           <ApprovalsView
             mode="accounts"
             requests={requests}
@@ -4216,7 +4959,7 @@ export default function App() {
         )}
 
         {/* VIEW 3: WORKER REQUESTS */}
-        {effectiveView === 'worker-requests' && !isLeader && (
+        {effectiveView === 'worker-requests' && canUserAccessView(currentUser, 'worker-requests') && (
           <WorkerRequestsView
             requests={requests}
             currentUser={currentUser}
@@ -4225,7 +4968,7 @@ export default function App() {
         )}
 
         {/* VIEW 4: AUDIT LOG */}
-        {effectiveView === 'audit-log' && !isLeader && (
+        {effectiveView === 'audit-log' && canUserAccessView(currentUser, 'audit-log') && (
           <div className="space-y-6">
             <MobileNotificationBanner
               permission={notificationPermission}
@@ -4247,11 +4990,12 @@ export default function App() {
         )}
 
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
-        {effectiveView === 'bookings' && !isLeader && (
+        {effectiveView === 'bookings' && canUserAccessView(currentUser, 'bookings') && (
           <BookingsView
             bookings={bookings}
             products={products}
             users={users}
+            batches={productionBatches}
             currentUser={currentUser}
             onOpenNewBookingModal={() => {
               setBookingModalProduct(undefined);
@@ -4281,6 +5025,10 @@ export default function App() {
             onDeclinePaymentVerification={handleDeclinePaymentVerification}
             onDeleteBooking={handleDeleteBooking}
             onUpdateBooking={handleUpdateBooking}
+            onSendShortageToPurchases={handleSendShortageToPurchases}
+            onConfirmBookingStockReady={handleConfirmBookingStockReady}
+            onOpenSourcing={() => handleNavigate('sourcing')}
+            onOpenCalendar={() => handleNavigate('calendar')}
             onLogActivity={(log) => {
               setAuditLogs((prev) => [log, ...prev]);
               insertAuditLogInDb(log).catch(() => {});
@@ -4291,33 +5039,47 @@ export default function App() {
           />
         )}
 
-        {effectiveView === 'calendar' && !isLeader && (
+        {effectiveView === 'calendar' && canUserAccessView(currentUser, 'calendar') && (
           <CalendarView
             items={calendarEvents}
             users={users}
             currentUser={currentUser}
+            scoutSeasons={scoutSeasons}
             onSaveItem={handleSaveCalendarEvent}
             onDeleteItem={handleDeleteCalendarEvent}
             onToggleTaskComplete={handleToggleCalendarTask}
+            onSaveScoutSeason={handleSaveScoutSeason}
+            onDeleteScoutSeason={handleDeleteScoutSeason}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
 
-        {effectiveView === 'board' && !isLeader && (
+        {effectiveView === 'board' && canUserAccessView(currentUser, 'board') && (
           <TeamBoardView
             items={calendarEvents}
             users={users}
+            bookings={bookings}
             currentUser={currentUser}
             onSaveItem={handleSaveCalendarEvent}
             onDeleteItem={handleDeleteCalendarEvent}
             onMoveItemStatus={handleMoveBoardItem}
             onFare2LeaderChange={handleFare2LeaderChange}
             onUserTeamsChange={handleUserTeamsChange}
+            onOpenBooking={(bid) => {
+              if (!canUserAccessView(currentUser, 'bookings')) {
+                showToast('Orders & Bookings page requires Scout Fera2 Team access.');
+                return;
+              }
+              setSelectedBookingForDetails(bid);
+              setActiveView('bookings');
+            }}
+            onOpenSourcing={() => handleNavigate('sourcing')}
+            onOpenMarketing={() => handleNavigate('marketing')}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
 
-        {effectiveView === 'sourcing' && !isLeader && (
+        {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing') && (
           <SourcingOperationsView
             products={products}
             vendors={vendors}
@@ -4335,6 +5097,51 @@ export default function App() {
             onDeleteBatch={handleDeleteBatch}
             onCompleteBatchStockIn={handleCompleteBatchStockIn}
             onSeedStarterCatalog={handleSeedStarterCatalog}
+            onShowToast={(msg) => showToast(msg)}
+          />
+        )}
+
+        {effectiveView === 'marketing' && canUserAccessView(currentUser, 'marketing') && (
+          <MarketingOffersView
+            products={products}
+            offers={marketingOffers}
+            currentUser={currentUser}
+            canEditMedia={canEditProductMedia}
+            onSaveOffer={handleSaveMarketingOffer}
+            onDeleteOffer={handleDeleteMarketingOffer}
+            onEditProductMedia={(p) => {
+              if (!canEditProductMedia) return;
+              setProductToEdit(p);
+              setProductEditScope(isAdmin ? 'full' : 'marketing');
+              setShowAddModal(true);
+            }}
+            onOpenCalendar={() => handleNavigate('calendar')}
+            onShowToast={(msg) => showToast(msg)}
+          />
+        )}
+
+        {effectiveView === 'budgeting' && canUserAccessView(currentUser, 'budgeting') && (
+          <BudgetingView
+            products={products}
+            bookings={bookings}
+            offers={marketingOffers}
+            productionBatches={productionBatches}
+            stageVendors={productStageVendors}
+            priceHistory={vendorPriceHistory}
+            budgetProfiles={budgetProfiles}
+            budgetExpenses={budgetExpenses}
+            budgetSettings={budgetSettings}
+            scoutSeasons={scoutSeasons}
+            currentUser={currentUser}
+            isUnlocked={isBudgetingUnlocked}
+            onUnlock={() => setIsBudgetingUnlocked(true)}
+            onLock={() => setIsBudgetingUnlocked(false)}
+            onOpenCalendar={() => handleNavigate('calendar')}
+            onSaveBudgetProfile={handleSaveBudgetProfile}
+            onAddExpense={handleAddBudgetExpense}
+            onDeleteExpense={handleDeleteBudgetExpense}
+            onSaveSettings={handleSaveBudgetSettings}
+            onUpdateProductPrice={handleBudgetUpdateProductPrice}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
@@ -4357,12 +5164,12 @@ export default function App() {
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         approvalsTab={approvalsTab}
         onOpenAddProduct={() => {
-          if (isLeader) return;
+          if (!canUserAccessView(currentUser, 'add-product')) return;
           setProductToEdit(undefined);
           setShowAddModal(true);
         }}
         onOpenNewBooking={() => {
-          if (isLeader) return;
+          if (!canUserAccessView(currentUser, 'bookings')) return;
           setBookingModalProduct(undefined);
           setIsBookingModalOpen(true);
         }}
@@ -4373,6 +5180,7 @@ export default function App() {
         <ProductDetailModal
           product={detailProduct}
           userRole={normalizeRole(currentUser.role)}
+          canEditMedia={canEditProductMedia}
           onClose={() => setDetailProduct(null)}
           onRequestAdjustment={(p, variant) => {
             if (isLeader) return;
@@ -4382,9 +5190,10 @@ export default function App() {
           onDeleteProduct={handleDeleteProduct}
           onDeleteVariant={handleDeleteVariant}
           onEditProduct={(p) => {
-            if (!isAdmin) return;
+            if (!isAdmin && !canEditProductMedia) return;
             setDetailProduct(null);
             setProductToEdit(p);
+            setProductEditScope(isAdmin ? 'full' : 'marketing');
             setShowAddModal(true);
           }}
           onApproveProduct={handleApproveProduct}
@@ -4403,22 +5212,25 @@ export default function App() {
         />
       )}
 
-      {/* MODAL 3: Add / Edit Product (Admin/Staff only) */}
+      {/* MODAL 3: Add / Edit Product (Admin full edit, or Marketing photos/colors/description) */}
       {showAddModal && !isLeader && (
         <AddProductModal
           currentUser={currentUser}
           categories={categories}
           availableFolders={allFolderPaths}
+          editScope={productToEdit ? (productEditScope || (isAdmin ? 'full' : 'marketing')) : 'full'}
           productToEdit={productToEdit}
           onClose={() => {
             setShowAddModal(false);
             setProductToEdit(undefined);
+            setProductEditScope(undefined);
           }}
           onSaveProduct={handleSaveProduct}
           onManageCategories={() => setShowManageCategoriesModal(true)}
           onOpenDirectAdjust={(prod, variant) => {
             setShowAddModal(false);
             setProductToEdit(undefined);
+            setProductEditScope(undefined);
             setAdjustmentTarget({ product: prod, variant });
           }}
         />
@@ -4486,6 +5298,7 @@ export default function App() {
           }}
           products={products}
           users={users}
+          marketingOffers={marketingOffers}
           initialProduct={bookingModalProduct}
           bookingToEdit={bookingToEdit}
           currentUser={currentUser}

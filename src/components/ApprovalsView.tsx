@@ -30,6 +30,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { isFullAccessAdmin, normalizeRole } from '../utils/security';
 
 interface ApprovalsViewProps {
   mode?: 'stock' | 'accounts' | 'both';
@@ -55,6 +56,7 @@ interface ApprovalsViewProps {
     email: string;
     password?: string;
     role: Role;
+    assignedTeams?: StoreTeamId[];
   }) => Promise<{ success: boolean; error?: string }> | any;
   onApproveProduct?: (productId: string) => void;
   onRejectProduct?: (productId: string, note?: string) => void;
@@ -91,7 +93,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [activeTab, setActiveTab] = useState<'stock' | 'staff' | 'items'>(effectiveInitialTab);
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [staffStatusFilter, setStaffStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
-  const [staffRoleFilter, setStaffRoleFilter] = useState<'all' | 'worker' | 'leader' | 'admin'>('all');
+  const [staffRoleFilter, setStaffRoleFilter] = useState<'all' | 'full_admin' | 'admin' | 'worker' | 'leader'>('all');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
 
@@ -114,6 +116,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState<Role>('worker');
+  const [newUserTeams, setNewUserTeams] = useState<StoreTeamId[]>([]);
   const [createError, setCreateError] = useState('');
   const [isSubmittingNewUser, setIsSubmittingNewUser] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -127,10 +130,18 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [isUpdatingRole, setIsUpdatingRole] = useState(false);
 
   const getRoleDisplayName = (r: Role): string =>
-    r === 'admin' ? 'Admin' : r === 'leader' ? 'Scout Leader' : 'Staff';
+    r === 'full_admin'
+      ? 'Full-Access Admin'
+      : r === 'admin'
+      ? 'Admin (Team-Scoped)'
+      : r === 'leader'
+      ? 'Scout Leader'
+      : 'Staff';
 
   const getRoleBadgeClass = (r: Role): string =>
-    r === 'admin'
+    r === 'full_admin'
+      ? 'bg-amber-500/15 text-amber-950 border-amber-400'
+      : r === 'admin'
       ? 'bg-amber-50 text-amber-800 border-amber-300'
       : r === 'leader'
       ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
@@ -144,7 +155,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     const resolvedFare2 =
       user.assignedFare2 && user.assignedFare2.length > 0 ? user.assignedFare2 : localFare2;
     setUserToEditRole(user);
-    setNewSelectedRole(user.role);
+    setNewSelectedRole(isFullAccessAdmin(user) ? 'full_admin' : normalizeRole(user.role));
     setNewSelectedTeams(resolvedTeams);
     setNewSelectedFare2(resolvedFare2);
     setOriginalEditTeams(resolvedTeams);
@@ -277,7 +288,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       if (staffStatusFilter === 'pending' && u.status !== 'pending') return false;
       if (staffStatusFilter === 'active' && u.status !== 'active') return false;
 
-      // Role filtering (all / worker / leader / admin)
+      // Role filtering (all / full_admin / admin / worker / leader)
       if (staffRoleFilter === 'worker') {
         const isWorker = u.role === 'worker' || (u.status === 'pending' && u.requestedRole === 'worker');
         if (!isWorker) return false;
@@ -286,9 +297,17 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         const isLeader = u.role === 'leader' || (u.status === 'pending' && u.requestedRole === 'leader');
         if (!isLeader) return false;
       }
+      if (staffRoleFilter === 'full_admin') {
+        const isFull =
+          isFullAccessAdmin(u) ||
+          (u.status === 'pending' && normalizeRole(u.requestedRole) === 'full_admin');
+        if (!isFull) return false;
+      }
       if (staffRoleFilter === 'admin') {
-        const isAdmin = u.role === 'admin' || (u.status === 'pending' && u.requestedRole === 'admin');
-        if (!isAdmin) return false;
+        const isRegularAdmin =
+          (normalizeRole(u.role) === 'admin' && !isFullAccessAdmin(u)) ||
+          (u.status === 'pending' && normalizeRole(u.requestedRole) === 'admin' && !isFullAccessAdmin(u));
+        if (!isRegularAdmin) return false;
       }
 
       return true;
@@ -769,6 +788,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   setNewUserEmail('');
                   setNewUserPassword('');
                   setNewUserRole('worker');
+                  setNewUserTeams([]);
                   setCreateError('');
                   setShowCreateUserModal(true);
                 }}
@@ -864,7 +884,99 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {/* Full-Access Admin Filter Card */}
+              <button
+                type="button"
+                onClick={() => setStaffRoleFilter((prev) => (prev === 'full_admin' ? 'all' : 'full_admin'))}
+                className={`p-3.5 rounded-2xl flex items-start gap-3 text-left transition-all cursor-pointer ${
+                  staffRoleFilter === 'full_admin'
+                    ? 'bg-amber-50/95 border-2 border-amber-500 shadow-md ring-2 ring-amber-400/25'
+                    : 'bg-white hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 shadow-xs'
+                }`}
+                title="Click to filter by Full-Access Admin"
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    staffRoleFilter === 'full_admin'
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'bg-amber-100 border border-amber-300 text-amber-800'
+                  }`}
+                >
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                      Full-Access Admin
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+                        staffRoleFilter === 'full_admin'
+                          ? 'bg-amber-500 text-slate-950'
+                          : 'bg-amber-100 text-amber-900'
+                      }`}
+                    >
+                      {staffRoleFilter === 'full_admin'
+                        ? '✓ Active'
+                        : `(${allStaffUsers.filter((u) => isFullAccessAdmin(u) || normalizeRole(u.requestedRole) === 'full_admin').length})`}
+                    </span>
+                  </div>
+                  <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                    Sees <strong>all pages</strong> across the store plus full approvals, account management &amp; direct edits.
+                  </p>
+                  <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-amber-800">
+                    {staffRoleFilter === 'full_admin' ? '• Click to reset' : '• Click to filter'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Team-Scoped Admin Filter Card */}
+              <button
+                type="button"
+                onClick={() => setStaffRoleFilter((prev) => (prev === 'admin' ? 'all' : 'admin'))}
+                className={`p-3.5 rounded-2xl flex items-start gap-3 text-left transition-all cursor-pointer ${
+                  staffRoleFilter === 'admin'
+                    ? 'bg-orange-50/90 border-2 border-orange-500 shadow-md ring-2 ring-orange-400/25'
+                    : 'bg-white hover:bg-orange-50/40 border border-slate-200 hover:border-orange-300 shadow-xs'
+                }`}
+                title="Click to filter by Team-Scoped Admin"
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                    staffRoleFilter === 'admin'
+                      ? 'bg-orange-600 text-white shadow-xs'
+                      : 'bg-orange-100 border border-orange-200 text-orange-800'
+                  }`}
+                >
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-orange-950 uppercase tracking-wider">
+                      Admin
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
+                        staffRoleFilter === 'admin'
+                          ? 'bg-orange-600 text-white'
+                          : 'bg-orange-100 text-orange-900'
+                      }`}
+                    >
+                      {staffRoleFilter === 'admin'
+                        ? '✓ Active'
+                        : `(${allStaffUsers.filter((u) => normalizeRole(u.role) === 'admin' && !isFullAccessAdmin(u)).length})`}
+                    </span>
+                  </div>
+                  <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
+                    Admin controls &amp; approvals (more than Staff), scoped to pages for their assigned Store Team(s).
+                  </p>
+                  <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-orange-800">
+                    {staffRoleFilter === 'admin' ? '• Click to reset' : '• Click to filter'}
+                  </span>
+                </div>
+              </button>
+
               {/* Staff Access Filter Card */}
               <button
                 type="button"
@@ -898,15 +1010,15 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       }`}
                     >
                       {staffRoleFilter === 'worker'
-                        ? '✓ Active Filter'
-                        : `Staff (${allStaffUsers.filter((u) => u.role === 'worker' || u.requestedRole === 'worker').length})`}
+                        ? '✓ Active'
+                        : `(${allStaffUsers.filter((u) => u.role === 'worker' || u.requestedRole === 'worker').length})`}
                     </span>
                   </div>
                   <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
-                    Count stock, create client orders, request payment verification, and submit new items or count adjustments for Admin approval.
+                    Count stock, create orders &amp; submit requests for Admin approval, scoped to assigned Store Team(s).
                   </p>
                   <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-sky-700">
-                    {staffRoleFilter === 'worker' ? '• Click to reset' : '• Click to filter staff'}
+                    {staffRoleFilter === 'worker' ? '• Click to reset' : '• Click to filter'}
                   </span>
                 </div>
               </button>
@@ -944,61 +1056,15 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       }`}
                     >
                       {staffRoleFilter === 'leader'
-                        ? '✓ Active Filter'
-                        : `Leaders (${allStaffUsers.filter((u) => u.role === 'leader' || u.requestedRole === 'leader').length})`}
+                        ? '✓ Active'
+                        : `(${allStaffUsers.filter((u) => u.role === 'leader' || u.requestedRole === 'leader').length})`}
                     </span>
                   </div>
                   <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
-                    Strict read-only access to browse the uniform catalog and prices. Restricted from orders, stock edits, and analytics.
+                    Strict read-only access to browse the uniform catalog and prices only.
                   </p>
                   <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-emerald-700">
-                    {staffRoleFilter === 'leader' ? '• Click to reset' : '• Click to filter leaders'}
-                  </span>
-                </div>
-              </button>
-
-              {/* Admin Authority Access Filter Card */}
-              <button
-                type="button"
-                onClick={() => setStaffRoleFilter((prev) => (prev === 'admin' ? 'all' : 'admin'))}
-                className={`p-3.5 rounded-2xl flex items-start gap-3 text-left transition-all cursor-pointer ${
-                  staffRoleFilter === 'admin'
-                    ? 'bg-amber-50/90 border-2 border-amber-500 shadow-md ring-2 ring-amber-400/25'
-                    : 'bg-white hover:bg-amber-50/50 border border-slate-200 hover:border-amber-300 shadow-xs'
-                }`}
-                title="Click to filter by Admin Authority"
-              >
-                <div
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
-                    staffRoleFilter === 'admin'
-                      ? 'bg-amber-600 text-white shadow-xs'
-                      : 'bg-amber-100 border border-amber-200 text-amber-800'
-                  }`}
-                >
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-black text-amber-950 uppercase tracking-wider">
-                      Admin Authority
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-black transition-colors ${
-                        staffRoleFilter === 'admin'
-                          ? 'bg-amber-600 text-white'
-                          : 'bg-amber-100 text-amber-900'
-                      }`}
-                    >
-                      {staffRoleFilter === 'admin'
-                        ? '✓ Active Filter'
-                        : `Admin (${allStaffUsers.filter((u) => u.role === 'admin' || u.requestedRole === 'admin').length})`}
-                    </span>
-                  </div>
-                  <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
-                    Full control: exclusive analytics &amp; procurement, confirming payments, direct stock edits, approvals, and deletions.
-                  </p>
-                  <span className="hidden sm:inline-block mt-2 text-[10px] font-bold text-amber-700">
-                    {staffRoleFilter === 'admin' ? '• Click to reset' : '• Click to filter admins'}
+                    {staffRoleFilter === 'leader' ? '• Click to reset' : '• Click to filter'}
                   </span>
                 </div>
               </button>
@@ -1012,7 +1078,15 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 <Users className="w-8 h-8 text-slate-300 mx-auto" />
                 <h4 className="text-sm font-bold text-slate-700">
                   {staffRoleFilter !== 'all'
-                    ? `No ${staffRoleFilter === 'worker' ? 'Staff' : staffRoleFilter === 'leader' ? 'Scout Leader' : 'Admin Authority'} accounts match this selection`
+                    ? `No ${
+                        staffRoleFilter === 'full_admin'
+                          ? 'Full-Access Admin'
+                          : staffRoleFilter === 'admin'
+                          ? 'Team-Scoped Admin'
+                          : staffRoleFilter === 'worker'
+                          ? 'Staff'
+                          : 'Scout Leader'
+                      } accounts match this selection`
                     : staffStatusFilter === 'pending'
                     ? 'No pending account approvals'
                     : 'No staff accounts match this filter'}
@@ -1083,15 +1157,19 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              user.role === 'admin' || user.requestedRole === 'admin'
-                                ? 'bg-amber-50 text-amber-800 border-amber-300'
+                              isFullAccessAdmin(user) || normalizeRole(user.requestedRole) === 'full_admin'
+                                ? 'bg-amber-500/15 text-amber-950 border-amber-400'
+                                : normalizeRole(user.role) === 'admin' || normalizeRole(user.requestedRole) === 'admin'
+                                ? 'bg-orange-50 text-orange-900 border-orange-300'
                                 : user.role === 'leader' || user.requestedRole === 'leader'
                                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                                 : 'bg-sky-50 text-sky-800 border-sky-300'
                             }`}
                           >
-                            {user.role === 'admin' || user.requestedRole === 'admin'
-                              ? 'Admin Authority'
+                            {isFullAccessAdmin(user) || normalizeRole(user.requestedRole) === 'full_admin'
+                              ? 'Full-Access Admin'
+                              : normalizeRole(user.role) === 'admin' || normalizeRole(user.requestedRole) === 'admin'
+                              ? 'Admin (Team-Scoped)'
                               : user.role === 'leader' || user.requestedRole === 'leader'
                               ? 'Scout Leader'
                               : 'Staff'}
@@ -1102,17 +1180,37 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           Registered: {new Date(user.createdAt || Date.now()).toLocaleDateString()}
                         </div>
                         {(() => {
-                          const userTeams =
-                            user.assignedTeams && user.assignedTeams.length > 0
-                              ? user.assignedTeams
-                              : getStoredTeamDirectory()[user.id] || [];
-                          const userF2 =
-                            user.assignedFare2 && user.assignedFare2.length > 0
-                              ? user.assignedFare2
-                              : getStoredUserFare2Map()[user.id] || [];
-                          if (userTeams.length === 0 && userF2.length === 0) return null;
+                          const userTeams = Array.isArray(user.assignedTeams)
+                            ? user.assignedTeams
+                            : getStoredTeamDirectory()[user.id] || [];
+                          const userF2 = Array.isArray(user.assignedFare2)
+                            ? user.assignedFare2
+                            : getStoredUserFare2Map()[user.id] || [];
+                          const userIsFullAdmin = isFullAccessAdmin(user);
+                          const isUnassignedRegularAdmin =
+                            normalizeRole(user.role) === 'admin' && !userIsFullAdmin && userTeams.length === 0;
+                          if (
+                            userTeams.length === 0 &&
+                            userF2.length === 0 &&
+                            !userIsFullAdmin &&
+                            !isUnassignedRegularAdmin
+                          ) {
+                            return null;
+                          }
                           return (
                             <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                              {userIsFullAdmin && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-amber-50 text-amber-900 border-amber-300">
+                                  <ShieldCheck className="w-3 h-3 text-amber-600" />
+                                  <span>All Pages Unlocked</span>
+                                </span>
+                              )}
+                              {isUnassignedRegularAdmin && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border bg-orange-50 text-orange-900 border-orange-300">
+                                  <ShieldAlert className="w-3 h-3 text-orange-600" />
+                                  <span>No Team Assigned (Catalog Only)</span>
+                                </span>
+                              )}
                               {userTeams.map((tid) => {
                                 const tm = STORE_TEAMS.find((t) => t.id === tid);
                                 if (!tm) return null;
@@ -1148,7 +1246,17 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     {/* Actions / Status */}
                     <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                       {isCurrentUser ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {onUpdateUserRole && user.role !== 'full_admin' && isFullAccessAdmin(user) && (
+                            <button
+                              type="button"
+                              onClick={() => onUpdateUserRole(user.id, 'full_admin')}
+                              className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-[11px] font-black shadow-2xs transition-colors"
+                              title="Explicitly lock your account as Full-Access Admin"
+                            >
+                              Confirm Full-Access Admin
+                            </button>
+                          )}
                           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-amber-300 text-xs font-bold">
                             <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
                             <span>Logged In (Current User)</span>
@@ -1158,7 +1266,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                               type="button"
                               onClick={() => openEditAccountModal(user)}
                               className="p-2 text-amber-600 hover:text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-colors shadow-2xs"
-                              title="Assign Store Teams & Scout Fera2"
+                              title="Edit Role, Store Teams & Scout Fera2"
                             >
                               <Edit3 className="w-4 h-4 text-amber-600" />
                             </button>
@@ -1454,6 +1562,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     email: newUserEmail,
                     password: newUserPassword,
                     role: newUserRole,
+                    assignedTeams: newUserRole === 'leader' ? [] : newUserTeams,
                   });
                   if (res && res.success === false) {
                     setCreateError(res.error || 'Failed to create user');
@@ -1526,9 +1635,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               {/* Role Choice */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
-                  REQUESTED ROLE / POSITION:
+                  SYSTEM ROLE &amp; PAGE ACCESS:
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setNewUserRole('worker')}
@@ -1543,7 +1652,43 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       <span>Staff</span>
                     </div>
                     <div className="text-[11px] font-normal text-slate-500 mt-1">
-                      Stock &amp; Orders
+                      Team-scoped pages, requests &amp; orders
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewUserRole('admin')}
+                    className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                      newUserRole === 'admin'
+                        ? 'border-orange-500 bg-orange-50 text-orange-950 font-bold shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center gap-1.5">
+                      <ShieldAlert className="w-3.5 h-3.5 text-orange-600" />
+                      <span>Admin (Team-Scoped)</span>
+                    </div>
+                    <div className="text-[11px] font-normal text-slate-500 mt-1">
+                      Approvals &amp; admin controls for assigned team(s)
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewUserRole('full_admin')}
+                    className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                      newUserRole === 'full_admin'
+                        ? 'border-amber-500 bg-amber-50 text-amber-950 font-bold shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Full-Access Admin</span>
+                    </div>
+                    <div className="text-[11px] font-normal text-slate-500 mt-1">
+                      All pages + full admin approvals
                     </div>
                   </button>
 
@@ -1558,32 +1703,57 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   >
                     <div className="font-bold flex items-center gap-1.5">
                       <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Leader</span>
+                      <span>Scout Leader</span>
                     </div>
                     <div className="text-[11px] font-normal text-slate-500 mt-1">
-                      Read-only catalog
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setNewUserRole('admin')}
-                    className={`p-3 rounded-xl border text-left text-xs transition-all ${
-                      newUserRole === 'admin'
-                        ? 'border-amber-500 bg-amber-50 text-amber-950 font-bold shadow-sm'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="font-bold flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Admin</span>
-                    </div>
-                    <div className="text-[11px] font-normal text-slate-500 mt-1">
-                      Full authority
+                      Read-only catalog &amp; prices
                     </div>
                   </button>
                 </div>
               </div>
+
+              {newUserRole !== 'leader' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      ASSIGN STORE TEAMS {newUserRole === 'full_admin' ? '(OPTIONAL)' : '(CONTROLS VISIBLE PAGES)'}:
+                    </label>
+                    {newUserTeams.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewUserTeams([])}
+                        className="text-[11px] font-bold text-rose-600 hover:underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {STORE_TEAMS.map((team) => {
+                      const active = newUserTeams.includes(team.id);
+                      return (
+                        <button
+                          key={team.id}
+                          type="button"
+                          onClick={() =>
+                            setNewUserTeams((prev) =>
+                              prev.includes(team.id)
+                                ? prev.filter((id) => id !== team.id)
+                                : [...prev, team.id]
+                            )
+                          }
+                          className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center justify-between gap-1 transition-colors cursor-pointer ${
+                            active ? team.activeButtonClass : team.chipClass
+                          }`}
+                        >
+                          <span className="truncate">{team.shortLabel}</span>
+                          {active && <Check className="w-3 h-3 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {createError && (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
@@ -1673,7 +1843,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     disabled={Boolean(isEditingCurrentUser)}
@@ -1689,7 +1859,44 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       <span>Staff</span>
                     </div>
                     <div className="text-[11px] text-slate-500 mt-1">
-                      Request stock edits, create bookings &amp; request payment confirmation.
+                      Submit stock edits &amp; orders for Admin approval; sees team pages only.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={Boolean(isEditingCurrentUser && userToEditRole.role === 'full_admin')}
+                    onClick={() => setNewSelectedRole('admin')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      newSelectedRole === 'admin'
+                        ? 'border-orange-500 bg-orange-50/70 text-orange-950 ring-2 ring-orange-500/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <ShieldAlert className="w-3.5 h-3.5 text-orange-600" />
+                      <span>Admin (Team-Scoped)</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Approvals &amp; admin controls (more than Staff), strictly for assigned team pages.
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewSelectedRole('full_admin')}
+                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                      newSelectedRole === 'full_admin'
+                        ? 'border-amber-500 bg-amber-50/80 text-amber-950 ring-2 ring-amber-500/20'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Full-Access Admin</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Full Admin controls &amp; sees <strong>ALL pages</strong> across the store.
                     </div>
                   </button>
 
@@ -1709,25 +1916,6 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     </div>
                     <div className="text-[11px] text-slate-500 mt-1">
                       Read-only view of catalog items &amp; prices only.
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={Boolean(isEditingCurrentUser)}
-                    onClick={() => setNewSelectedRole('admin')}
-                    className={`p-3 rounded-xl border-2 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                      newSelectedRole === 'admin'
-                        ? 'border-amber-500 bg-amber-50/70 text-amber-950 ring-2 ring-amber-500/20'
-                        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div className="font-bold text-xs flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Admin</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-1">
-                      Full authority including analytics, approvals &amp; direct edits.
                     </div>
                   </button>
                 </div>
@@ -1753,6 +1941,24 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       </button>
                     )}
                   </div>
+
+                  {newSelectedRole === 'full_admin' ? (
+                    <div className="p-2.5 rounded-xl border border-amber-200 bg-amber-50/70 text-[11px] text-amber-950">
+                      <strong>Full-Access Admin:</strong> Always sees <strong>ALL pages</strong> across the store, even if linked to specific Store Teams below for Team Board tasks.
+                    </div>
+                  ) : newSelectedRole === 'admin' ? (
+                    <div className="p-2.5 rounded-xl border border-orange-200 bg-orange-50/70 text-[11px] text-orange-950">
+                      {newSelectedTeams.length === 0 ? (
+                        <>
+                          <strong>Team-Scoped Admin:</strong> No team assigned yet — only Inventory Catalog will appear until assigned to 1+ Store Team(s).
+                        </>
+                      ) : (
+                        <>
+                          <strong>Team-Scoped Admin:</strong> Has Admin controls &amp; approvals, and sees pages strictly for the selected {newSelectedTeams.length} team(s).
+                        </>
+                      )}
+                    </div>
+                  ) : null}
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {STORE_TEAMS.map((team) => {
@@ -1860,7 +2066,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   disabled={isUpdatingRole}
                   onClick={() => {
                     if (!userToEditRole) return;
-                    const effectiveRole = isEditingCurrentUser ? userToEditRole.role : newSelectedRole;
+                    const effectiveRole = isEditingCurrentUser
+                      ? newSelectedRole === 'full_admin' || newSelectedRole === 'admin'
+                        ? newSelectedRole
+                        : userToEditRole.role
+                      : newSelectedRole;
                     const roleChanged = effectiveRole !== userToEditRole.role;
                     const finalTeams = effectiveRole === 'leader' ? [] : newSelectedTeams;
                     const finalFare2 =
@@ -1898,7 +2108,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
           currentUser &&
           (userToEditRole.id === currentUser.id ||
             userToEditRole.email.toLowerCase() === currentUser.email.toLowerCase());
-        const effectiveRole = isEditingCurrentUser ? userToEditRole.role : newSelectedRole;
+        const effectiveRole = isEditingCurrentUser
+          ? newSelectedRole === 'full_admin' || newSelectedRole === 'admin'
+            ? newSelectedRole
+            : userToEditRole.role
+          : newSelectedRole;
         const roleChanged = effectiveRole !== userToEditRole.role;
 
         const finalTeams: StoreTeamId[] = effectiveRole === 'leader' ? [] : newSelectedTeams;
@@ -1927,7 +2141,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         const handleConfirmAccountChanges = async () => {
           setIsUpdatingRole(true);
           try {
-            if (!isEditingCurrentUser && onUpdateUserRole && roleChanged) {
+            if (onUpdateUserRole && roleChanged) {
               await onUpdateUserRole(userToEditRole.id, effectiveRole);
             }
             if (onUpdateUserTeams) {

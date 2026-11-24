@@ -1,6 +1,14 @@
 import React, { useState } from 'react';
 import { User, Role } from '../types/inventory';
-import { authenticateUser, registerNewUser } from '../utils/storage';
+import {
+  authenticateUser,
+  getStoredFullAdminIds,
+  getStoredTeamDirectory,
+  getStoredUserFare2Map,
+  registerNewUser,
+  saveStoredTeamDirectory,
+  saveStoredUserFare2Map,
+} from '../utils/storage';
 import {
   Warehouse,
   Mail,
@@ -84,8 +92,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
           return;
         }
 
-        // Verify password against stored hash or plain password
-        const { verifyPassword, hashPassword } = await import('../utils/security');
+        const { verifyPassword, hashPassword, normalizeRole } = await import('../utils/security');
         const isMatch = await verifyPassword(password, profile.password_hash);
         if (!isMatch) {
           setLoginError('Invalid email or password. Please check your credentials.');
@@ -103,18 +110,30 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
             .then(() => {});
         }
 
-        const rawRole = String(profile.role || profile.requested_role || '').trim().toLowerCase();
-        const normalizedRole: Role = rawRole.includes('admin')
-          ? 'admin'
-          : rawRole.includes('leader')
-          ? 'leader'
-          : 'worker';
-        const rawReqRole = String(profile.requested_role || profile.role || '').trim().toLowerCase();
-        const normalizedReqRole: Role = rawReqRole.includes('admin')
-          ? 'admin'
-          : rawReqRole.includes('leader')
-          ? 'leader'
-          : 'worker';
+        const parsedRole = normalizeRole(profile.role || profile.requested_role);
+        const normalizedRole: Role =
+          parsedRole === 'admin' && getStoredFullAdminIds().includes(profile.id)
+            ? 'full_admin'
+            : parsedRole;
+        const normalizedReqRole: Role = normalizeRole(profile.requested_role || profile.role);
+
+        const storedDir = getStoredTeamDirectory();
+        const storedFare2 = getStoredUserFare2Map();
+        const hasDbTeams = Array.isArray(profile.assigned_teams);
+        const hasDbFare2 = Array.isArray(profile.assigned_fare2);
+        const resolvedTeams = hasDbTeams
+          ? profile.assigned_teams
+          : storedDir[profile.id] || [];
+        const resolvedFare2 = hasDbFare2
+          ? profile.assigned_fare2
+          : storedFare2[profile.id] || [];
+
+        if (hasDbTeams) {
+          saveStoredTeamDirectory({ ...storedDir, [profile.id]: resolvedTeams });
+        }
+        if (hasDbFare2) {
+          saveStoredUserFare2Map({ ...storedFare2, [profile.id]: resolvedFare2 });
+        }
 
         const userObj: User = {
           id: profile.id,
@@ -125,6 +144,8 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
           requestedRole: normalizedReqRole,
           employeeId: profile.employee_id,
           avatarColor: profile.avatar_color,
+          assignedTeams: resolvedTeams,
+          assignedFare2: resolvedFare2,
         };
         onLogin(userObj);
         setIsSubmitting(false);
@@ -138,7 +159,18 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
     const result = authenticateUser(email, password);
 
     if (result.success && result.user) {
-      onLogin(result.user);
+      const storedDir = getStoredTeamDirectory();
+      const storedFare2 = getStoredUserFare2Map();
+      const hydratedUser: User = {
+        ...result.user,
+        assignedTeams: Array.isArray(result.user.assignedTeams)
+          ? result.user.assignedTeams
+          : storedDir[result.user.id] || [],
+        assignedFare2: Array.isArray(result.user.assignedFare2)
+          ? result.user.assignedFare2
+          : storedFare2[result.user.id] || [],
+      };
+      onLogin(hydratedUser);
     } else if (result.isPending && result.user) {
       setPendingAccountInfo(result.user);
     } else {

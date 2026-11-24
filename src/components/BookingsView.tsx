@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Booking, BookingStatus, Product, User } from '../types/inventory';
+import { Booking, BookingStatus, Product, ProductionBatch, User } from '../types/inventory';
 import {
   SCOUT_FERA2_LIST,
   getScoutFare2Meta,
@@ -8,6 +8,7 @@ import {
 import { getStoredFare2Leaders } from '../utils/storage';
 import {
   CalendarCheck,
+  CalendarDays,
   Plus,
   Search,
   Filter,
@@ -39,6 +40,7 @@ interface BookingsViewProps {
   bookings: Booking[];
   products?: Product[];
   users?: User[];
+  batches?: ProductionBatch[];
   currentUser: User;
   onOpenNewBookingModal: () => void;
   onEditBooking?: (booking: Booking) => void;
@@ -48,6 +50,10 @@ interface BookingsViewProps {
   onDeclinePaymentVerification?: (bookingId: string) => void;
   onDeleteBooking: (bookingId: string) => void;
   onUpdateBooking?: (booking: Booking) => void;
+  onSendShortageToPurchases?: (booking: Booking, targetDate?: string) => void;
+  onConfirmBookingStockReady?: (booking: Booking) => void;
+  onOpenSourcing?: () => void;
+  onOpenCalendar?: () => void;
   onLogActivity?: (log: any) => void;
   onShowToast?: (message: string, log?: any) => void;
   initialSelectedBookingId?: string | null;
@@ -58,6 +64,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   bookings,
   products = [],
   users = [],
+  batches = [],
   currentUser,
   onOpenNewBookingModal,
   onEditBooking,
@@ -67,6 +74,10 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   onDeclinePaymentVerification,
   onDeleteBooking,
   onUpdateBooking,
+  onSendShortageToPurchases,
+  onConfirmBookingStockReady,
+  onOpenSourcing,
+  onOpenCalendar,
   onLogActivity,
   onShowToast,
   initialSelectedBookingId,
@@ -118,6 +129,42 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [editTroopValue, setEditTroopValue] = useState<string>('');
   const [editAssignedFare2, setEditAssignedFare2] = useState<string>('');
   const [editAssignedToId, setEditAssignedToId] = useState<string>('');
+  const [purchaseTargetDate, setPurchaseTargetDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 5);
+    return d.toISOString().slice(0, 10);
+  });
+
+  // Compute live shortage for any booking against current live catalog stock
+  const getBookingShortageInfo = (b: Booking) => {
+    const shortageItems: { productName: string; size: string; colorName: string; deficit: number }[] = [];
+    b.items.forEach((it) => {
+      const prod = products.find((p) => p.id === it.productId);
+      const variant = prod?.variants.find((v) => v.id === it.variantId);
+      const liveAvail = variant ? variant.quantity : it.availableStock ?? 0;
+      const deficit = b.inventoryDeducted ? 0 : Math.max(0, (it.quantity || 0) - liveAvail);
+      if (deficit > 0) {
+        shortageItems.push({
+          productName: it.productName,
+          size: String(it.size || 'Standard'),
+          colorName: it.colorName || 'Standard',
+          deficit,
+        });
+      }
+    });
+    const linkedBatches = batches.filter((bt) => bt.linkedBookingId === b.id);
+    const activeBatches = linkedBatches.filter((bt) => bt.status === 'in_progress');
+    const resolvedState =
+      b.stockCheckStatus ||
+      (activeBatches.length > 0
+        ? 'in_production'
+        : shortageItems.length > 0
+        ? 'needs_production'
+        : b.status === 'delivered' || b.status === 'done'
+        ? 'ready_for_handover'
+        : 'in_stock');
+    return { shortageItems, linkedBatches, activeBatches, resolvedState };
+  };
 
   const TROOP_OPTIONS = ['Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'];
 
@@ -861,6 +908,32 @@ This is our official Scout Store number. Through this chat, you can:
                           <span>Payment Verification Requested</span>
                         </span>
                       )}
+
+                      {b.status !== 'done' && (() => {
+                        const info = getBookingShortageInfo(b);
+                        if (info.resolvedState === 'ready_for_handover') {
+                          return (
+                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              Ready for Scout Fera2
+                            </span>
+                          );
+                        }
+                        if (info.resolvedState === 'in_production' || info.activeBatches.length > 0) {
+                          return (
+                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                              Purchases / Production Active
+                            </span>
+                          );
+                        }
+                        if (info.shortageItems.length > 0 || info.resolvedState === 'needs_production') {
+                          return (
+                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
+                              Needs Production ({info.shortageItems.reduce((s, i) => s + i.deficit, 0)} pcs short)
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
 
                     {/* Total Amount & Items Count - Visible on both Mobile & Desktop */}
@@ -1267,6 +1340,147 @@ This is our official Scout Store number. Through this chat, you can:
                         Save Task Assignment
                       </button>
                     </div>
+                  </div>
+                );
+              })()}
+
+              {/* Connected 6-Team Pipeline Card (Scout Fera2 -> Inventory/Calendar -> Purchases -> Gard -> Handover) */}
+              {(() => {
+                const pipeInfo = getBookingShortageInfo(activeBooking);
+                const totalShortage = pipeInfo.shortageItems.reduce((s, it) => s + it.deficit, 0);
+                const stateLabel =
+                  activeBooking.status === 'delivered' || activeBooking.status === 'done'
+                    ? 'Delivered to Requesting Fera2'
+                    : pipeInfo.resolvedState === 'ready_for_handover'
+                    ? 'Stocked In (Gard Done) — Ready for Scout Fera2 Delivery'
+                    : pipeInfo.resolvedState === 'in_production' || pipeInfo.activeBatches.length > 0
+                    ? 'Sent to Purchases Team — Production Batch Running'
+                    : totalShortage > 0 || pipeInfo.resolvedState === 'needs_production'
+                    ? `Shortage Detected (${totalShortage} pcs) — Needs Manufacturing / Purchase`
+                    : 'All Items In Stock — Ready for Inventory Confirmation';
+
+                return (
+                  <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider font-black text-slate-500">
+                          Connected Team Workflow (Order → Inventory → Purchases → Delivery)
+                        </div>
+                        <div className="text-xs sm:text-sm font-black text-slate-900 mt-0.5">
+                          {stateLabel}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {onOpenCalendar && (
+                          <button
+                            type="button"
+                            onClick={onOpenCalendar}
+                            className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-indigo-300 text-[11px] font-bold text-indigo-700 flex items-center gap-1"
+                          >
+                            <CalendarDays className="w-3.5 h-3.5" />
+                            <span>Calendar</span>
+                          </button>
+                        )}
+                        {onOpenSourcing && (
+                          <button
+                            type="button"
+                            onClick={onOpenSourcing}
+                            className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-amber-400 text-[11px] font-bold text-amber-800 flex items-center gap-1"
+                          >
+                            <Factory className="w-3.5 h-3.5" />
+                            <span>Sourcing</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {pipeInfo.shortageItems.length > 0 && pipeInfo.activeBatches.length === 0 && (
+                      <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-1">
+                        <div className="font-bold">Items Short in Warehouse:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {pipeInfo.shortageItems.map((si, i) => (
+                            <span
+                              key={i}
+                              className="px-2 py-0.5 rounded-md bg-white border border-rose-200 text-[11px] font-semibold font-mono tabular-nums"
+                            >
+                              {si.productName} ({si.size}/{si.colorName}): -{si.deficit} pcs
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {pipeInfo.linkedBatches.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-bold text-slate-600">
+                          Linked Purchases &amp; Production Batches ({pipeInfo.linkedBatches.length})
+                        </div>
+                        {pipeInfo.linkedBatches.map((bt) => (
+                          <div
+                            key={bt.id}
+                            className="p-2.5 rounded-xl bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs"
+                          >
+                            <div className="font-mono tabular-nums">
+                              <strong className="text-slate-900">{bt.batchCode}</strong> · {bt.quantity} pcs ·{' '}
+                              <span
+                                className={
+                                  bt.status === 'completed'
+                                    ? 'text-emerald-700 font-bold'
+                                    : 'text-blue-700 font-bold'
+                                }
+                              >
+                                {bt.status === 'completed' ? 'Completed & Gard Stocked In' : `Stage: ${bt.currentStageKey}`}
+                              </span>
+                            </div>
+                            {bt.targetDate && (
+                              <span className="text-[11px] font-mono text-slate-500">
+                                Due {bt.targetDate}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Action Bar for Inventory Management -> Purchases OR Ready for Scout Fera2 */}
+                    {activeBooking.status !== 'delivered' && activeBooking.status !== 'done' && (
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
+                        {totalShortage > 0 &&
+                          pipeInfo.activeBatches.length === 0 &&
+                          onSendShortageToPurchases && (
+                            <div className="flex flex-wrap items-center gap-2 flex-1">
+                              <input
+                                type="date"
+                                value={purchaseTargetDate}
+                                onChange={(e) => setPurchaseTargetDate(e.target.value)}
+                                className="px-2.5 py-2 min-h-[38px] rounded-xl border border-slate-300 bg-white text-xs font-mono text-slate-800"
+                                title="Target delivery date for Purchases & Calendar"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => onSendShortageToPurchases(activeBooking, purchaseTargetDate)}
+                                className="px-3.5 py-2 min-h-[38px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5"
+                              >
+                                <Factory className="w-3.5 h-3.5" />
+                                <span>Send Shortage to Purchases Team &amp; Calendar</span>
+                              </button>
+                            </div>
+                          )}
+
+                        {totalShortage === 0 &&
+                          pipeInfo.resolvedState !== 'ready_for_handover' &&
+                          onConfirmBookingStockReady && (
+                            <button
+                              type="button"
+                              onClick={() => onConfirmBookingStockReady(activeBooking)}
+                              className="px-3.5 py-2 min-h-[38px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Inventory Confirmed: Ready for Scout Fera2 Delivery</span>
+                            </button>
+                          )}
+                      </div>
+                    )}
                   </div>
                 );
               })()}

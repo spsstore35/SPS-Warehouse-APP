@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BoardColumnStatus,
+  Booking,
   CalendarItem,
   CalendarItemType,
   StoreTeamId,
@@ -17,6 +18,7 @@ import {
   Fare2LeaderAssignment,
 } from '../utils/storage';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
+import { isFullAccessAdmin, isUserAdmin, normalizeRole } from '../utils/security';
 import {
   Kanban,
   Users,
@@ -36,17 +38,26 @@ import {
   ListTodo,
   UserPlus,
   Lock,
+  AlertTriangle,
+  CalendarCheck,
+  Factory,
+  Megaphone,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface TeamBoardViewProps {
   items: CalendarItem[];
   users: User[];
+  bookings?: Booking[];
   currentUser: User;
   onSaveItem: (item: CalendarItem) => void;
   onDeleteItem: (id: string) => void;
   onMoveItemStatus: (id: string, nextStatus: BoardColumnStatus) => void;
   onFare2LeaderChange?: (fare2Id: string, leader: Fare2LeaderAssignment | null) => void;
   onUserTeamsChange?: (userId: string, assignedTeams: StoreTeamId[], assignedFare2: string[]) => void;
+  onOpenBooking?: (bookingId: string) => void;
+  onOpenSourcing?: () => void;
+  onOpenMarketing?: () => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -233,15 +244,20 @@ const getGoogleCalendarUrl = (item: CalendarItem): string => {
 export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   items,
   users,
+  bookings = [],
   currentUser,
   onSaveItem,
   onDeleteItem,
   onMoveItemStatus,
   onFare2LeaderChange,
   onUserTeamsChange,
+  onOpenBooking,
+  onOpenSourcing,
+  onOpenMarketing,
   onShowToast,
 }) => {
   const todayKey = useMemo(() => toDateKey(new Date()), []);
+  const isAdmin = isUserAdmin(currentUser);
 
   // Top Workspace Tabs: 'board' vs 'people'
   const [activeTab, setActiveTab] = useState<'board' | 'people'>('board');
@@ -276,6 +292,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   // People & Teams tab state
   const [peopleSubView, setPeopleSubView] = useState<'by-team' | 'all-people'>('by-team');
   const [peopleSearch, setPeopleSearch] = useState('');
+  const [peopleFilter, setPeopleFilter] = useState<'all' | 'multi-team' | 'idle' | 'no-team'>('all');
   const [teamDirectory, setTeamDirectory] = useState<Record<string, StoreTeamId[]>>(() =>
     getStoredTeamDirectory()
   );
@@ -533,6 +550,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   };
 
   const requestAddUserToTeam = (userId: string, teamId: StoreTeamId) => {
+    if (!isAdmin) return;
     const user = activeMembers.find((m) => m.id === userId);
     const team = getTeamMeta(teamId);
     if (!user || !team) return;
@@ -545,6 +563,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   };
 
   const requestRemoveUserFromTeam = (userId: string, teamId: StoreTeamId) => {
+    if (!isAdmin) return;
     const user = activeMembers.find((m) => m.id === userId);
     const team = getTeamMeta(teamId);
     if (!user || !team) return;
@@ -558,6 +577,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   };
 
   const requestToggleUserFare2 = (userId: string, fare2Id: string) => {
+    if (!isAdmin) return;
     const user = activeMembers.find((m) => m.id === userId);
     if (!user) return;
     const currentFare2 = Array.from(
@@ -575,6 +595,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   };
 
   const requestSetFare2Leader = (fare2Id: string, userId: string) => {
+    if (!isAdmin) return;
     const currentLeader = fare2Leaders[fare2Id];
     if ((currentLeader?.userId || '') === userId) return;
     const newUser = activeMembers.find((m) => m.id === userId) || null;
@@ -836,7 +857,16 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     return { current, past };
   }, [selectedMember, items, todayKey]);
 
-  // Helper to get per-user stats
+  // Helper to get per-user stats across events, tasks, and assigned bookings
+  const getUserBookings = (user: User) => {
+    const nameLower = user.name.trim().toLowerCase();
+    return bookings.filter(
+      (b) =>
+        (b.assignedToId && b.assignedToId === user.id) ||
+        (b.assignedToName && b.assignedToName.trim().toLowerCase() === nameLower)
+    );
+  };
+
   const getUserStats = (user: User, teamFilter?: StoreTeamId) => {
     const nameLower = user.name.trim().toLowerCase();
     const userItems = items.filter((it) => {
@@ -846,13 +876,63 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
         (it.assignedToName && it.assignedToName.trim().toLowerCase() === nameLower)
       );
     });
+    const upcoming = userItems.filter((i) => getItemColumn(i) === 'upcoming').length;
+    const inProgress = userItems.filter((i) => getItemColumn(i) === 'in_progress').length;
+    const done = userItems.filter((i) => getItemColumn(i) === 'done').length;
+    const activeItems = userItems.filter((i) => getItemColumn(i) !== 'done');
+    const activeEventsCount = activeItems.filter((i) => i.itemType === 'event').length;
+    const activeTasksCount = activeItems.filter((i) => i.itemType === 'task').length;
+    const activeBookingsCount = teamFilter
+      ? 0
+      : getUserBookings(user).filter((b) => b.status !== 'done').length;
+
     return {
       total: userItems.length,
-      upcoming: userItems.filter((i) => getItemColumn(i) === 'upcoming').length,
-      inProgress: userItems.filter((i) => getItemColumn(i) === 'in_progress').length,
-      done: userItems.filter((i) => getItemColumn(i) === 'done').length,
+      upcoming,
+      inProgress,
+      done,
+      activeCount: upcoming + inProgress,
+      activeEventsCount,
+      activeTasksCount,
+      activeBookingsCount,
       items: userItems,
     };
+  };
+
+  const unassignedAccounts = useMemo(
+    () =>
+      activeMembers.filter(
+        (u) => !isFullAccessAdmin(u) && (effectiveUserTeams.get(u.id)?.size || 0) === 0
+      ),
+    [activeMembers, effectiveUserTeams]
+  );
+
+  const multiTeamAccounts = useMemo(
+    () => activeMembers.filter((u) => (effectiveUserTeams.get(u.id)?.size || 0) >= 2),
+    [activeMembers, effectiveUserTeams]
+  );
+
+  const idleAccounts = useMemo(
+    () =>
+      activeMembers.filter((u) => {
+        const st = getUserStats(u);
+        return st.activeCount === 0 && st.activeBookingsCount === 0;
+      }),
+    [activeMembers, items, bookings, todayKey]
+  );
+
+  const doesMemberMatchPeopleFilter = (member: User): boolean => {
+    if (peopleFilter === 'multi-team') {
+      return (effectiveUserTeams.get(member.id)?.size || 0) >= 2;
+    }
+    if (peopleFilter === 'idle') {
+      const st = getUserStats(member);
+      return st.activeCount === 0 && st.activeBookingsCount === 0;
+    }
+    if (peopleFilter === 'no-team') {
+      return !isFullAccessAdmin(member) && (effectiveUserTeams.get(member.id)?.size || 0) === 0;
+    }
+    return true;
   };
 
   const doesItemMatchQuery = (item: CalendarItem, qLower: string): boolean => {
@@ -901,9 +981,12 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
   const filteredPeople = useMemo(() => {
     const q = peopleSearch.trim().toLowerCase();
-    if (!q) return activeMembers;
-    return activeMembers.filter((u) => doesMemberMatchQuery(u, q));
-  }, [activeMembers, peopleSearch, effectiveUserTeams, effectiveUserFare2, items]);
+    return activeMembers.filter((u) => {
+      if (!doesMemberMatchPeopleFilter(u)) return false;
+      if (!q) return true;
+      return doesMemberMatchQuery(u, q);
+    });
+  }, [activeMembers, peopleSearch, peopleFilter, effectiveUserTeams, effectiveUserFare2, items, bookings, todayKey]);
 
   return (
     <div className="space-y-5">
@@ -1414,56 +1497,157 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       ================================================================ */}
       {activeTab === 'people' && (
         <div className="space-y-4">
-          {/* Controls bar for People & Teams (Unified Search across Tasks, Events, Accounts, Teams & Fare2) */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setPeopleSubView('by-team')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    peopleSubView === 'by-team'
-                      ? 'bg-white text-slate-900 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  By Store Team (6 Teams)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPeopleSubView('all-people')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    peopleSubView === 'all-people'
-                      ? 'bg-white text-slate-900 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  All People ({activeMembers.length})
-                </button>
+          {/* Controls bar for People & Teams (Unified Search + Member Oversight Filters) */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setPeopleSubView('by-team')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      peopleSubView === 'by-team'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    By Store Team (6 Teams)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPeopleSubView('all-people')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      peopleSubView === 'all-people'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    All People ({activeMembers.length})
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={peopleSearch}
+                  onChange={(e) => setPeopleSearch(e.target.value)}
+                  placeholder="Search task, event, account name, team, or Fare2..."
+                  className="w-full pl-9 pr-8 py-2 min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-blue-500"
+                />
+                {peopleSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setPeopleSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                    title="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={peopleSearch}
-                onChange={(e) => setPeopleSearch(e.target.value)}
-                placeholder="Search task, event, account name, team, or Fare2..."
-                className="w-full pl-9 pr-8 py-2 min-h-[40px] rounded-xl border border-slate-200 bg-slate-50 focus:bg-white text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-blue-500"
-              />
-              {peopleSearch && (
-                <button
-                  type="button"
-                  onClick={() => setPeopleSearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
-                  title="Clear search"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
+            {/* Member Oversight Filter Pills: Multi-Team, Holding Nothing, No Team Assigned */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setPeopleFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                  peopleFilter === 'all'
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                All Accounts ({activeMembers.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPeopleFilter('multi-team');
+                  setPeopleSubView('all-people');
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                  peopleFilter === 'multi-team'
+                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    : 'bg-indigo-50/70 text-indigo-900 border-indigo-200 hover:bg-indigo-100'
+                }`}
+              >
+                Multi-Team (2+) ({multiTeamAccounts.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPeopleFilter('idle');
+                  setPeopleSubView('all-people');
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+                  peopleFilter === 'idle'
+                    ? 'bg-slate-700 text-white border-slate-700'
+                    : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                Holding Nothing (0 Active) ({idleAccounts.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPeopleFilter('no-team');
+                  setPeopleSubView('all-people');
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1.5 transition-colors ${
+                  peopleFilter === 'no-team'
+                    ? 'bg-amber-600 text-white border-amber-600'
+                    : unassignedAccounts.length > 0
+                    ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                    : 'bg-white text-slate-500 border-slate-200'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>No Team Assigned ({unassignedAccounts.length})</span>
+              </button>
             </div>
           </div>
+
+          {/* Warning Note Banner whenever any account has 0 teams assigned */}
+          {unassignedAccounts.length > 0 && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="text-xs sm:text-sm font-black text-amber-950">
+                    Note: {unassignedAccounts.length} account{unassignedAccounts.length > 1 ? 's have' : ' has'} no team assigned
+                  </div>
+                  <p className="text-xs text-amber-900">
+                    Every active store member should belong to at least 1 of the 6 Store Teams. Tap a member below to inspect their profile and assign a team:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    {unassignedAccounts.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => setSelectedMemberId(u.id)}
+                        className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 hover:border-amber-500 text-[11px] font-bold text-amber-950 shadow-2xs transition-colors"
+                      >
+                        {u.name} (0 teams)
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPeopleFilter('no-team');
+                  setPeopleSubView('all-people');
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black whitespace-nowrap shrink-0"
+              >
+                Review &amp; Assign Teams
+              </button>
+            </div>
+          )}
 
           {/* Sub-view A: Grouped by the 6 Store Teams */}
           {peopleSubView === 'by-team' && (() => {
@@ -1473,8 +1657,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               const teamMatches =
                 team.label.toLowerCase().includes(q) ||
                 team.shortLabel.toLowerCase().includes(q);
-              const membersInTeam = activeMembers.filter((u) =>
-                effectiveUserTeams.get(u.id)?.has(team.id)
+              const membersInTeam = activeMembers.filter(
+                (u) => effectiveUserTeams.get(u.id)?.has(team.id) && doesMemberMatchPeopleFilter(u)
               );
               const hasMatchingMember = membersInTeam.some((m) =>
                 doesMemberMatchQuery(m, q)
@@ -1511,9 +1695,11 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     !q ||
                     team.label.toLowerCase().includes(q) ||
                     team.shortLabel.toLowerCase().includes(q);
-                  const membersInTeam = q && !teamMatchesDirectly
-                    ? allMembersInTeam.filter((m) => doesMemberMatchQuery(m, q))
-                    : allMembersInTeam;
+                  const membersInTeam = allMembersInTeam.filter((m) => {
+                    if (!doesMemberMatchPeopleFilter(m)) return false;
+                    if (q && !teamMatchesDirectly) return doesMemberMatchQuery(m, q);
+                    return true;
+                  });
                   const unassignedToThisTeam = activeMembers.filter(
                     (u) => !effectiveUserTeams.get(u.id)?.has(team.id)
                   );
@@ -1590,14 +1776,20 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         {/* Members List inside this Team */}
                         {membersInTeam.length === 0 ? (
                           <div className="py-5 px-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 text-center text-xs text-slate-500">
-                            {q
-                              ? 'No members in this team match your search.'
+                            {q || peopleFilter !== 'all'
+                              ? 'No members in this team match the current filter.'
                               : 'No team members linked yet. Assign someone below or assign a card to this team.'}
                           </div>
                         ) : (
                           <div className="space-y-2">
                             {membersInTeam.map((member) => {
                               const stats = getUserStats(member, team.id);
+                              const globalStats = getUserStats(member);
+                              const isHoldingNothing =
+                                globalStats.activeCount === 0 && globalStats.activeBookingsCount === 0;
+                              const otherTeams = Array.from(
+                                effectiveUserTeams.get(member.id) || new Set<StoreTeamId>()
+                              ).filter((tid) => tid !== team.id);
                               const memberFare2List = Array.from(
                                 effectiveUserFare2.get(member.id) || new Set<string>()
                               );
@@ -1611,7 +1803,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                       type="button"
                                       onClick={() => setSelectedMemberId(member.id)}
                                       className="flex items-center gap-2.5 min-w-0 flex-1 text-left cursor-pointer group"
-                                      title={`Open ${member.name}'s account & event history`}
+                                      title={`Click to view ${member.name}'s teams, events, tasks & assigned orders`}
                                     >
                                       <span
                                         className="w-8 h-8 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0"
@@ -1625,8 +1817,15 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                         {getInitials(member.name)}
                                       </span>
                                       <div className="min-w-0">
-                                        <div className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-blue-700 truncate transition-colors">
-                                          {member.name}
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                          <span className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-blue-700 truncate transition-colors">
+                                            {member.name}
+                                          </span>
+                                          {isHoldingNothing && (
+                                            <span className="px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 text-[9px] font-bold">
+                                              0 Active
+                                            </span>
+                                          )}
                                         </div>
                                         <div className="text-[11px] text-slate-500 font-mono tabular-nums">
                                           {stats.upcoming} upcoming · {stats.inProgress} active · {stats.done} done
@@ -1658,13 +1857,33 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                     </div>
                                   </div>
 
+                                  {otherTeams.length > 0 && (
+                                    <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-slate-200/60">
+                                      <span className="text-[10px] font-bold text-slate-400">
+                                        Also in:
+                                      </span>
+                                      {otherTeams.map((otid) => {
+                                        const otm = getTeamMeta(otid);
+                                        if (!otm) return null;
+                                        return (
+                                          <span
+                                            key={otid}
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${otm.chipClass}`}
+                                          >
+                                            {otm.shortLabel}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
                                   {/* Scout Fera2 member -> show & assign specific Scout Fare2 (Ashbal, Zahrat, etc.) */}
-                                  {team.id === 'troops' && (
+                                  {team.id === 'troops' && (isAdmin || memberFare2List.length > 0) && (
                                     <div className="flex flex-wrap items-center gap-1 pt-1.5 border-t border-slate-200/70">
                                       {memberFare2List.map((fid) => {
                                         const fm = getScoutFare2Meta(fid);
                                         if (!fm) return null;
-                                        return (
+                                        return isAdmin ? (
                                           <button
                                             key={fid}
                                             type="button"
@@ -1676,24 +1895,34 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                             <span>{fm.label}</span>
                                             <X className="w-2.5 h-2.5 opacity-60" />
                                           </button>
+                                        ) : (
+                                          <span
+                                            key={fid}
+                                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${fm.chipClass}`}
+                                          >
+                                            <span className={`w-1.5 h-1.5 rounded-full ${fm.dotClass}`} />
+                                            <span>{fm.label}</span>
+                                          </span>
                                         );
                                       })}
-                                      <select
-                                        value=""
-                                        onChange={(e) => {
-                                          if (e.target.value) {
-                                            requestToggleUserFare2(member.id, e.target.value);
-                                          }
-                                        }}
-                                        className="px-2 py-0.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-600 focus:outline-none focus:border-blue-500"
-                                      >
-                                        <option value="">+ Assign Fare2...</option>
-                                        {SCOUT_FERA2_LIST.filter((f) => !memberFare2List.includes(f.id)).map((f) => (
-                                          <option key={f.id} value={f.id}>
-                                            {f.label}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      {isAdmin && (
+                                        <select
+                                          value=""
+                                          onChange={(e) => {
+                                            if (e.target.value) {
+                                              requestToggleUserFare2(member.id, e.target.value);
+                                            }
+                                          }}
+                                          className="px-2 py-0.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-600 focus:outline-none focus:border-blue-500"
+                                        >
+                                          <option value="">+ Assign Fare2...</option>
+                                          {SCOUT_FERA2_LIST.filter((f) => !memberFare2List.includes(f.id)).map((f) => (
+                                            <option key={f.id} value={f.id}>
+                                              {f.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -1734,21 +1963,27 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                       </div>
                                     </div>
                                   </div>
-                                  <select
-                                    value={leader?.userId || ''}
-                                    onChange={(e) =>
-                                      requestSetFare2Leader(fare2.id, e.target.value)
-                                    }
-                                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-800 max-w-[145px] focus:outline-none focus:border-blue-500"
-                                    title={`Select leader responsible for ${fare2.label} orders`}
-                                  >
-                                    <option value="">Assign leader...</option>
-                                    {activeMembers.map((u) => (
-                                      <option key={u.id} value={u.id}>
-                                        {u.name}
-                                      </option>
-                                    ))}
-                                  </select>
+                                  {isAdmin ? (
+                                    <select
+                                      value={leader?.userId || ''}
+                                      onChange={(e) =>
+                                        requestSetFare2Leader(fare2.id, e.target.value)
+                                      }
+                                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-800 max-w-[145px] focus:outline-none focus:border-blue-500"
+                                      title={`Select leader responsible for ${fare2.label} orders`}
+                                    >
+                                      <option value="">Assign leader...</option>
+                                      {activeMembers.map((u) => (
+                                        <option key={u.id} value={u.id}>
+                                          {u.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-700 truncate max-w-[145px]">
+                                      {leader?.userName || 'Unassigned'}
+                                    </span>
+                                  )}
                                 </div>
                               );
                             })}
@@ -1756,8 +1991,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         </div>
                       )}
 
-                      {/* Assign Member to Team Selector */}
-                      {unassignedToThisTeam.length > 0 && (
+                      {/* Assign Member to Team Selector (Admin Only) */}
+                      {isAdmin && unassignedToThisTeam.length > 0 && (
                         <div className="pt-2 border-t border-slate-100">
                           <div className="flex items-center gap-2">
                             <UserPlus className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -1841,36 +2076,70 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               <p className="text-xs text-slate-500 truncate">{member.email}</p>
                             </div>
                           </div>
-                          {userTeams.size === 0 && (
-                            <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold shrink-0">
-                              Needs Team
-                            </span>
-                          )}
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            {isFullAccessAdmin(member) ? (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
+                                Full-Access Admin (All Pages)
+                              </span>
+                            ) : normalizeRole(member.role) === 'admin' ? (
+                              <span className="px-2 py-0.5 rounded-md bg-orange-50 border border-orange-300 text-orange-900 text-[10px] font-bold">
+                                Admin (Team-Scoped)
+                              </span>
+                            ) : null}
+                            {userTeams.size === 0 ? (
+                              !isFullAccessAdmin(member) && (
+                                <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
+                                  No Team Assigned
+                                </span>
+                              )
+                            ) : userTeams.size >= 2 ? (
+                              <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold">
+                                {userTeams.size} Teams
+                              </span>
+                            ) : null}
+                            {stats.activeCount === 0 && stats.activeBookingsCount === 0 ? (
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold">
+                                Holding Nothing
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-bold">
+                                {stats.activeCount + stats.activeBookingsCount} Active
+                              </span>
+                            )}
+                          </div>
                         </button>
 
                         {/* Workload Stats */}
-                        <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
+                        <div className="grid grid-cols-4 gap-1.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
                           <div>
-                            <div className="text-base font-black font-mono tabular-nums text-slate-900">
-                              {stats.upcoming}
+                            <div className="text-sm font-black font-mono tabular-nums text-slate-900">
+                              {stats.activeEventsCount}
                             </div>
-                            <div className="text-[10px] font-bold uppercase text-slate-500">
-                              Upcoming
+                            <div className="text-[9px] font-bold uppercase text-slate-500">
+                              Events
                             </div>
                           </div>
                           <div>
-                            <div className="text-base font-black font-mono tabular-nums text-blue-700">
-                              {stats.inProgress}
+                            <div className="text-sm font-black font-mono tabular-nums text-blue-700">
+                              {stats.activeTasksCount}
                             </div>
-                            <div className="text-[10px] font-bold uppercase text-blue-700">
-                              In Progress
+                            <div className="text-[9px] font-bold uppercase text-blue-700">
+                              Tasks
                             </div>
                           </div>
                           <div>
-                            <div className="text-base font-black font-mono tabular-nums text-emerald-700">
+                            <div className="text-sm font-black font-mono tabular-nums text-amber-700">
+                              {stats.activeBookingsCount}
+                            </div>
+                            <div className="text-[9px] font-bold uppercase text-amber-700">
+                              Orders
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-sm font-black font-mono tabular-nums text-emerald-700">
                               {stats.done}
                             </div>
-                            <div className="text-[10px] font-bold uppercase text-emerald-700">
+                            <div className="text-[9px] font-bold uppercase text-emerald-700">
                               Done
                             </div>
                           </div>
@@ -1898,68 +2167,98 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         {/* Assign / Toggle Team Membership (6 Teams) */}
                         <div className="space-y-1.5">
                           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                            Assigned Team from 6 Teams (tap to toggle)
+                            {isAdmin
+                              ? 'Assigned Team from 6 Teams (tap to toggle)'
+                              : 'Assigned Store Teams (6 Teams)'}
                           </div>
                           <div className="flex flex-wrap gap-1.5">
-                            {STORE_TEAMS.map((team) => {
-                              const active = userTeams.has(team.id);
-                              return (
-                                <button
-                                  key={team.id}
-                                  type="button"
-                                  onClick={() => {
-                                    if (!active) {
-                                      requestAddUserToTeam(member.id, team.id);
-                                    } else {
-                                      requestRemoveUserFromTeam(member.id, team.id);
-                                    }
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
-                                    active
-                                      ? team.activeButtonClass
-                                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                  }`}
-                                >
-                                  <span
-                                    className={`w-2 h-2 rounded-full ${
-                                      active ? 'bg-white' : team.dotClass
+                            {isAdmin ? (
+                              STORE_TEAMS.map((team) => {
+                                const active = userTeams.has(team.id);
+                                return (
+                                  <button
+                                    key={team.id}
+                                    type="button"
+                                    onClick={() => {
+                                      if (!active) {
+                                        requestAddUserToTeam(member.id, team.id);
+                                      } else {
+                                        requestRemoveUserFromTeam(member.id, team.id);
+                                      }
+                                    }}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
+                                      active
+                                        ? team.activeButtonClass
+                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                     }`}
-                                  />
+                                  >
+                                    <span
+                                      className={`w-2 h-2 rounded-full ${
+                                        active ? 'bg-white' : team.dotClass
+                                      }`}
+                                    />
+                                    <span>{team.shortLabel}</span>
+                                  </button>
+                                );
+                              })
+                            ) : userTeams.size === 0 ? (
+                              <span className="text-[11px] text-slate-400 italic">
+                                No Store Teams assigned
+                              </span>
+                            ) : (
+                              STORE_TEAMS.filter((t) => userTeams.has(t.id)).map((team) => (
+                                <span
+                                  key={team.id}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 ${team.chipClass}`}
+                                >
+                                  <span className={`w-2 h-2 rounded-full ${team.dotClass}`} />
                                   <span>{team.shortLabel}</span>
-                                </button>
-                              );
-                            })}
+                                </span>
+                              ))
+                            )}
                           </div>
                         </div>
 
                         {/* If assigned to Scout Fera2 -> assign specific Scout Fare2 (Ashbal, Zahrat, etc.) */}
-                        {userTeams.has('troops') && (
+                        {userTeams.has('troops') && (isAdmin || userFare2List.size > 0) && (
                           <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80">
                             <div className="text-[10px] font-black uppercase tracking-wider text-emerald-800">
-                              Assigned Scout Fare2 (tap to toggle)
+                              {isAdmin
+                                ? 'Assigned Scout Fare2 (tap to toggle)'
+                                : 'Assigned Scout Fare2'}
                             </div>
                             <div className="flex flex-wrap gap-1.5">
-                              {SCOUT_FERA2_LIST.map((f) => {
-                                const active = userFare2List.has(f.id);
-                                return (
-                                  <button
-                                    key={f.id}
-                                    type="button"
-                                    onClick={() => requestToggleUserFare2(member.id, f.id)}
-                                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 transition-colors ${
-                                      active ? f.activeButtonClass : f.chipClass
-                                    }`}
-                                    title={f.label}
-                                  >
+                              {isAdmin
+                                ? SCOUT_FERA2_LIST.map((f) => {
+                                    const active = userFare2List.has(f.id);
+                                    return (
+                                      <button
+                                        key={f.id}
+                                        type="button"
+                                        onClick={() => requestToggleUserFare2(member.id, f.id)}
+                                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 transition-colors ${
+                                          active ? f.activeButtonClass : f.chipClass
+                                        }`}
+                                        title={f.label}
+                                      >
+                                        <span
+                                          className={`w-1.5 h-1.5 rounded-full ${
+                                            active ? 'bg-white' : f.dotClass
+                                          }`}
+                                        />
+                                        <span>{f.label}</span>
+                                      </button>
+                                    );
+                                  })
+                                : SCOUT_FERA2_LIST.filter((f) => userFare2List.has(f.id)).map((f) => (
                                     <span
-                                      className={`w-1.5 h-1.5 rounded-full ${
-                                        active ? 'bg-white' : f.dotClass
-                                      }`}
-                                    />
-                                    <span>{f.label}</span>
-                                  </button>
-                                );
-                              })}
+                                      key={f.id}
+                                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${f.chipClass}`}
+                                    >
+                                      <span className={`w-1.5 h-1.5 rounded-full ${f.dotClass}`} />
+                                      <span>{f.label}</span>
+                                    </span>
+                                  ))}
                             </div>
                           </div>
                         )}
@@ -2445,6 +2744,57 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 </div>
               )}
 
+              {/* Connected Workflow Links (Order / Sourcing Batch / Marketing Offer) */}
+              {(detailItem.linkedBookingId || detailItem.linkedBatchId || detailItem.linkedOfferId) && (
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                  <div className="text-[11px] font-black uppercase tracking-wider text-slate-600">
+                    Connected Record
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {detailItem.linkedBookingId && onOpenBooking && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const bid = detailItem.linkedBookingId!;
+                          setDetailItemId(null);
+                          onOpenBooking(bid);
+                        }}
+                        className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                      >
+                        <CalendarCheck className="w-3.5 h-3.5" />
+                        <span>Open Client Order</span>
+                      </button>
+                    )}
+                    {detailItem.linkedBatchId && onOpenSourcing && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailItemId(null);
+                          onOpenSourcing();
+                        }}
+                        className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                      >
+                        <Factory className="w-3.5 h-3.5" />
+                        <span>Open Sourcing &amp; Purchases Batch</span>
+                      </button>
+                    )}
+                    {detailItem.linkedOfferId && onOpenMarketing && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDetailItemId(null);
+                          onOpenMarketing();
+                        }}
+                        className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                      >
+                        <Megaphone className="w-3.5 h-3.5" />
+                        <span>Open Marketing Offer</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Mobile Calendar Export */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                 <button
@@ -2686,9 +3036,15 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
           MODAL: MEMBER ACCOUNT & CURRENT / PAST EVENTS HISTORY
       ================================================================ */}
       {selectedMember && (() => {
-        const memberTeams = Array.from(
-          effectiveUserTeams.get(selectedMember.id) || new Set<StoreTeamId>()
-        );
+        const memberTeamsSet = effectiveUserTeams.get(selectedMember.id) || new Set<StoreTeamId>();
+        const memberTeams = Array.from(memberTeamsSet);
+        const memberFare2List = Array.from(effectiveUserFare2.get(selectedMember.id) || []);
+        const currentEventsOnly = selectedMemberEvents.current.filter((e) => e.itemType === 'event');
+        const currentTasksOnly = selectedMemberEvents.current.filter((e) => e.itemType === 'task');
+        const activeMemberBookings = getUserBookings(selectedMember).filter((b) => b.status !== 'done');
+        const totalHoldingNow =
+          selectedMemberEvents.current.length + activeMemberBookings.length;
+
         return (
           <div
             onClick={() => setSelectedMemberId(null)}
@@ -2696,7 +3052,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-xl bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+              className="w-full max-w-2xl bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
             >
               {/* Header */}
               <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-3">
@@ -2717,35 +3073,47 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       {selectedMember.name}
                     </h2>
                     <p className="text-xs text-slate-500 truncate">{selectedMember.email}</p>
-                    {(memberTeams.length > 0 || (effectiveUserFare2.get(selectedMember.id)?.size || 0) > 0) && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {memberTeams.map((tid) => {
-                          const tm = getTeamMeta(tid);
-                          if (!tm) return null;
-                          return (
-                            <span
-                              key={tid}
-                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tid]}`}
-                            >
-                              {tm.shortLabel}
-                            </span>
-                          );
-                        })}
-                        {Array.from(effectiveUserFare2.get(selectedMember.id) || []).map((fid) => {
-                          const f2 = getScoutFare2Meta(fid);
-                          if (!f2) return null;
-                          return (
-                            <span
-                              key={fid}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${f2.chipClass}`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${f2.dotClass}`} />
-                              {f2.label}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {isFullAccessAdmin(selectedMember) ? (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-300 text-[11px] font-bold">
+                          Full-Access Admin (All Pages)
+                        </span>
+                      ) : normalizeRole(selectedMember.role) === 'admin' ? (
+                        <span className="px-2 py-0.5 rounded-md bg-orange-50 text-orange-900 border border-orange-300 text-[11px] font-bold">
+                          Admin (Team-Scoped)
+                        </span>
+                      ) : null}
+                      {memberTeams.map((tid) => {
+                        const tm = getTeamMeta(tid);
+                        if (!tm) return null;
+                        return (
+                          <span
+                            key={tid}
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tid]}`}
+                          >
+                            {tm.shortLabel}
+                          </span>
+                        );
+                      })}
+                      {memberFare2List.map((fid) => {
+                        const f2 = getScoutFare2Meta(fid);
+                        if (!f2) return null;
+                        return (
+                          <span
+                            key={fid}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${f2.chipClass}`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${f2.dotClass}`} />
+                            {f2.label}
+                          </span>
+                        );
+                      })}
+                      {memberTeams.length === 0 && !isFullAccessAdmin(selectedMember) && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold">
+                          0 Teams Assigned
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <button
@@ -2759,42 +3127,118 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
               {/* Body */}
               <div className="p-5 overflow-y-auto space-y-5 flex-1">
-                {/* Summary Strip */}
-                <div className="grid grid-cols-3 gap-2.5 text-center">
-                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200">
-                    <div className="text-lg font-black font-mono tabular-nums text-blue-900">
-                      {selectedMemberEvents.current.length}
-                    </div>
-                    <div className="text-[10px] font-bold uppercase text-blue-700">
-                      Current Events
+                {/* Warning Note if non-full-admin account has 0 teams */}
+                {memberTeams.length === 0 && !isFullAccessAdmin(selectedMember) && (
+                  <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="text-xs text-amber-950">
+                      <span className="font-black">Note:</span> This account does not belong to any team yet. Every member should be assigned to at least 1 of the 6 Store Teams below.
                     </div>
                   </div>
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                )}
+
+                {/* Team Membership Quick Switcher (Admin Only to edit; Read-Only for Staff) */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-600">
+                      {isAdmin
+                        ? `Assigned Store Teams (${memberTeams.length} of 6 — tap to add/remove)`
+                        : `Assigned Store Teams (${memberTeams.length} of 6)`}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {isAdmin ? (
+                      STORE_TEAMS.map((team) => {
+                        const active = memberTeamsSet.has(team.id);
+                        return (
+                          <button
+                            key={team.id}
+                            type="button"
+                            onClick={() =>
+                              active
+                                ? requestRemoveUserFromTeam(selectedMember.id, team.id)
+                                : requestAddUserToTeam(selectedMember.id, team.id)
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 transition-colors ${
+                              active
+                                ? team.activeButtonClass
+                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                active ? 'bg-white' : team.dotClass
+                              }`}
+                            />
+                            <span>{team.shortLabel}</span>
+                          </button>
+                        );
+                      })
+                    ) : memberTeams.length === 0 ? (
+                      <span className="text-xs text-slate-500 italic">No Store Teams assigned</span>
+                    ) : (
+                      STORE_TEAMS.filter((t) => memberTeamsSet.has(t.id)).map((team) => (
+                        <span
+                          key={team.id}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 ${team.chipClass}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${team.dotClass}`} />
+                          <span>{team.shortLabel}</span>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Summary Strip */}
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200">
+                    <div className="text-lg font-black font-mono tabular-nums text-indigo-900">
+                      {currentEventsOnly.length}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase text-indigo-700">
+                      Active Events
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200">
+                    <div className="text-lg font-black font-mono tabular-nums text-blue-900">
+                      {currentTasksOnly.length}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase text-blue-700">
+                      Active Tasks
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200">
+                    <div className="text-lg font-black font-mono tabular-nums text-amber-900">
+                      {activeMemberBookings.length}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase text-amber-700">
+                      Active Orders
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200">
                     <div className="text-lg font-black font-mono tabular-nums text-emerald-900">
                       {selectedMemberEvents.past.length}
                     </div>
                     <div className="text-[10px] font-bold uppercase text-emerald-700">
-                      Past / Completed
-                    </div>
-                  </div>
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                    <div className="text-lg font-black font-mono tabular-nums text-slate-900">
-                      {selectedMemberEvents.current.length + selectedMemberEvents.past.length}
-                    </div>
-                    <div className="text-[10px] font-bold uppercase text-slate-600">
-                      Total Handled
+                      Completed
                     </div>
                   </div>
                 </div>
 
-                {/* Section 1: Currently Handling */}
+                {/* Section 1: Currently Holding (Events, Tasks, Connected Bookings) */}
                 <div className="space-y-2.5">
                   <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
-                    Currently Handling ({selectedMemberEvents.current.length})
+                    Currently Holding ({totalHoldingNow})
                   </h3>
-                  {selectedMemberEvents.current.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500 text-center">
-                      No active or upcoming events assigned right now.
+                  {totalHoldingNow === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-300 text-xs text-slate-600 text-center space-y-1">
+                      <div className="font-bold text-slate-800">
+                        Not holding any active Event, Task, or Order right now.
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Use the button below to assign an Event or Task to {selectedMember.name}.
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -2802,45 +3246,131 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         const col = getItemColumn(ev);
                         const tm = getTeamMeta(ev.team);
                         return (
-                          <button
+                          <div
                             key={ev.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedMemberId(null);
-                              setDetailItemId(ev.id);
-                            }}
-                            className="w-full text-left p-3.5 rounded-xl bg-white border border-slate-200 hover:border-blue-300 transition-colors space-y-1.5"
+                            className="p-3.5 rounded-xl bg-white border border-slate-200 hover:border-blue-300 transition-colors space-y-2"
                           >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                {tm && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMemberId(null);
+                                setDetailItemId(ev.id);
+                              }}
+                              className="w-full text-left space-y-1.5"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {tm && (
+                                    <span
+                                      className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tm.id]}`}
+                                    >
+                                      {tm.shortLabel}
+                                    </span>
+                                  )}
                                   <span
-                                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tm.id]}`}
+                                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
+                                      ev.itemType === 'event'
+                                        ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                                        : 'bg-sky-50 text-sky-800 border-sky-200'
+                                    }`}
                                   >
-                                    {tm.shortLabel}
+                                    {ev.itemType === 'event' ? 'Event' : 'Task'}
                                   </span>
-                                )}
-                                <span
-                                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
-                                    col === 'in_progress'
-                                      ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                                      : 'bg-slate-100 text-slate-700 border border-slate-200'
-                                  }`}
-                                >
-                                  {col === 'in_progress' ? 'In Progress' : 'Upcoming'}
+                                  <span
+                                    className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                                      col === 'in_progress'
+                                        ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                        : 'bg-slate-100 text-slate-700 border border-slate-200'
+                                    }`}
+                                  >
+                                    {col === 'in_progress' ? 'In Progress' : 'Upcoming'}
+                                  </span>
+                                </div>
+                                <span className="text-xs font-mono tabular-nums text-slate-500">
+                                  {formatShortDate(ev.startDate)}
                                 </span>
                               </div>
-                              <span className="text-xs font-mono tabular-nums text-slate-500">
-                                {formatShortDate(ev.startDate)}
-                              </span>
-                            </div>
-                            <div className="text-sm font-bold text-slate-900">{ev.title}</div>
-                            {ev.notes && (
-                              <div className="text-xs text-slate-500 line-clamp-2">{ev.notes}</div>
+                              <div className="text-sm font-bold text-slate-900">{ev.title}</div>
+                              {ev.notes && (
+                                <div className="text-xs text-slate-500 line-clamp-2">{ev.notes}</div>
+                              )}
+                            </button>
+
+                            {(ev.linkedBookingId || ev.linkedBatchId || ev.linkedOfferId) && (
+                              <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-100">
+                                {ev.linkedBookingId && onOpenBooking && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMemberId(null);
+                                      onOpenBooking(ev.linkedBookingId!);
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-900 text-[11px] font-bold inline-flex items-center gap-1"
+                                  >
+                                    <CalendarCheck className="w-3 h-3" />
+                                    <span>Open Linked Order</span>
+                                  </button>
+                                )}
+                                {ev.linkedBatchId && onOpenSourcing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMemberId(null);
+                                      onOpenSourcing();
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-950 text-[11px] font-bold inline-flex items-center gap-1"
+                                  >
+                                    <Factory className="w-3 h-3" />
+                                    <span>Open Sourcing Batch</span>
+                                  </button>
+                                )}
+                                {ev.linkedOfferId && onOpenMarketing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMemberId(null);
+                                      onOpenMarketing();
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-900 text-[11px] font-bold inline-flex items-center gap-1"
+                                  >
+                                    <Megaphone className="w-3 h-3" />
+                                    <span>Open Offer</span>
+                                  </button>
+                                )}
+                              </div>
                             )}
-                          </button>
+                          </div>
                         );
                       })}
+
+                      {activeMemberBookings.map((b) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => {
+                            if (onOpenBooking) {
+                              setSelectedMemberId(null);
+                              onOpenBooking(b.id);
+                            }
+                          }}
+                          className="w-full text-left p-3.5 rounded-xl bg-amber-50/40 border border-amber-200 hover:border-amber-400 transition-colors space-y-1"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 border border-amber-300 text-amber-950 text-[11px] font-bold">
+                              Assigned Client Order
+                            </span>
+                            <span className="text-[11px] font-mono font-bold text-slate-600 uppercase">
+                              {b.status}
+                            </span>
+                          </div>
+                          <div className="text-sm font-bold text-slate-900">
+                            Order #{b.bookingNumber} — {b.clientName}
+                          </div>
+                          <div className="text-xs text-slate-600 font-mono tabular-nums">
+                            {b.items.reduce((s, it) => s + it.quantity, 0)} units · {b.total.toFixed(2)} EGP
+                          </div>
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -2877,7 +3407,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                     {tm.shortLabel}
                                   </span>
                                 )}
-                                <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" />
                                   {getItemColumn(ev) === 'done' ? 'Done' : 'Past Event'}
                                 </span>
                               </div>

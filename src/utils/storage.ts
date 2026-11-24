@@ -456,6 +456,12 @@ import type {
   ProductStageVendor,
   VendorPriceEntry,
   ProductionBatch,
+  MarketingOffer,
+  BookingStockCheckStatus,
+  ProductBudgetProfile,
+  BudgetExpenseEntry,
+  BudgetSettings,
+  ScoutSeason,
 } from '../types/inventory';
 
 const SOURCING_KEYS = {
@@ -466,6 +472,13 @@ const SOURCING_KEYS = {
   BATCHES: 'sps_sourcing_batches_v1',
   SEEDED: 'sps_sourcing_seeded_v1',
 };
+
+const MARKETING_OFFERS_KEY = 'sps_marketing_offers_v1';
+const BOOKING_STOCK_CHECK_MAP_KEY = 'sps_booking_stock_check_map_v1';
+const BUDGET_PROFILES_KEY = 'sps_budget_profiles_v1';
+const BUDGET_EXPENSES_KEY = 'sps_budget_expenses_v1';
+const BUDGET_SETTINGS_KEY = 'sps_budget_settings_v1';
+const SCOUT_SEASONS_KEY = 'sps_scout_seasons_v1';
 
 function loadJsonArray<T>(key: string): T[] {
   try {
@@ -509,6 +522,87 @@ export const getStoredProductionBatches = (): ProductionBatch[] =>
 export const saveStoredProductionBatches = (items: ProductionBatch[]): void =>
   saveJsonArray(SOURCING_KEYS.BATCHES, items);
 
+export const getStoredMarketingOffers = (): MarketingOffer[] =>
+  loadJsonArray<MarketingOffer>(MARKETING_OFFERS_KEY);
+export const saveStoredMarketingOffers = (items: MarketingOffer[]): void =>
+  saveJsonArray(MARKETING_OFFERS_KEY, items);
+
+export function getStoredBudgetProfiles(): Record<string, ProductBudgetProfile> {
+  try {
+    const raw = localStorage.getItem(BUDGET_PROFILES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredBudgetProfiles(map: Record<string, ProductBudgetProfile>): void {
+  try {
+    localStorage.setItem(BUDGET_PROFILES_KEY, JSON.stringify(map));
+  } catch (err) {
+    console.error('Failed saving budget profiles:', err);
+  }
+}
+
+export const getStoredBudgetExpenses = (): BudgetExpenseEntry[] =>
+  loadJsonArray<BudgetExpenseEntry>(BUDGET_EXPENSES_KEY);
+export const saveStoredBudgetExpenses = (items: BudgetExpenseEntry[]): void =>
+  saveJsonArray(BUDGET_EXPENSES_KEY, items);
+
+export function getStoredBudgetSettings(): BudgetSettings {
+  try {
+    const raw = localStorage.getItem(BUDGET_SETTINGS_KEY);
+    if (!raw) {
+      return { id: 'default', reserveBuffer: 0, updatedAt: new Date().toISOString() };
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object'
+      ? {
+          id: 'default',
+          cashOnHand: typeof parsed.cashOnHand === 'number' ? parsed.cashOnHand : undefined,
+          reserveBuffer: Number(parsed.reserveBuffer || 0),
+          updatedAt: String(parsed.updatedAt || new Date().toISOString()),
+        }
+      : { id: 'default', reserveBuffer: 0, updatedAt: new Date().toISOString() };
+  } catch {
+    return { id: 'default', reserveBuffer: 0, updatedAt: new Date().toISOString() };
+  }
+}
+
+export function saveStoredBudgetSettings(settings: BudgetSettings): void {
+  try {
+    localStorage.setItem(BUDGET_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (err) {
+    console.error('Failed saving budget settings:', err);
+  }
+}
+
+export const getStoredScoutSeasons = (): ScoutSeason[] =>
+  loadJsonArray<ScoutSeason>(SCOUT_SEASONS_KEY);
+export const saveStoredScoutSeasons = (items: ScoutSeason[]): void =>
+  saveJsonArray(SCOUT_SEASONS_KEY, items);
+
+export function getStoredBookingStockCheckMap(): Record<string, BookingStockCheckStatus> {
+  try {
+    const raw = localStorage.getItem(BOOKING_STOCK_CHECK_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveStoredBookingStockCheckMap(
+  map: Record<string, BookingStockCheckStatus>
+): void {
+  try {
+    localStorage.setItem(BOOKING_STOCK_CHECK_MAP_KEY, JSON.stringify(map));
+  } catch {}
+}
+
 export const isSourcingSeeded = (): boolean => {
   try {
     return localStorage.getItem(SOURCING_KEYS.SEEDED) === 'true';
@@ -522,3 +616,20 @@ export const markSourcingSeeded = (): void => {
     localStorage.setItem(SOURCING_KEYS.SEEDED, 'true');
   } catch {}
 };
+
+const FULL_ADMIN_IDS_KEY = 'sps_full_access_admins_v1';
+
+export function getStoredFullAdminIds(): string[] {
+  return loadJsonArray<string>(FULL_ADMIN_IDS_KEY);
+}
+
+export function setUserFullAdminFlag(userId: string, isFullAdmin: boolean): void {
+  const existing = new Set(getStoredFullAdminIds());
+  if (isFullAdmin) {
+    existing.add(userId);
+  } else {
+    existing.delete(userId);
+  }
+  saveJsonArray(FULL_ADMIN_IDS_KEY, Array.from(existing));
+}
+

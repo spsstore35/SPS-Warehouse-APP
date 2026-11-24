@@ -1,4 +1,6 @@
 import { supabase } from './supabaseClient';
+import { getStoredFullAdminIds, setUserFullAdminFlag } from '../utils/storage';
+import { normalizeRole } from '../utils/security';
 import {
   Product,
   ProductVariant,
@@ -24,6 +26,13 @@ import {
   ProductionBatch,
   OperationStageKey,
   VendorBehaviorTag,
+  BookingStockCheckStatus,
+  MarketingOffer,
+  ProductBudgetProfile,
+  BudgetExpenseEntry,
+  BudgetExpenseCategory,
+  BudgetSettings,
+  ScoutSeason,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -730,18 +739,12 @@ export async function fetchUsersFromDb(): Promise<User[]> {
   if (!data || data.length === 0) return [];
 
   return data.map((u: any) => {
-    const rawRole = String(u.role || u.requested_role || '').trim().toLowerCase();
-    const normalizedRole: Role = rawRole.includes('admin')
-      ? 'admin'
-      : rawRole.includes('leader')
-      ? 'leader'
-      : 'worker';
-    const rawReqRole = String(u.requested_role || u.role || '').trim().toLowerCase();
-    const normalizedReqRole: Role = rawReqRole.includes('admin')
-      ? 'admin'
-      : rawReqRole.includes('leader')
-      ? 'leader'
-      : 'worker';
+    const parsedRole = normalizeRole(u.role || u.requested_role);
+    const normalizedRole: Role =
+      parsedRole === 'admin' && getStoredFullAdminIds().includes(u.id)
+        ? 'full_admin'
+        : parsedRole;
+    const normalizedReqRole: Role = normalizeRole(u.requested_role || u.role);
 
     const parseStringArray = (val: any): string[] | undefined => {
       if (Array.isArray(val)) return val.map(String).filter(Boolean);
@@ -792,7 +795,9 @@ export async function registerUserInDb(data: {
     status: 'pending', // Awaiting Admin Approval
     employeeId: `WH-REG-${Math.floor(100 + Math.random() * 900)}`,
     avatarColor:
-      data.requestedRole === 'admin'
+      data.requestedRole === 'full_admin'
+        ? '#b45309'
+        : data.requestedRole === 'admin'
         ? '#d97706'
         : data.requestedRole === 'leader'
         ? '#059669'
@@ -803,7 +808,7 @@ export async function registerUserInDb(data: {
   const { hashPassword } = await import('../utils/security');
   const securePasswordHash = await hashPassword(newUser.password || 'password123');
 
-  const { error } = await supabase.from('profiles').insert({
+  let { error } = await supabase.from('profiles').insert({
     id: newUser.id,
     email: newUser.email,
     password_hash: securePasswordHash,
@@ -815,6 +820,23 @@ export async function registerUserInDb(data: {
     avatar_color: newUser.avatarColor,
     created_at: newUser.createdAt,
   });
+
+  if (error && newUser.role === 'full_admin' && error.message?.includes('user_role')) {
+    setUserFullAdminFlag(newUser.id, true);
+    const retry = await supabase.from('profiles').insert({
+      id: newUser.id,
+      email: newUser.email,
+      password_hash: securePasswordHash,
+      full_name: newUser.name,
+      role: 'admin',
+      status: newUser.status,
+      requested_role: 'admin',
+      employee_id: newUser.employeeId,
+      avatar_color: newUser.avatarColor,
+      created_at: newUser.createdAt,
+    });
+    error = retry.error;
+  }
 
   if (error) {
     if (error.message?.includes('enum user_role') || error.message?.includes('"leader"')) {
@@ -831,7 +853,7 @@ export async function registerUserInDb(data: {
       timestamp: new Date().toISOString(),
       action: 'account_updated',
       actorName: newUser.name,
-      actorRole: newUser.requestedRole || 'worker',
+      actorRole: newUser.requestedRole === 'full_admin' ? 'admin' : newUser.requestedRole || 'worker',
       summary: `New account registration: "${newUser.name}" (${newUser.email}).`,
       details: `New staff member "${newUser.name}" (${newUser.email}) registered and requires administrator approval.`,
       reason: 'New Account Registration',
@@ -882,17 +904,37 @@ export async function updateUserRoleInDb(
   newRole: Role,
   _adminUser?: User
 ): Promise<void> {
-  const updatePayload: Record<string, any> = {
-    role: newRole,
-    requested_role: newRole,
-    avatar_color:
-      newRole === 'admin' ? '#d97706' : newRole === 'leader' ? '#059669' : '#0284c7',
-  };
+  setUserFullAdminFlag(userId, newRole === 'full_admin');
 
-  const { error } = await supabase
+  const avatarColor =
+    newRole === 'full_admin'
+      ? '#b45309'
+      : newRole === 'admin'
+      ? '#d97706'
+      : newRole === 'leader'
+      ? '#059669'
+      : '#0284c7';
+
+  let { error } = await supabase
     .from('profiles')
-    .update(updatePayload)
+    .update({
+      role: newRole,
+      requested_role: newRole,
+      avatar_color: avatarColor,
+    })
     .eq('id', userId);
+
+  if (error && newRole === 'full_admin' && error.message?.includes('user_role')) {
+    const retry = await supabase
+      .from('profiles')
+      .update({
+        role: 'admin',
+        requested_role: 'admin',
+        avatar_color: avatarColor,
+      })
+      .eq('id', userId);
+    error = retry.error;
+  }
 
   if (error) {
     if (error.message?.includes('enum user_role') || error.message?.includes('"leader"')) {
@@ -1104,7 +1146,7 @@ export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
       timestamp: log.timestamp,
       action: log.action,
       actor_name: log.actorName,
-      actor_role: log.actorRole,
+      actor_role: log.actorRole === 'full_admin' ? 'admin' : log.actorRole,
       summary: log.summary,
       details: log.details || null,
       product_id: log.productId || null,
@@ -1249,6 +1291,7 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
         paymentVerificationRequestedAt: b.payment_verification_requested_at || undefined,
         paymentVerificationNote: b.payment_verification_note || undefined,
         status: (b.status || 'pending') as BookingStatus,
+        stockCheckStatus: (b.stock_check_status as BookingStockCheckStatus) || undefined,
         inventoryDeducted: Boolean(b.inventory_deducted),
         createdById: b.created_by_id,
         createdByName: b.created_by_name,
@@ -1294,6 +1337,7 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       payment_verification_requested_at: booking.paymentVerificationRequestedAt || null,
       payment_verification_note: booking.paymentVerificationNote || null,
       status: booking.status,
+      stock_check_status: booking.stockCheckStatus || null,
       inventory_deducted: booking.inventoryDeducted,
       created_by_id: booking.createdById,
       created_by_name: booking.createdByName,
@@ -1309,6 +1353,7 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
         bookingErr.details?.includes('troop_group') ||
         bookingErr.message?.includes('assigned_fare2') ||
         bookingErr.message?.includes('assigned_to') ||
+        bookingErr.message?.includes('stock_check_status') ||
         bookingErr.message?.includes('payment_verification') ||
         bookingErr.details?.includes('payment_verification') ||
         bookingErr.code === 'PGRST204' ||
@@ -1317,6 +1362,7 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
       if (bookingErr.message?.includes('troop_group') || bookingErr.details?.includes('troop_group')) {
         delete bookingPayload.troop_group;
       }
+      delete bookingPayload.stock_check_status;
       delete bookingPayload.assigned_fare2;
       delete bookingPayload.assigned_to_id;
       delete bookingPayload.assigned_to_name;
@@ -1386,6 +1432,7 @@ export async function updateBookingInDb(
     };
 
     if (updates.status !== undefined) payload.status = updates.status;
+    if (updates.stockCheckStatus !== undefined) payload.stock_check_status = updates.stockCheckStatus || null;
     if (updates.clientName !== undefined) payload.client_name = updates.clientName;
     if (updates.clientPhone !== undefined) payload.client_phone = updates.clientPhone;
     if (updates.troopGroup !== undefined) payload.troop_group = updates.troopGroup;
@@ -1428,6 +1475,7 @@ export async function updateBookingInDb(
         error.details?.includes('troop_group') ||
         error.message?.includes('assigned_fare2') ||
         error.message?.includes('assigned_to') ||
+        error.message?.includes('stock_check_status') ||
         error.message?.includes('payment_verification') ||
         error.details?.includes('payment_verification') ||
         error.code === 'PGRST204' ||
@@ -1436,6 +1484,7 @@ export async function updateBookingInDb(
       if (error.message?.includes('troop_group') || error.details?.includes('troop_group')) {
         delete payload.troop_group;
       }
+      delete payload.stock_check_status;
       delete payload.assigned_fare2;
       delete payload.assigned_to_id;
       delete payload.assigned_to_name;
@@ -1606,6 +1655,10 @@ export async function fetchCalendarEventsFromDb(): Promise<CalendarItem[] | null
       troopGroup: row.troop_group || undefined,
       location: row.location || undefined,
       notes: row.notes || undefined,
+      linkedBookingId: row.linked_booking_id || undefined,
+      linkedBatchId: row.linked_batch_id || undefined,
+      linkedOfferId: row.linked_offer_id || undefined,
+      workflowStage: row.workflow_stage || undefined,
       createdById: String(row.created_by_id || ''),
       createdByName: String(row.created_by_name || 'Staff'),
       createdAt: String(row.created_at || new Date().toISOString()),
@@ -1646,10 +1699,31 @@ export async function upsertCalendarEventToDb(
       assigned_to_name: item.assignedToName || null,
     };
 
-    let { error } = await supabase.from('calendar_events').upsert({
+    const fullPayload = {
       ...withTeamPayload,
       board_status: item.boardStatus || (item.completed ? 'done' : 'upcoming'),
-    });
+      linked_booking_id: item.linkedBookingId || null,
+      linked_batch_id: item.linkedBatchId || null,
+      linked_offer_id: item.linkedOfferId || null,
+      workflow_stage: item.workflowStage || null,
+    };
+
+    let { error } = await supabase.from('calendar_events').upsert(fullPayload);
+
+    // Fallback cleanly if linked_* columns aren't added yet
+    if (
+      error &&
+      (error.message?.includes('linked_') ||
+        error.message?.includes('workflow_stage') ||
+        (error as any).code === 'PGRST204' ||
+        (error as any).code === '42703')
+    ) {
+      const retryBoard = await supabase.from('calendar_events').upsert({
+        ...withTeamPayload,
+        board_status: item.boardStatus || (item.completed ? 'done' : 'upcoming'),
+      });
+      error = retryBoard.error;
+    }
 
     // Fallback cleanly if board_status column isn't added yet
     if (
@@ -1828,6 +1902,9 @@ export async function fetchSourcingDataFromDb(): Promise<{
       status: r.status === 'completed' ? 'completed' : 'in_progress',
       stageAssignments:
         r.stage_assignments && typeof r.stage_assignments === 'object' ? r.stage_assignments : {},
+      linkedBookingId: r.linked_booking_id || undefined,
+      linkedBookingNumber: r.linked_booking_number || undefined,
+      requestedByTeam: r.requested_by_team || undefined,
       createdAt: String(r.created_at || new Date().toISOString()),
       completedAt: r.completed_at || undefined,
     }));
@@ -1917,7 +1994,7 @@ export async function insertVendorPriceEntryToDb(entry: VendorPriceEntry): Promi
 
 export async function upsertProductionBatchToDb(batch: ProductionBatch): Promise<void> {
   try {
-    await supabase.from('production_batches').upsert({
+    const corePayload = {
       id: batch.id,
       batch_code: batch.batchCode,
       product_id: batch.productId,
@@ -1929,7 +2006,22 @@ export async function upsertProductionBatchToDb(batch: ProductionBatch): Promise
       stage_assignments: batch.stageAssignments || {},
       created_at: batch.createdAt,
       completed_at: batch.completedAt || null,
+    };
+    const { error } = await supabase.from('production_batches').upsert({
+      ...corePayload,
+      linked_booking_id: batch.linkedBookingId || null,
+      linked_booking_number: batch.linkedBookingNumber || null,
+      requested_by_team: batch.requestedByTeam || null,
     });
+    if (
+      error &&
+      (error.message?.includes('linked_booking') ||
+        error.message?.includes('requested_by_team') ||
+        (error as any).code === 'PGRST204' ||
+        (error as any).code === '42703')
+    ) {
+      await supabase.from('production_batches').upsert(corePayload);
+    }
   } catch {}
 }
 
@@ -1939,6 +2031,238 @@ export async function deleteProductionBatchFromDb(batchId: string): Promise<void
   } catch {}
 }
 
+/**
+ * MARKETING OFFERS & PROMOTIONS
+ */
+export async function fetchMarketingOffersFromDb(): Promise<MarketingOffer[] | null> {
+  try {
+    const { data, error } = await fetchAllRows('marketing_offers', {
+      orderColumn: 'created_at',
+      ascending: false,
+    });
+    if (error) return null;
+    return (data || []).map((r: any) => ({
+      id: String(r.id),
+      productId: String(r.product_id),
+      title: String(r.title || ''),
+      offerType:
+        r.offer_type === 'fixed_price' || r.offer_type === 'bundle_note'
+          ? r.offer_type
+          : 'percentage',
+      discountPercent: Number(r.discount_percent || 0),
+      offerPrice: r.offer_price !== null && r.offer_price !== undefined ? Number(r.offer_price) : undefined,
+      badgeText: String(r.badge_text || 'Special Offer'),
+      startDate: String(r.start_date || '').slice(0, 10),
+      endDate: String(r.end_date || '').slice(0, 10),
+      status:
+        r.status === 'scheduled' || r.status === 'paused' || r.status === 'ended'
+          ? r.status
+          : 'active',
+      notes: r.notes || undefined,
+      createdById: r.created_by_id || undefined,
+      createdByName: r.created_by_name || undefined,
+      createdAt: String(r.created_at || new Date().toISOString()),
+      updatedAt: String(r.updated_at || new Date().toISOString()),
+    }));
+  } catch {
+    return null;
+  }
+}
 
+export async function upsertMarketingOfferToDb(offer: MarketingOffer): Promise<void> {
+  try {
+    await supabase.from('marketing_offers').upsert({
+      id: offer.id,
+      product_id: offer.productId,
+      title: offer.title,
+      offer_type: offer.offerType,
+      discount_percent: offer.discountPercent,
+      offer_price: offer.offerPrice ?? null,
+      badge_text: offer.badgeText || 'Special Offer',
+      start_date: offer.startDate,
+      end_date: offer.endDate,
+      status: offer.status,
+      notes: offer.notes || null,
+      created_by_id: offer.createdById || null,
+      created_by_name: offer.createdByName || null,
+      created_at: offer.createdAt,
+      updated_at: offer.updatedAt,
+    });
+  } catch {}
+}
 
+export async function deleteMarketingOfferFromDb(offerId: string): Promise<void> {
+  try {
+    await supabase.from('marketing_offers').delete().eq('id', offerId);
+  } catch {}
+}
+
+/**
+ * BUDGETING, UNIT ECONOMICS & LIQUIDITY
+ */
+export async function fetchBudgetingDataFromDb(): Promise<{
+  profiles: Record<string, ProductBudgetProfile>;
+  expenses: BudgetExpenseEntry[];
+  settings: BudgetSettings | null;
+} | null> {
+  try {
+    const [profRes, expRes, setRes] = await Promise.all([
+      fetchAllRows('product_budget_profiles', { orderColumn: 'updated_at', ascending: false }),
+      fetchAllRows('budget_expenses', { orderColumn: 'expense_date', ascending: false }),
+      supabase.from('budget_settings').select('*').eq('id', 'default').maybeSingle(),
+    ]);
+
+    if (profRes.error || expRes.error || setRes.error) {
+      return null;
+    }
+
+    const profiles: Record<string, ProductBudgetProfile> = {};
+    (profRes.data || []).forEach((r: any) => {
+      if (!r.product_id) return;
+      profiles[String(r.product_id)] = {
+        productId: String(r.product_id),
+        manufacturingCost: Number(r.manufacturing_cost || 0),
+        extraPrepCost: Number(r.extra_prep_cost || 0),
+        targetMarginPercent:
+          r.target_margin_percent !== null && r.target_margin_percent !== undefined
+            ? Number(r.target_margin_percent)
+            : undefined,
+        hardshipDiscountType:
+          r.hardship_discount_type === 'fixed_amount' || r.hardship_discount_type === 'percentage'
+            ? r.hardship_discount_type
+            : undefined,
+        hardshipDiscountValue:
+          r.hardship_discount_value !== null && r.hardship_discount_value !== undefined
+            ? Number(r.hardship_discount_value)
+            : undefined,
+        notes: r.notes || undefined,
+        updatedAt: String(r.updated_at || new Date().toISOString()),
+      };
+    });
+
+    const expenses: BudgetExpenseEntry[] = (expRes.data || []).map((r: any) => ({
+      id: String(r.id),
+      title: String(r.title || ''),
+      category: (r.category || 'other') as BudgetExpenseCategory,
+      amount: Number(r.amount || 0),
+      expenseDate: String(r.expense_date || '').slice(0, 10),
+      linkedProductId: r.linked_product_id || undefined,
+      notes: r.notes || undefined,
+      createdByName: r.created_by_name || undefined,
+      createdAt: String(r.created_at || new Date().toISOString()),
+    }));
+
+    const settings: BudgetSettings | null = setRes.data
+      ? {
+          id: 'default',
+          cashOnHand:
+            setRes.data.cash_on_hand !== null && setRes.data.cash_on_hand !== undefined
+              ? Number(setRes.data.cash_on_hand)
+              : undefined,
+          reserveBuffer: Number(setRes.data.reserve_buffer || 0),
+          updatedAt: String(setRes.data.updated_at || new Date().toISOString()),
+        }
+      : null;
+
+    return { profiles, expenses, settings };
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertProductBudgetProfileToDb(profile: ProductBudgetProfile): Promise<void> {
+  try {
+    await supabase.from('product_budget_profiles').upsert({
+      product_id: profile.productId,
+      manufacturing_cost: profile.manufacturingCost,
+      extra_prep_cost: profile.extraPrepCost,
+      target_margin_percent: profile.targetMarginPercent ?? null,
+      hardship_discount_type: profile.hardshipDiscountType ?? null,
+      hardship_discount_value: profile.hardshipDiscountValue ?? null,
+      notes: profile.notes || null,
+      updated_at: profile.updatedAt,
+    });
+  } catch {}
+}
+
+export async function upsertBudgetExpenseToDb(expense: BudgetExpenseEntry): Promise<void> {
+  try {
+    await supabase.from('budget_expenses').upsert({
+      id: expense.id,
+      title: expense.title,
+      category: expense.category,
+      amount: expense.amount,
+      expense_date: expense.expenseDate,
+      linked_product_id: expense.linkedProductId || null,
+      notes: expense.notes || null,
+      created_by_name: expense.createdByName || null,
+      created_at: expense.createdAt,
+    });
+  } catch {}
+}
+
+export async function deleteBudgetExpenseFromDb(expenseId: string): Promise<void> {
+  try {
+    await supabase.from('budget_expenses').delete().eq('id', expenseId);
+  } catch {}
+}
+
+export async function upsertBudgetSettingsToDb(settings: BudgetSettings): Promise<void> {
+  try {
+    await supabase.from('budget_settings').upsert({
+      id: settings.id || 'default',
+      cash_on_hand: settings.cashOnHand ?? null,
+      reserve_buffer: settings.reserveBuffer || 0,
+      updated_at: settings.updatedAt,
+    });
+  } catch {}
+}
+
+/**
+ * CALENDAR SCOUT SEASONS / TIME FRAMES
+ */
+export async function fetchScoutSeasonsFromDb(): Promise<ScoutSeason[] | null> {
+  try {
+    const { data, error } = await fetchAllRows('scout_seasons', {
+      orderColumn: 'start_date',
+      ascending: false,
+    });
+    if (error || !data) return null;
+    return data.map((r: any) => ({
+      id: String(r.id),
+      name: String(r.name || ''),
+      startDate: String(r.start_date || '').slice(0, 10),
+      endDate: String(r.end_date || '').slice(0, 10),
+      colorHex: r.color_hex || undefined,
+      notes: r.notes || undefined,
+      createdByName: r.created_by_name || undefined,
+      createdAt: String(r.created_at || new Date().toISOString()),
+      updatedAt: String(r.updated_at || new Date().toISOString()),
+    }));
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertScoutSeasonToDb(season: ScoutSeason): Promise<void> {
+  try {
+    await supabase.from('scout_seasons').upsert({
+      id: season.id,
+      name: season.name,
+      start_date: season.startDate,
+      end_date: season.endDate,
+      color_hex: season.colorHex || null,
+      notes: season.notes || null,
+      created_by_name: season.createdByName || null,
+      created_at: season.createdAt,
+      updated_at: season.updatedAt,
+    });
+  } catch {}
+}
+
+export async function deleteScoutSeasonFromDb(seasonId: string): Promise<void> {
+  try {
+    await supabase.from('scout_seasons').delete().eq('id', seasonId);
+  } catch {}
+}
 

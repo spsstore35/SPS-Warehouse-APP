@@ -11,7 +11,7 @@ import {
 } from '../types/inventory';
 import { compressImage } from '../utils/imageCompressor';
 import { ImageCropModal } from './ImageCropModal';
-import { isUserAdmin } from '../utils/security';
+import { isUserAdmin, isUserMarketingMember } from '../utils/security';
 import {
   X,
   Camera,
@@ -40,6 +40,7 @@ interface AddProductModalProps {
   currentUser: User;
   categories: Category[];
   availableFolders?: string[];
+  editScope?: 'full' | 'marketing';
   onClose: () => void;
   onSaveProduct: (product: Product) => void;
   productToEdit?: Product;
@@ -78,6 +79,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     'Sharat hewayat / Zahrat',
     'Sharat hewayat / Morshedat',
   ],
+  editScope,
   onClose,
   onSaveProduct,
   productToEdit,
@@ -85,6 +87,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   onOpenDirectAdjust,
 }) => {
   const isEditing = Boolean(productToEdit);
+  const isAdmin = isUserAdmin(currentUser);
+  const isMarketingEditOnly = Boolean(
+    isEditing &&
+      (editScope === 'marketing' || (!isAdmin && isUserMarketingMember(currentUser)))
+  );
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -524,50 +531,70 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       effectiveSizes.forEach((size) => {
         effectiveColors.forEach((col) => {
           const key = `${size}_${col.name}`;
-          const qty = variantQuantities[key] !== undefined ? variantQuantities[key] : 0;
+          const existingMatch = productToEdit?.variants.find(
+            (v) => v.size === size && v.colorName.toLowerCase() === col.name.toLowerCase()
+          );
+          const qty = isMarketingEditOnly
+            ? (existingMatch?.quantity ?? 0)
+            : variantQuantities[key] !== undefined
+            ? variantQuantities[key]
+            : 0;
           const threshVal = variantThresholds[key];
           const colorSlug = col.name !== 'Standard' ? col.name.substring(0, 3).toUpperCase() : 'STD';
           const sizeSlug = size !== 'One Size' ? size : 'OS';
 
           variants.push({
-            id: `v_${finalSku}_${colorSlug}_${sizeSlug}`.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+            id:
+              existingMatch?.id ||
+              `v_${finalSku}_${colorSlug}_${sizeSlug}`.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
             size,
             colorName: col.name,
             colorHex: col.hex,
             quantity: Math.max(0, qty),
-            sku: `${finalSku}-${colorSlug}-${sizeSlug}`,
-            minThreshold:
-              threshVal !== '' && threshVal !== undefined && !isNaN(Number(threshVal))
-                ? Number(threshVal)
-                : undefined,
+            sku: existingMatch?.sku || `${finalSku}-${colorSlug}-${sizeSlug}`,
+            minThreshold: existingMatch?.minThreshold !== undefined && isMarketingEditOnly
+              ? existingMatch.minThreshold
+              : threshVal !== '' && threshVal !== undefined && !isNaN(Number(threshVal))
+              ? Number(threshVal)
+              : undefined,
           });
         });
       });
     }
 
-    const isAdmin = isUserAdmin(currentUser);
-    const finalProduct: Product = {
-      id: productToEdit ? productToEdit.id : `prod_${Date.now()}`,
-      sku: finalSku,
-      name: name.trim(),
-      categoryId: categoryId || undefined,
-      category: finalCategory,
-      folder: (finalCategory.toLowerCase() === 'others' || categoryId?.toLowerCase() === 'others') ? (folder.trim() || undefined) : undefined,
-      targetAudience: finalAudience,
-      description: description.trim(),
-      fabricDetails: fabricDetails.trim(),
-      price: price === '' ? undefined : Number(price),
-      image: images[0] || '',
-      images: images,
-      variants,
-      totalQuantity: variants.reduce((sum, v) => sum + v.quantity, 0),
-      status: productToEdit ? (productToEdit.status || 'active') : (isAdmin ? 'active' : 'pending'),
-      createdByRole: productToEdit ? productToEdit.createdByRole : (isAdmin ? 'admin' : 'worker'),
-      createdByName: productToEdit ? productToEdit.createdByName : (currentUser.name || 'Staff'),
-      createdById: productToEdit ? productToEdit.createdById : currentUser.id,
-      createdAt: productToEdit ? productToEdit.createdAt : new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const finalProduct: Product = isMarketingEditOnly && productToEdit
+      ? {
+          ...productToEdit,
+          description: description.trim(),
+          fabricDetails: fabricDetails.trim(),
+          image: images[0] || '',
+          images,
+          variants,
+          totalQuantity: variants.reduce((sum, v) => sum + v.quantity, 0),
+          updatedAt: new Date().toISOString(),
+        }
+      : {
+          id: productToEdit ? productToEdit.id : `prod_${Date.now()}`,
+          sku: finalSku,
+          name: name.trim(),
+          categoryId: categoryId || undefined,
+          category: finalCategory,
+          folder: (finalCategory.toLowerCase() === 'others' || categoryId?.toLowerCase() === 'others') ? (folder.trim() || undefined) : undefined,
+          targetAudience: finalAudience,
+          description: description.trim(),
+          fabricDetails: fabricDetails.trim(),
+          price: price === '' ? undefined : Number(price),
+          image: images[0] || '',
+          images: images,
+          variants,
+          totalQuantity: variants.reduce((sum, v) => sum + v.quantity, 0),
+          status: productToEdit ? (productToEdit.status || 'active') : (isAdmin ? 'active' : 'pending'),
+          createdByRole: productToEdit ? productToEdit.createdByRole : (isAdmin ? 'admin' : 'worker'),
+          createdByName: productToEdit ? productToEdit.createdByName : (currentUser.name || 'Staff'),
+          createdById: productToEdit ? productToEdit.createdById : currentUser.id,
+          createdAt: productToEdit ? productToEdit.createdAt : new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
 
     onSaveProduct(finalProduct);
     onClose();
@@ -578,8 +605,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     e.preventDefault();
     saveProductNow();
   };
-
-  const isAdmin = isUserAdmin(currentUser);
   const fallbackFolders = [
     'Wegla',
     'Pins & Badges',
@@ -638,8 +663,17 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                    {isEditing ? 'Edit Item' : 'New Item'}
+                    {isMarketingEditOnly
+                      ? 'Marketing Edit · Photos, Colors & Description'
+                      : isEditing
+                      ? 'Edit Item'
+                      : 'New Item'}
                   </h2>
+                  {isMarketingEditOnly && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-rose-50 text-rose-800 border-rose-200">
+                      Marketing Portal
+                    </span>
+                  )}
                   {!isEditing && (
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
@@ -653,7 +687,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   )}
                 </div>
                 <p className="text-xs text-slate-500">
-                  {isAdmin
+                  {isMarketingEditOnly
+                    ? 'Add/remove product photos, manage available colorways, and edit catalog descriptions (stock & pricing stay locked).'
+                    : isAdmin
                     ? 'Configure item details, description, and live inventory stock'
                     : 'Submit new item with variants & quantities for Admin approval'}
                 </p>
@@ -851,10 +887,14 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 <input
                   type="text"
                   required
+                  readOnly={isMarketingEditOnly}
+                  disabled={isMarketingEditOnly}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Silver Beaded Bracelet, Heavyweight Hoodie, Leather Belt..."
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                  className={`w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600 ${
+                    isMarketingEditOnly ? 'bg-slate-100 text-slate-600 cursor-not-allowed' : 'bg-white'
+                  }`}
                 />
               </div>
 
@@ -864,20 +904,26 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                       SKU Code
                     </label>
-                    <button
-                      type="button"
-                      onClick={handleGenerateSku}
-                      className="text-[11px] text-amber-700 font-semibold hover:underline flex items-center gap-1"
-                    >
-                      <Sparkles className="w-3 h-3" /> Auto
-                    </button>
+                    {!isMarketingEditOnly && (
+                      <button
+                        type="button"
+                        onClick={handleGenerateSku}
+                        className="text-[11px] text-amber-700 font-semibold hover:underline flex items-center gap-1"
+                      >
+                        <Sparkles className="w-3 h-3" /> Auto
+                      </button>
+                    )}
                   </div>
                   <input
                     type="text"
+                    readOnly={isMarketingEditOnly}
+                    disabled={isMarketingEditOnly}
                     value={sku}
                     onChange={(e) => setSku(e.target.value.toUpperCase())}
                     placeholder="e.g. WH-BR-101"
-                    className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600"
+                    className={`w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-xs font-mono font-medium text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600 ${
+                      isMarketingEditOnly ? 'bg-slate-100 text-slate-600 cursor-not-allowed' : 'bg-white'
+                    }`}
                   />
                 </div>
 
@@ -886,7 +932,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                       Category (Optional)
                     </label>
-                    {onManageCategories && (
+                    {!isMarketingEditOnly && onManageCategories && (
                       <button
                         type="button"
                         onClick={onManageCategories}
@@ -898,6 +944,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     )}
                   </div>
                   <select
+                    disabled={isMarketingEditOnly}
                     value={category}
                     onChange={(e) => {
                       const selectedName = e.target.value;
@@ -905,8 +952,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       const matched = categories.find((c) => c.name === selectedName);
                       setCategoryId(matched ? matched.id : '');
                     }}
-                    className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-xs font-medium focus:outline-none focus:border-amber-600 ${
-                      category ? 'text-slate-900 border-slate-300' : 'text-slate-500 border-slate-300'
+                    className={`w-full px-3.5 py-2.5 border rounded-xl text-xs font-medium focus:outline-none focus:border-amber-600 ${
+                      isMarketingEditOnly
+                        ? 'bg-slate-100 text-slate-600 border-slate-200 cursor-not-allowed'
+                        : category
+                        ? 'bg-white text-slate-900 border-slate-300'
+                        : 'bg-white text-slate-500 border-slate-300'
                     }`}
                   >
                     <option value="" className="text-slate-600 font-medium">
@@ -1020,44 +1071,46 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               )}
 
               {/* Target Audience / Demographic */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Target Audience</span>
-                  </span>
-                  <span className="text-[11px] font-bold text-amber-800">
-                    Selected: {targetAudience}
-                  </span>
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {TARGET_AUDIENCES.map((aud) => {
-                    const isSelected = targetAudience === aud;
-                    return (
-                      <button
-                        key={aud}
-                        type="button"
-                        onClick={() => setTargetAudience(aud)}
-                        className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 ${
-                          isSelected
-                            ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm font-black ring-2 ring-amber-500/20'
-                            : 'bg-white text-slate-700 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span>{aud}</span>
-                      </button>
-                    );
-                  })}
+              {!isMarketingEditOnly && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Target Audience</span>
+                    </span>
+                    <span className="text-[11px] font-bold text-amber-800">
+                      Selected: {targetAudience}
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {TARGET_AUDIENCES.map((aud) => {
+                      const isSelected = targetAudience === aud;
+                      return (
+                        <button
+                          key={aud}
+                          type="button"
+                          onClick={() => setTargetAudience(aud)}
+                          className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-amber-500 text-slate-950 border-amber-500 shadow-sm font-black ring-2 ring-amber-500/20'
+                              : 'bg-white text-slate-700 border-slate-300 hover:border-slate-400 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span>{aud}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Description & Spec */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                  Description & Specifications (Optional)
+                  Description & Specifications {isMarketingEditOnly ? '(Marketing Editable)' : '(Optional)'}
                 </label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="e.g. Handmade natural stone bracelet with elastic cord, or 100% Combed Cotton Hoodie..."
@@ -1080,16 +1133,20 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                    Price (EGP)
+                    Price (EGP) {isMarketingEditOnly && '(Locked)'}
                   </label>
                   <input
                     type="number"
                     min="0"
                     step="0.01"
+                    readOnly={isMarketingEditOnly}
+                    disabled={isMarketingEditOnly}
                     value={price}
                     onChange={(e) => setPrice(e.target.value === '' ? '' : parseFloat(e.target.value))}
                     placeholder="e.g. 25.00"
-                    className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600"
+                    className={`w-full px-3.5 py-2 border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-600 ${
+                      isMarketingEditOnly ? 'bg-slate-100 text-slate-600 cursor-not-allowed' : 'bg-white'
+                    }`}
                   />
                 </div>
               </div>
@@ -1098,132 +1155,140 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
           {/* Section 2: Product Type & Stock Tracking Mode */}
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-4">
-            <div>
-              <label className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Tag className="w-4 h-4 text-amber-600" />
-                <span>Inventory Tracking Mode</span>
-              </label>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Choose whether this item requires sizes and colors or has a single standard stock count.
-              </p>
-            </div>
-
-            {/* Mode Switch Tabs */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => setTrackingMode('standard')}
-                className={`p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 ${
-                  trackingMode === 'standard'
-                    ? 'border-amber-500 bg-amber-50/70 shadow-sm ring-1 ring-amber-500'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className={`p-2 rounded-lg shrink-0 ${trackingMode === 'standard' ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'}`}>
-                  <Package className="w-4 h-4" />
-                </div>
+            {!isMarketingEditOnly && (
+              <>
                 <div>
-                  <div className="text-xs font-bold text-slate-900">Standard Single Item</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    For bracelets, accessories, caps, or items with no sizes or colors.
-                  </div>
+                  <label className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <Tag className="w-4 h-4 text-amber-600" />
+                    <span>Inventory Tracking Mode</span>
+                  </label>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Choose whether this item requires sizes and colors or has a single standard stock count.
+                  </p>
                 </div>
-              </button>
 
-              <button
-                type="button"
-                onClick={() => setTrackingMode('matrix')}
-                className={`p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 ${
-                  trackingMode === 'matrix'
-                    ? 'border-amber-500 bg-amber-50/70 shadow-sm ring-1 ring-amber-500'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className={`p-2 rounded-lg shrink-0 ${trackingMode === 'matrix' ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'}`}>
-                  <Layers className="w-4 h-4" />
+                {/* Mode Switch Tabs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setTrackingMode('standard')}
+                    className={`p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                      trackingMode === 'standard'
+                        ? 'border-amber-500 bg-amber-50/70 shadow-sm ring-1 ring-amber-500'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className={`p-2 rounded-lg shrink-0 ${trackingMode === 'standard' ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'}`}>
+                      <Package className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-900">Standard Single Item</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        For bracelets, accessories, caps, or items with no sizes or colors.
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTrackingMode('matrix')}
+                    className={`p-3.5 rounded-xl border text-left transition-all flex items-start gap-3 ${
+                      trackingMode === 'matrix'
+                        ? 'border-amber-500 bg-amber-50/70 shadow-sm ring-1 ring-amber-500'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className={`p-2 rounded-lg shrink-0 ${trackingMode === 'matrix' ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-100 text-slate-600'}`}>
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-900">Variants Matrix (Sizes & Colors)</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        For apparel and items tracked by specific sizes (S, M, L) and colorways.
+                      </div>
+                    </div>
+                  </button>
                 </div>
-                <div>
-                  <div className="text-xs font-bold text-slate-900">Variants Matrix (Sizes & Colors)</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    For apparel and items tracked by specific sizes (S, M, L) and colorways.
-                  </div>
-                </div>
-              </button>
-            </div>
+              </>
+            )}
 
             {/* MODE 1: STANDARD SINGLE ITEM QUANTITY */}
             {trackingMode === 'standard' && (
               <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3 animate-in fade-in duration-150">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-1 gap-2">
-                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                        Stock Quantity in Warehouse *
-                      </label>
-                      {isEditing && productToEdit && onOpenDirectAdjust && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenDirectAdjust(productToEdit, productToEdit.variants[0])}
-                          className="p-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-slate-950 border border-amber-500/80 shadow-2xs flex items-center gap-1 text-[10px] font-black transition-all"
-                          title="Open Direct Stock Adjustment"
-                        >
-                          <Pencil className="w-3 h-3 stroke-[2.5]" />
-                          <span>Adjust</span>
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type={isEditing ? 'text' : 'number'}
-                        min="0"
-                        readOnly={isEditing}
-                        tabIndex={isEditing ? -1 : undefined}
-                        value={standardQty}
-                        onChange={(e) => {
-                          if (isEditing) return;
-                          const val = e.target.value;
-                          setStandardQty(val === '' ? '' : Math.max(0, parseInt(val, 10) || 0));
-                        }}
-                        placeholder="e.g. 50"
-                        className={`flex-1 px-3.5 py-2.5 border rounded-xl text-base font-mono font-bold focus:outline-none ${
-                          isEditing
-                            ? 'bg-slate-100 border-slate-200 text-slate-700 cursor-not-allowed select-none'
-                            : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-600'
-                        }`}
-                      />
-                    </div>
-                    <span className="text-[11px] text-slate-400 mt-0.5 block">
-                      {isEditing
-                        ? 'Locked here — click the yellow pencil button to adjust via Direct Stock Adjustment.'
-                        : 'Physical units available in stock.'}
-                    </span>
-                  </div>
+                {!isMarketingEditOnly && (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <div className="flex items-center justify-between mb-1 gap-2">
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                            Stock Quantity in Warehouse *
+                          </label>
+                          {isEditing && productToEdit && onOpenDirectAdjust && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenDirectAdjust(productToEdit, productToEdit.variants[0])}
+                              className="p-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-slate-950 border border-amber-500/80 shadow-2xs flex items-center gap-1 text-[10px] font-black transition-all"
+                              title="Open Direct Stock Adjustment"
+                            >
+                              <Pencil className="w-3 h-3 stroke-[2.5]" />
+                              <span>Adjust</span>
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type={isEditing ? 'text' : 'number'}
+                            min="0"
+                            readOnly={isEditing}
+                            tabIndex={isEditing ? -1 : undefined}
+                            value={standardQty}
+                            onChange={(e) => {
+                              if (isEditing) return;
+                              const val = e.target.value;
+                              setStandardQty(val === '' ? '' : Math.max(0, parseInt(val, 10) || 0));
+                            }}
+                            placeholder="e.g. 50"
+                            className={`flex-1 px-3.5 py-2.5 border rounded-xl text-base font-mono font-bold focus:outline-none ${
+                              isEditing
+                                ? 'bg-slate-100 border-slate-200 text-slate-700 cursor-not-allowed select-none'
+                                : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-600'
+                            }`}
+                          />
+                        </div>
+                        <span className="text-[11px] text-slate-400 mt-0.5 block">
+                          {isEditing
+                            ? 'Locked here — click the yellow pencil button to adjust via Direct Stock Adjustment.'
+                            : 'Physical units available in stock.'}
+                        </span>
+                      </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                      Low Stock Alert Threshold (Optional)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={standardThreshold}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        setStandardThreshold(raw === '' ? '' : Math.max(0, parseInt(raw) || 0));
-                      }}
-                      placeholder="Leave blank or enter (e.g. 5)"
-                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-amber-600"
-                    />
-                    <span className="text-[11px] text-slate-400 mt-0.5 block">Can be left blank or saved with an alert number.</span>
-                  </div>
-                </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                          Low Stock Alert Threshold (Optional)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={standardThreshold}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setStandardThreshold(raw === '' ? '' : Math.max(0, parseInt(raw) || 0));
+                          }}
+                          placeholder="Leave blank or enter (e.g. 5)"
+                          className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-amber-600"
+                        />
+                        <span className="text-[11px] text-slate-400 mt-0.5 block">Can be left blank or saved with an alert number.</span>
+                      </div>
+                    </div>
 
-                <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-900">Total Item Stock:</span>
-                  <span className="text-base font-black font-mono tabular-nums text-slate-900">
-                    {standardQty === '' ? 0 : standardQty} units
-                  </span>
-                </div>
+                    <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-900">Total Item Stock:</span>
+                      <span className="text-base font-black font-mono tabular-nums text-slate-900">
+                        {standardQty === '' ? 0 : standardQty} units
+                      </span>
+                    </div>
+                  </>
+                )}
 
                 {/* Optional Color Picker for Standard Single Item */}
                 <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
@@ -1348,15 +1413,17 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               <div className="space-y-4 pt-1 animate-in fade-in duration-150">
                 {/* Variant Toggles */}
                 <div className="flex items-center gap-4 bg-white p-3 rounded-xl border border-slate-200">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={hasSizes}
-                      onChange={(e) => setHasSizes(e.target.checked)}
-                      className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
-                    />
-                    <span>Has Specific Sizes (S, M, L...)</span>
-                  </label>
+                  {!isMarketingEditOnly && (
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={hasSizes}
+                        onChange={(e) => setHasSizes(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
+                      />
+                      <span>Has Specific Sizes (S, M, L...)</span>
+                    </label>
+                  )}
                   <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
                     <input
                       type="checkbox"
@@ -1369,7 +1436,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 </div>
 
                 {/* Size Selection */}
-                {hasSizes && (
+                {hasSizes && !isMarketingEditOnly && (
                   <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-bold text-slate-800 uppercase tracking-wider">
@@ -1546,8 +1613,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 )}
 
                 {/* Stock Matrix Quantities */}
-                <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                {!isMarketingEditOnly && (
+                  <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                     <div>
                       <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                         <Boxes className="w-4 h-4 text-amber-600" />
@@ -1727,13 +1795,14 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     );
                   })()}
 
-                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
-                    <span className="text-xs font-bold text-amber-900">Total Calculated Stock:</span>
-                    <span className="text-base font-black font-mono tabular-nums text-slate-900">
-                      {totalStock} units
-                    </span>
-                  </div>
-                </div>
+                      <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between">
+                        <span className="text-xs font-bold text-amber-900">Total Calculated Stock:</span>
+                        <span className="text-base font-black font-mono tabular-nums text-slate-900">
+                          {totalStock} units
+                        </span>
+                      </div>
+                    </div>
+                  )}
               </div>
             )}
           </div>

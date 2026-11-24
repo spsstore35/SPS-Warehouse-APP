@@ -1,7 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban, Factory } from 'lucide-react';
-import { isUserAdmin, isUserLeader } from '../utils/security';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet } from 'lucide-react';
+import {
+  isUserAdmin,
+  isUserLeader,
+  canUserAccessView,
+  getUserAssignedTeams,
+  isFullAccessAdmin,
+} from '../utils/security';
+import { STORE_TEAMS } from './CalendarView';
 import {
   getNotificationPermissionState,
   requestNotificationPermission,
@@ -36,6 +43,9 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isAdmin = isUserAdmin(currentUser);
   const isLeader = isUserLeader(currentUser);
+  const userTeams = getUserAssignedTeams(currentUser);
+  const fullAccessAdmin = isFullAccessAdmin(currentUser);
+  const teamScopeKey = userTeams.join(',');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -71,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
       window.removeEventListener('resize', onResize);
       if (ro) ro.disconnect();
     };
-  }, [activeView, isAdmin, isLeader, pendingBookingsCount, pendingStockCount, pendingAccountsCount, pendingAuditNotificationsCount]);
+  }, [activeView, isAdmin, isLeader, teamScopeKey, fullAccessAdmin, pendingBookingsCount, pendingStockCount, pendingAccountsCount, pendingAuditNotificationsCount]);
 
   // Close profile dropdown on outside click
   useEffect(() => {
@@ -113,14 +123,22 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
             <span
               className={`hidden sm:inline-block text-[11px] font-bold px-2.5 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${
-                isAdmin
+                fullAccessAdmin
+                  ? 'bg-amber-100 text-amber-950 border-amber-400'
+                  : isAdmin
                   ? 'bg-amber-50 text-amber-900 border-amber-300'
                   : isLeader
                   ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                   : 'bg-sky-50 text-sky-900 border-sky-300'
               }`}
             >
-              {isAdmin ? 'Admin Portal' : isLeader ? 'Leader View' : 'Staff'}
+              {fullAccessAdmin
+                ? 'Full-Access Admin'
+                : isAdmin
+                ? 'Admin'
+                : isLeader
+                ? 'Leader View'
+                : 'Staff'}
             </span>
           </div>
 
@@ -152,7 +170,7 @@ export const Header: React.FC<HeaderProps> = ({
                 Inventory Catalog
               </button>
 
-              {!isLeader && (
+              {canUserAccessView(currentUser, 'bookings') && (
                 <button
                   onClick={() => onNavigate('bookings')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -172,7 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {!isLeader && (
+              {canUserAccessView(currentUser, 'calendar') && (
                 <button
                   onClick={() => onNavigate('calendar')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -187,7 +205,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {!isLeader && (
+              {canUserAccessView(currentUser, 'board') && (
                 <button
                   onClick={() => onNavigate('board')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -202,7 +220,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {!isLeader && (
+              {canUserAccessView(currentUser, 'sourcing') && (
                 <button
                   onClick={() => onNavigate('sourcing')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -217,100 +235,119 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {isAdmin && (
-                <>
-                  <button
-                    onClick={() => onNavigate('analytics')}
-                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                      activeView === 'analytics'
-                        ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
-                        : ''
-                    }`}
-                    title="Admin sales analytics, branch demand & production aggregator"
-                  >
-                    <BarChart3 className="w-4 h-4 text-emerald-600" />
-                    <span>Analytics</span>
-                  </button>
-
-                  {/* 1. Dedicated Stock Approvals */}
-                  <button
-                    onClick={() => onNavigate('stock-approvals')}
-                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                      activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')
-                        ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
-                        : ''
-                    }`}
-                    title="Review pending inventory stock changes"
-                  >
-                    <CheckSquare className="w-4 h-4 text-amber-600" />
-                    <span>Stock Approvals</span>
-                    {pendingStockCount > 0 && (
-                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
-                        {pendingStockCount}
-                      </span>
-                    )}
-                  </button>
-
-                  {/* 2. Dedicated Accounts Approval Front & Center */}
-                  <button
-                    onClick={() => onNavigate('account-approvals')}
-                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                      activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')
-                        ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
-                        : ''
-                    }`}
-                    title="Approve staff registration accounts"
-                  >
-                    <Users className="w-4 h-4 text-amber-600" />
-                    <span>Account Approvals</span>
-                    {pendingAccountsCount > 0 ? (
-                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px] animate-pulse">
-                        {pendingAccountsCount}
-                      </span>
-                    ) : null}
-                  </button>
-
-                  {/* 3. Add New Item */}
-                  <button
-                    onClick={() => onNavigate('add-product')}
-                    className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                      activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                    }`}
-                  >
-                    Add New Item
-                  </button>
-                </>
+              {canUserAccessView(currentUser, 'marketing') && (
+                <button
+                  onClick={() => onNavigate('marketing')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'marketing'
+                      ? 'text-rose-700 font-bold border-b-2 border-rose-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Marketing Team promos, product discounts & offer campaigns"
+                >
+                  <Megaphone className="w-4 h-4 text-rose-600" />
+                  <span>Marketing &amp; Offers</span>
+                </button>
               )}
 
-              {!isAdmin && !isLeader && (
-                <>
-                  <button
-                    onClick={() => onNavigate('worker-requests')}
-                    className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                      activeView === 'worker-requests' ? 'text-sky-800 font-bold border-b-2 border-sky-600 pb-0.5' : ''
-                    }`}
-                  >
-                    <span>My Adjustment Requests</span>
-                    {pendingStockCount > 0 && (
-                      <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
-                        {pendingStockCount}
-                      </span>
-                    )}
-                  </button>
-
-                  {/* Staff can also submit new items */}
-                  <button
-                    onClick={() => onNavigate('add-product')}
-                    className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                      activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                    }`}
-                  >
-                    + Add New Item
-                  </button>
-                </>
+              {canUserAccessView(currentUser, 'budgeting') && (
+                <button
+                  onClick={() => onNavigate('budgeting')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'budgeting'
+                      ? 'text-emerald-700 font-bold border-b-2 border-emerald-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Unit costs, P&L, margin % pricing, hardship discounts, cash liquidity & seasonal Fare2 revenue"
+                >
+                  <Wallet className="w-4 h-4 text-emerald-700" />
+                  <span>Budgeting</span>
+                </button>
               )}
 
-              {!isLeader && (
+              {canUserAccessView(currentUser, 'analytics') && (
+                <button
+                  onClick={() => onNavigate('analytics')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'analytics'
+                      ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
+                      : ''
+                  }`}
+                  title="Admin sales analytics, branch demand & production aggregator"
+                >
+                  <BarChart3 className="w-4 h-4 text-emerald-600" />
+                  <span>Analytics</span>
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'stock-approvals') && (
+                <button
+                  onClick={() => onNavigate('stock-approvals')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'stock-approvals' || (activeView === 'approvals' && approvalsTab !== 'staff')
+                      ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Review pending inventory stock changes"
+                >
+                  <CheckSquare className="w-4 h-4 text-amber-600" />
+                  <span>Stock Approvals</span>
+                  {pendingStockCount > 0 && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
+                      {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'account-approvals') && (
+                <button
+                  onClick={() => onNavigate('account-approvals')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'account-approvals' || (activeView === 'approvals' && approvalsTab === 'staff')
+                      ? 'text-amber-800 font-bold border-b-2 border-amber-600 pb-0.5'
+                      : ''
+                  }`}
+                  title="Approve staff registration accounts"
+                >
+                  <Users className="w-4 h-4 text-amber-600" />
+                  <span>Account Approvals</span>
+                  {pendingAccountsCount > 0 ? (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px] animate-pulse">
+                      {pendingAccountsCount}
+                    </span>
+                  ) : null}
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'worker-requests') && (
+                <button
+                  onClick={() => onNavigate('worker-requests')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'worker-requests' ? 'text-sky-800 font-bold border-b-2 border-sky-600 pb-0.5' : ''
+                  }`}
+                >
+                  <span>My Adjustment Requests</span>
+                  {pendingStockCount > 0 && (
+                    <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-sky-500 text-white font-bold text-[11px] rounded-full min-w-[18px]">
+                      {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'add-product') && (
+                <button
+                  onClick={() => onNavigate('add-product')}
+                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
+                    activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                  }`}
+                >
+                  {isAdmin ? 'Add New Item' : '+ Add New Item'}
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'audit-log') && (
                 <button
                   onClick={() => onNavigate('audit-log')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -377,26 +414,58 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                   </div>
 
-                  {/* Role Badge */}
-                  <div className="py-2.5 px-0.5 flex items-center justify-between border-b border-slate-100">
-                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                      Role
-                    </span>
-                    <span
-                      className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
-                        isAdmin
-                          ? 'bg-amber-50 text-amber-900 border-amber-300'
+                  {/* Role & Team Scope Badge */}
+                  <div className="py-2.5 px-0.5 space-y-1.5 border-b border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                        Role
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                          fullAccessAdmin
+                            ? 'bg-amber-100 text-amber-950 border-amber-400'
+                            : isAdmin
+                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                            : isLeader
+                            ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                            : 'bg-sky-50 text-sky-900 border-sky-300'
+                        }`}
+                      >
+                        {fullAccessAdmin
+                          ? 'Full-Access Admin'
+                          : isAdmin
+                          ? 'Admin (Team-Scoped)'
                           : isLeader
-                          ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
-                          : 'bg-sky-50 text-sky-900 border-sky-300'
-                      }`}
-                    >
-                      {isAdmin ? 'Warehouse Administrator' : isLeader ? 'Scout Leader (Read-Only)' : 'Warehouse Staff'}
-                    </span>
+                          ? 'Scout Leader (Read-Only)'
+                          : 'Warehouse Staff'}
+                      </span>
+                    </div>
+                    {!isLeader && (
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-semibold text-slate-400 uppercase tracking-wider">
+                          Access
+                        </span>
+                        <span className="font-bold text-slate-700 text-right truncate">
+                          {fullAccessAdmin
+                            ? userTeams.length > 0
+                              ? `All Pages · ${userTeams
+                                  .map((tid) => STORE_TEAMS.find((t) => t.id === tid)?.shortLabel || tid)
+                                  .join(', ')}`
+                              : 'All Pages'
+                            : userTeams.length > 0
+                            ? userTeams
+                                .map((tid) => STORE_TEAMS.find((t) => t.id === tid)?.shortLabel || tid)
+                                .join(', ')
+                            : isAdmin
+                            ? 'No Team (Inventory Only)'
+                            : 'No Team Assigned'}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Fast Navigation Links */}
-                  <div className="py-2 space-y-1">
+                  <div className="py-2 space-y-1 max-h-[55vh] overflow-y-auto">
                     <button
                       type="button"
                       onClick={() => {
@@ -411,168 +480,227 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </button>
 
-                    {!isLeader && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('calendar');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-blue-900 bg-blue-50/70 hover:bg-blue-100/70 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
-                            <span>Calendar &amp; Tasks</span>
+                    {canUserAccessView(currentUser, 'bookings') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('bookings');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-blue-900 bg-blue-50/70 hover:bg-blue-100/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <CalendarCheck className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Client Bookings</span>
+                        </span>
+                        {pendingBookingsCount > 0 && (
+                          <span className="px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[10px] rounded-full">
+                            {pendingBookingsCount}
                           </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('board');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100/70 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Kanban className="w-3.5 h-3.5 text-indigo-600" />
-                            <span>Team Board &amp; People</span>
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('sourcing');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-950 bg-amber-50/80 hover:bg-amber-100/80 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Factory className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Sourcing &amp; Operations</span>
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('add-product');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
-                            <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
-                          </span>
-                        </button>
-                      </>
+                        )}
+                      </button>
                     )}
 
-                    {isAdmin && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('analytics');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-900 bg-emerald-50/70 hover:bg-emerald-100/70 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Analytics & Production</span>
-                          </span>
-                        </button>
+                    {canUserAccessView(currentUser, 'calendar') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('calendar');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-blue-900 bg-blue-50/70 hover:bg-blue-100/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Calendar &amp; Tasks</span>
+                        </span>
+                      </button>
+                    )}
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('account-approvals');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Users className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Account Approvals</span>
-                          </span>
-                          {pendingAccountsCount > 0 && (
-                            <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full animate-pulse">
-                              {pendingAccountsCount}
-                            </span>
-                          )}
-                        </button>
+                    {canUserAccessView(currentUser, 'board') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('board');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-950 bg-indigo-50/70 hover:bg-indigo-100/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Kanban className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Team Board &amp; People</span>
+                        </span>
+                      </button>
+                    )}
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('stock-approvals');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <CheckSquare className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Stock Approvals</span>
+                    {canUserAccessView(currentUser, 'sourcing') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('sourcing');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-950 bg-amber-50/80 hover:bg-amber-100/80 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Factory className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Sourcing &amp; Operations</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'marketing') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('marketing');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-950 bg-rose-50/80 hover:bg-rose-100/80 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Megaphone className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Marketing &amp; Offers</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'budgeting') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('budgeting');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-950 bg-emerald-50/80 hover:bg-emerald-100/80 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Wallet className="w-3.5 h-3.5 text-emerald-700" />
+                          <span>Store Budgeting &amp; Liquidity</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'add-product') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('add-product');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
+                          <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'analytics') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('analytics');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-900 bg-emerald-50/70 hover:bg-emerald-100/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Analytics &amp; Production</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'account-approvals') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('account-approvals');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Users className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Account Approvals</span>
+                        </span>
+                        {pendingAccountsCount > 0 && (
+                          <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full animate-pulse">
+                            {pendingAccountsCount}
                           </span>
-                          {pendingStockCount > 0 && (
-                            <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
-                              {pendingStockCount}
-                            </span>
-                          )}
-                        </button>
-                      </>
+                        )}
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'stock-approvals') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('stock-approvals');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <CheckSquare className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Stock Approvals</span>
+                        </span>
+                        {pendingStockCount > 0 && (
+                          <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
+                            {pendingStockCount}
+                          </span>
+                        )}
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'audit-log') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('audit-log');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <History className="w-3.5 h-3.5 text-slate-500" />
+                          <span>Stock Audit Log</span>
+                        </span>
+                        {pendingAuditNotificationsCount > 0 && (
+                          <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                            {pendingAuditNotificationsCount}
+                          </span>
+                        )}
+                      </button>
                     )}
 
                     {!isLeader && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsProfileOpen(false);
-                            onNavigate('audit-log');
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <History className="w-3.5 h-3.5 text-slate-500" />
-                            <span>Stock Audit Log</span>
-                          </span>
-                          {pendingAuditNotificationsCount > 0 && (
-                            <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
-                              {pendingAuditNotificationsCount}
-                            </span>
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const perm = getNotificationPermissionState();
-                            if (perm !== 'granted') {
-                              const res = await requestNotificationPermission();
-                              if (res === 'granted') {
-                                await sendTestNotification();
-                              }
-                            } else {
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const perm = getNotificationPermissionState();
+                          if (perm !== 'granted') {
+                            const res = await requestNotificationPermission();
+                            if (res === 'granted') {
                               await sendTestNotification();
                             }
-                          }}
-                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-900 bg-amber-50/60 hover:bg-amber-100/60 transition-colors"
-                          title="Send a live test alert to your phone"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Bell className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Phone Alerts & Test</span>
-                          </span>
-                          <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
-                            Test Alert
-                          </span>
-                        </button>
-                      </>
+                          } else {
+                            await sendTestNotification();
+                          }
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-900 bg-amber-50/60 hover:bg-amber-100/60 transition-colors"
+                        title="Send a live test alert to your phone"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Bell className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Phone Alerts &amp; Test</span>
+                        </span>
+                        <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
+                          Test Alert
+                        </span>
+                      </button>
                     )}
                   </div>
 
