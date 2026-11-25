@@ -424,3 +424,11 @@ export interface Fare2LeaderAssignment {
   userName: string;
 }
 
+export interface ShortageBatchConfig {
+  productId: string;
+  variantId: string;
+  quantity: number;
+  stageAssignments: Record<string, BatchStageAssignment>;
+  targetDate?: string;
+}
+

@@ -24,6 +24,9 @@ import {
   BudgetSettings,
   ScoutSeason,
   Fare2LeaderAssignment,
+  ShortageBatchConfig,
+  BatchStageAssignment,
+  OperationStageKey,
 } from './types/inventory';
 import {
   getStoredUser,
@@ -94,7 +97,6 @@ import {
   fetchScoutSeasonsFromDb,
   upsertScoutSeasonToDb,
   deleteScoutSeasonFromDb,
-  fetchActivitySnapshot,
   CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
@@ -121,18 +123,6 @@ import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
-import { MobileNotificationBanner } from './components/MobileNotificationBanner';
-import {
-  registerServiceWorker,
-  getNotificationPermissionState,
-  requestNotificationPermission,
-  sendSystemNotification,
-  sendTestNotification,
-  subscribeToPushNotifications,
-  isBackgroundPushActive,
-  NotificationPermissionState,
-} from './services/notificationService';
-import { formatAuditLogReason } from './utils/auditReason';
 import {
   Search,
   Plus,
@@ -423,17 +413,6 @@ export default function App() {
   } | null>(null);
   const [selectedActivityLog, setSelectedActivityLog] = useState<AuditLogEntry | null>(null);
 
-  // Mobile & System Notifications State
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionState>(() =>
-    getNotificationPermissionState()
-  );
-
-  // Notification count trackers to detect new incoming requests across devices
-  const prevStaffBookingPendingRef = useRef<number | null>(null);
-  const prevPendingRequestsRef = useRef<number | null>(null);
-  const prevPendingAccountsRef = useRef<number | null>(null);
-  const seenAuditLogIdsRef = useRef<Set<string> | null>(null);
-
   const showToast = (msg: string, log?: AuditLogEntry) => {
     setToastNotification({ message: msg, log });
     setTimeout(() => {
@@ -455,6 +434,7 @@ export default function App() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>([]);
   const [scoutSeasons, setScoutSeasons] = useState<ScoutSeason[]>([]);
   const lastCalendarMutationAtRef = useRef<number>(0);
+  const lastBookingMutationAtRef = useRef<number>(0);
 
   // Sourcing & Production Operations state
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -877,7 +857,10 @@ export default function App() {
         if (dbLogs.status === 'fulfilled') {
           setAuditLogs(dbLogs.value);
         }
-        if (dbBookings.status === 'fulfilled') {
+        if (
+          dbBookings.status === 'fulfilled' &&
+          Date.now() - lastBookingMutationAtRef.current > 5000
+        ) {
           const syncedBookings = dbBookings.value.map((b) => {
             const isPaidNow = Boolean(b.depositPaid || b.status !== 'pending');
             const resolvedFare2 =
@@ -967,115 +950,6 @@ export default function App() {
   useEffect(() => {
     clearLegacyLocalEntityCaches();
     refreshFromSupabase(false);
-  }, []);
-
-  // Lightweight notification check, once a minute.
-  // Downloads only activity written in the last 30 minutes (usually nothing) and
-  // three pending COUNTS - never the full tables. New activity rows are added to the
-  // activity list, which triggers the existing notification effect below.
-  const remotePendingCountsRef = useRef<{ requests: number | null; accounts: number | null; bookings: number | null } | null>(null);
-  useEffect(() => {
-    if (!currentUser) return;
-    let cancelled = false;
-
-    const runCheck = async () => {
-      try {
-        const snap = await fetchActivitySnapshot(30);
-        if (cancelled) return;
-
-        if (snap.recentLogs.length > 0) {
-          setAuditLogs((prev) => {
-            const known = new Set(prev.map((l) => l.id));
-            const fresh = snap.recentLogs.filter((l) => !known.has(l.id));
-            if (fresh.length === 0) return prev;
-            // This device already got these as background push alerts - don't alert twice.
-            if (isBackgroundPushActive() && seenAuditLogIdsRef.current) {
-              fresh.forEach((l) => seenAuditLogIdsRef.current!.add(l.id));
-            }
-            const merged = [...fresh, ...prev].sort(
-              (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-            );
-            return merged;
-          });
-        }
-
-        // Notify only when the remote count went up AND is higher than what this
-        // device already knows (so your own actions don't notify you twice).
-        const last = remotePendingCountsRef.current;
-        const rose = (remote: number | null, prevRemote: number | null | undefined, local: number | null) =>
-          remote !== null && prevRemote !== null && prevRemote !== undefined && remote > prevRemote && remote > (local ?? 0);
-
-        if (last && !isBackgroundPushActive()) {
-          if (rose(snap.pendingBookingRequests, last.bookings, prevStaffBookingPendingRef.current)) {
-            sendSystemNotification('Staff Request: Deposit Terms Approval', {
-              body: 'Staff member requested changing the upfront deposit percentage on a client order. Reload to see it.',
-              tag: 'sps-deposit-req-' + Date.now(),
-              data: { view: 'audit-log' },
-            });
-          }
-          if (rose(snap.pendingRequests, last.requests, prevPendingRequestsRef.current)) {
-            sendSystemNotification('Stock Adjustment Request', {
-              body: 'A warehouse staff member submitted a stock adjustment request awaiting review. Reload to see it.',
-              tag: 'sps-stock-req-' + Date.now(),
-              data: { view: 'stock-approvals' },
-            });
-          }
-          if (rose(snap.pendingAccounts, last.accounts, prevPendingAccountsRef.current)) {
-            sendSystemNotification('New Account Registration', {
-              body: 'A new staff member registered and requires administrator approval. Reload to review.',
-              tag: 'sps-staff-req-' + Date.now(),
-              data: { view: 'account-approvals' },
-            });
-          }
-        }
-
-        remotePendingCountsRef.current = {
-          requests: snap.pendingRequests,
-          accounts: snap.pendingAccounts,
-          bookings: snap.pendingBookingRequests,
-        };
-      } catch (err) {
-        console.warn('Activity check skipped:', err);
-      }
-    };
-
-    runCheck();
-    const checkInterval = setInterval(runCheck, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(checkInterval);
-    };
-  }, [currentUser?.id]);
-
-  // Register this device for background push (alerts while the app is closed),
-  // tagged with the signed-in user so they aren't alerted about their own actions.
-  useEffect(() => {
-    if (currentUser?.email && notificationPermission === 'granted') {
-      subscribeToPushNotifications(currentUser.email).catch(() => {});
-    }
-  }, [currentUser?.email, notificationPermission]);
-
-  // Register Service Worker for Mobile Notifications & Handle Notification Clicks
-  useEffect(() => {
-    registerServiceWorker();
-
-    if ('serviceWorker' in navigator) {
-      const handleMessage = (event: MessageEvent) => {
-        if (event.data?.type === 'SPS_NAVIGATE') {
-          if (event.data.view) {
-            setActiveView(event.data.view);
-          }
-          if (event.data.bookingId) {
-            handleOpenBookingDetails(event.data.bookingId);
-          }
-        }
-      };
-
-      navigator.serviceWorker.addEventListener('message', handleMessage);
-      return () => {
-        navigator.serviceWorker.removeEventListener('message', handleMessage);
-      };
-    }
   }, []);
 
   // Auth Handlers
@@ -2206,7 +2080,11 @@ export default function App() {
   };
 
   // Inventory Mgmt -> Purchases Team & Calendar Handoff when stock shortage exists
-  const handleSendShortageToPurchases = (booking: Booking, targetDate?: string) => {
+  const handleSendShortageToPurchases = (
+    booking: Booking,
+    targetDate?: string,
+    customConfigs?: ShortageBatchConfig[]
+  ) => {
     const shortItems = booking.items
       .map((it) => {
         const prod = products.find((p) => p.id === it.productId);
@@ -2217,14 +2095,14 @@ export default function App() {
       })
       .filter((entry) => entry.shortQty > 0);
 
-    if (shortItems.length === 0) {
+    const hasCustomConfigs = Array.isArray(customConfigs) && customConfigs.length > 0;
+    if (!hasCustomConfigs && shortItems.length === 0) {
       showToast(`Order #${booking.bookingNumber} already has enough stock in warehouse!`);
       return;
     }
 
     const expectedDate =
       targetDate || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    const todayIso = new Date().toISOString().slice(0, 10);
     const purchasesMember = users.find(
       (u) => u.status === 'active' && (u.assignedTeams || []).includes('purchases')
     );
@@ -2234,26 +2112,80 @@ export default function App() {
     const createdBatches: ProductionBatch[] = [];
     const createdCalendarTasks: CalendarItem[] = [];
 
-    shortItems.forEach((entry, idx) => {
-      const wf = productWorkflows.find((w) => w.productId === entry.item.productId);
-      const batchId = `batch_ord_${booking.id}_${entry.item.variantId}_${Date.now()}_${idx}`;
+    const entriesToProcess = hasCustomConfigs
+      ? customConfigs!.map((cfg) => {
+          const item =
+            booking.items.find(
+              (it) => it.productId === cfg.productId && it.variantId === cfg.variantId
+            ) || booking.items.find((it) => it.productId === cfg.productId);
+          const prod = products.find((p) => p.id === cfg.productId);
+          const matchedShort = shortItems.find(
+            (s) => s.item.productId === cfg.productId && s.item.variantId === cfg.variantId
+          );
+          const minShort = matchedShort?.shortQty ?? 1;
+          return {
+            productId: cfg.productId,
+            variantId: cfg.variantId,
+            productName: item?.productName || prod?.name || 'Item',
+            size: item?.size || 'Std',
+            colorName: item?.colorName || 'Default',
+            quantity: Math.max(1, Math.round(cfg.quantity || minShort)),
+            minShort,
+            stageAssignments: (cfg.stageAssignments || {}) as Record<string, BatchStageAssignment>,
+            targetDate: cfg.targetDate || expectedDate,
+          };
+        })
+      : shortItems.map((entry) => ({
+          productId: entry.item.productId,
+          variantId: entry.item.variantId,
+          productName: entry.item.productName,
+          size: entry.item.size || 'Std',
+          colorName: entry.item.colorName || 'Default',
+          quantity: entry.shortQty,
+          minShort: entry.shortQty,
+          stageAssignments: {} as Record<string, BatchStageAssignment>,
+          targetDate: expectedDate,
+        }));
+
+    entriesToProcess.forEach((entry, idx) => {
+      const wf = productWorkflows.find((w) => w.productId === entry.productId);
+      const batchId = `batch_ord_${booking.id}_${entry.variantId}_${Date.now()}_${idx}`;
       const batchCode = `PO-#${booking.bookingNumber}-${idx + 1}`;
-      const stageKey = wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material';
+      const firstNonStockStage = wf?.activeStages?.find((s) => s !== 'stock_in');
+      const stageKey: OperationStageKey =
+        firstNonStockStage ||
+        (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+
+      const mergedStageAssignments: Record<string, BatchStageAssignment> = {
+        ...entry.stageAssignments,
+      };
+      mergedStageAssignments[stageKey] = {
+        ...(mergedStageAssignments[stageKey] || {}),
+        notes:
+          mergedStageAssignments[stageKey]?.notes ||
+          `Open batch for Order #${booking.bookingNumber} (${booking.clientName}) — ${entry.size} / ${entry.colorName}`,
+      };
+
+      const selectedVendorSummary = Object.entries(mergedStageAssignments)
+        .filter(([, val]) => Boolean(val?.vendorId))
+        .map(([sKey, val]) => {
+          const vObj = vendors.find((v) => v.id === val.vendorId);
+          return `${getStageMeta(sKey as OperationStageKey).shortLabel}: ${
+            vObj?.name || val.vendorId
+          }${val.cost ? ` (${val.cost} EGP)` : ''}`;
+        })
+        .join(' • ');
 
       const newBatch: ProductionBatch = {
         id: batchId,
-        productId: entry.item.productId,
-        variantId: entry.item.variantId,
+        productId: entry.productId,
+        variantId: entry.variantId,
         batchCode,
-        quantity: entry.shortQty,
+        quantity: entry.quantity,
         currentStageKey: stageKey,
         status: 'in_progress',
-        targetDate: expectedDate,
-        stageAssignments: {
-          [stageKey]: {
-            notes: `Shortage for Order #${booking.bookingNumber} (${booking.clientName}) — ${entry.item.size || 'Std'} / ${entry.item.colorName}`,
-          },
-        },
+        targetDate: entry.targetDate,
+        stageAssignments: mergedStageAssignments,
         linkedBookingId: booking.id,
         linkedBookingNumber: booking.bookingNumber,
         requestedByTeam: 'inventory',
@@ -2263,10 +2195,10 @@ export default function App() {
 
       createdCalendarTasks.push({
         id: `task_purchase_${batchId}`,
-        title: `[Purchases] ${entry.item.productName} (${entry.shortQty} pcs) — Order #${booking.bookingNumber}`,
+        title: `[Purchases] ${entry.productName} (${entry.quantity} pcs) — Order #${booking.bookingNumber}`,
         itemType: 'task',
-        startDate: expectedDate,
-        endDate: expectedDate,
+        startDate: entry.targetDate,
+        endDate: entry.targetDate,
         allDay: true,
         completed: false,
         boardStatus: 'in_progress',
@@ -2278,7 +2210,14 @@ export default function App() {
         linkedBookingId: booking.id,
         linkedBatchId: batchId,
         workflowStage: 'purchase_order',
-        notes: `Requested by Inventory Management for Order #${booking.bookingNumber} (${booking.clientName}).\nItem: ${entry.item.productName} (${entry.item.size || 'Std'} / ${entry.item.colorName})\nShortage Qty: ${entry.shortQty} pcs\nBatch Code: ${batchCode}\nExpected Arrival / Gard Date: ${expectedDate}`,
+        notes: [
+          `Requested by Inventory Management for Order #${booking.bookingNumber} (${booking.clientName}).`,
+          `Item: ${entry.productName} (${entry.size} / ${entry.colorName})`,
+          `Batch Quantity: ${entry.quantity} pcs (Order shortage: ${entry.minShort} pcs — Batch open in Sourcing & Operations)`,
+          `Batch Code: ${batchCode}`,
+          selectedVendorSummary ? `Assigned Vendors: ${selectedVendorSummary}` : 'Vendors: Open (assign/edit anytime in Sourcing & Operations)',
+          `Expected Arrival / Gard Date: ${entry.targetDate}`,
+        ].join('\n'),
         createdById: currentUser?.id || 'system',
         createdByName: currentUser?.name || 'System',
         createdAt: new Date().toISOString(),
@@ -2293,6 +2232,7 @@ export default function App() {
       )
     );
 
+    lastBookingMutationAtRef.current = Date.now();
     const updatedBooking: Booking = {
       ...booking,
       stockCheckStatus: 'in_production',
@@ -2307,12 +2247,13 @@ export default function App() {
     syncOrderTaskToScoutFera2(updatedBooking);
 
     showToast(
-      `Sent ${createdBatches.length} shortage batch(es) to Purchases Team, Sourcing & Calendar (Target: ${expectedDate}).`
+      `Created ${createdBatches.length} open batch(es) in Sourcing & Purchases Calendar (Target: ${expectedDate}).`
     );
   };
 
   // Inventory Mgmt confirms stock is ready -> Handover to Scout Fera2 Team for client delivery
   const handleConfirmBookingStockReady = (booking: Booking) => {
+    lastBookingMutationAtRef.current = Date.now();
     const updatedBooking: Booking = {
       ...booking,
       stockCheckStatus: 'ready_for_handover',
@@ -2533,13 +2474,15 @@ export default function App() {
       newBooking.inventoryDeducted = true;
     }
 
+    lastBookingMutationAtRef.current = Date.now();
     const updatedBookings = [newBooking, ...bookings];
     setBookings(updatedBookings);
 
-    // Sync booking & items to Supabase Database
+    // Sync booking & items to Supabase Database (revert local state only if database rejects save)
     insertBookingInDb(newBooking).catch((err) => {
       console.warn('Notice saving booking to Supabase:', err?.message);
-      showToast(`Database booking sync error: ${err?.message || 'Failed to save booking'}`);
+      setBookings((prev) => prev.filter((b) => b.id !== newBooking.id));
+      showToast(`Failed to save order to database: ${err?.message || 'Database sync error'}`);
     });
 
     // Automatically create Scout Fera2 Task for this order
@@ -2577,6 +2520,7 @@ export default function App() {
         ? { ...updatedBooking, troopGroup: prevBooking.troopGroup }
         : updatedBooking;
 
+    lastBookingMutationAtRef.current = Date.now();
     const nextBookings = bookings.map((b) => (b.id === safeBooking.id ? safeBooking : b));
     setBookings(nextBookings);
     insertBookingInDb(safeBooking).catch((err) => {
@@ -2598,6 +2542,7 @@ export default function App() {
       return;
     }
 
+    lastBookingMutationAtRef.current = Date.now();
     const nextBookings = bookings.map((b) => (b.id === editedBooking.id ? editedBooking : b));
     setBookings(nextBookings);
 
@@ -2699,6 +2644,7 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     };
 
+    lastBookingMutationAtRef.current = Date.now();
     const nextBookings = bookings.map((b) => (b.id === bookingId ? updatedBooking : b));
     setBookings(nextBookings);
 
@@ -2744,6 +2690,7 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     };
 
+    lastBookingMutationAtRef.current = Date.now();
     const nextBookings = bookings.map((b) => (b.id === bookingId ? updatedBooking : b));
     setBookings(nextBookings);
 
@@ -2854,6 +2801,7 @@ export default function App() {
         });
       });
 
+      lastBookingMutationAtRef.current = Date.now();
       setBookings(updatedBookings);
 
       const finalAffected = updatedBookings.find((b) => b.id === bookingId);
@@ -2908,6 +2856,7 @@ export default function App() {
       return;
     }
 
+    lastBookingMutationAtRef.current = Date.now();
     const nextBookings = bookings.filter((b) => b.id !== bookingId);
     setBookings(nextBookings);
 
@@ -3341,6 +3290,7 @@ export default function App() {
       );
       const linkedOrder = bookings.find((b) => b.id === batch.linkedBookingId);
       if (linkedOrder && !stillOpenForOrder) {
+        lastBookingMutationAtRef.current = Date.now();
         const readyOrder: Booking = {
           ...linkedOrder,
           stockCheckStatus: 'ready_for_handover',
@@ -3506,78 +3456,6 @@ export default function App() {
       Boolean(b.pendingDepositPercentage) ||
       Boolean(b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending')
   ).length;
-
-  // Real-Time System Notification Triggers for EVERY Stock Audit Log Entry
-  useEffect(() => {
-    if (!auditLogs || auditLogs.length === 0) return;
-
-    // First load: initialize known log IDs so we don't spam notifications for old history on startup
-    if (seenAuditLogIdsRef.current === null) {
-      seenAuditLogIdsRef.current = new Set(auditLogs.map((l) => l.id));
-      return;
-    }
-
-    // Subsequent updates: detect any fresh logs not previously in the set
-    const freshLogs = auditLogs.filter((l) => !seenAuditLogIdsRef.current!.has(l.id));
-
-    if (freshLogs.length > 0) {
-      freshLogs.forEach((newLog) => {
-        const reasonTitle = formatAuditLogReason(newLog);
-        const description = newLog.summary || newLog.details || 'New warehouse inventory activity recorded.';
-
-        sendSystemNotification(reasonTitle, {
-          body: description,
-          tag: `sps-audit-log-${newLog.id}`,
-          data: {
-            view: 'audit-log',
-            logId: newLog.id,
-            bookingId: newLog.bookingNumber || newLog.bookingId,
-          },
-        });
-      });
-
-      // Update the known set
-      freshLogs.forEach((l) => seenAuditLogIdsRef.current!.add(l.id));
-    }
-  }, [auditLogs]);
-
-  // Real-Time System Notification Triggers for Pending Approval Actions
-  useEffect(() => {
-    if (prevStaffBookingPendingRef.current !== null && pendingStaffBookingRequestsCount > prevStaffBookingPendingRef.current) {
-      sendSystemNotification('Staff Request: Deposit Terms Approval', {
-        body: 'Staff member requested changing the upfront deposit percentage on a client order.',
-        tag: 'sps-deposit-req-' + Date.now(),
-        data: { view: 'audit-log' },
-      });
-    }
-    prevStaffBookingPendingRef.current = pendingStaffBookingRequestsCount;
-  }, [pendingStaffBookingRequestsCount]);
-
-  useEffect(() => {
-    if (prevPendingRequestsRef.current !== null && pendingRequestsCount > prevPendingRequestsRef.current) {
-      sendSystemNotification('Stock Adjustment Request', {
-        body: 'A warehouse staff member submitted a stock adjustment request awaiting review.',
-        tag: 'sps-stock-req-' + Date.now(),
-        data: { view: 'stock-approvals' },
-      });
-    }
-    prevPendingRequestsRef.current = pendingRequestsCount;
-  }, [pendingRequestsCount]);
-
-  useEffect(() => {
-    if (prevPendingAccountsRef.current !== null && pendingUsersCount > prevPendingAccountsRef.current) {
-      const pendingUsers = users.filter((u) => u.status === 'pending');
-      const latestUser = pendingUsers[0];
-      const accountLabel = latestUser ? `"${latestUser.name}" (${latestUser.email})` : 'A new staff member';
-
-      sendSystemNotification('New Account Registration', {
-        body: `${accountLabel} registered and requires administrator approval. Tap to review.`,
-        tag: 'sps-staff-req-' + Date.now(),
-        data: { view: 'account-approvals' },
-      });
-    }
-    prevPendingAccountsRef.current = pendingUsersCount;
-  }, [pendingUsersCount, users]);
 
   // Navigation handler supporting direct routing & RBAC enforcement
   const handleNavigate = (view: string) => {
@@ -4365,24 +4243,17 @@ export default function App() {
 
         {/* VIEW 4: AUDIT LOG */}
         {effectiveView === 'audit-log' && canUserAccessView(currentUser, 'audit-log', users) && (
-          <div className="space-y-6">
-            <MobileNotificationBanner
-              permission={notificationPermission}
-              onPermissionChange={setNotificationPermission}
-              onShowToast={showToast}
-            />
-            <AuditLogView
-              logs={auditLogs}
-              products={products}
-              bookings={bookings}
-              pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
-              onViewProduct={(pId) => {
-                const p = products.find((prod) => prod.id === pId);
-                if (p) setDetailProduct(p);
-              }}
-              onViewBooking={handleOpenBookingDetails}
-            />
-          </div>
+          <AuditLogView
+            logs={auditLogs}
+            products={products}
+            bookings={bookings}
+            pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
+            onViewProduct={(pId) => {
+              const p = products.find((prod) => prod.id === pId);
+              if (p) setDetailProduct(p);
+            }}
+            onViewBooking={handleOpenBookingDetails}
+          />
         )}
 
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
@@ -4393,6 +4264,10 @@ export default function App() {
             users={users}
             fare2Leaders={fare2Leaders}
             batches={productionBatches}
+            vendors={vendors}
+            workflows={productWorkflows}
+            stageVendors={productStageVendors}
+            priceHistory={vendorPriceHistory}
             currentUser={currentUser}
             onOpenNewBookingModal={() => {
               setBookingModalProduct(undefined);
@@ -4569,6 +4444,7 @@ export default function App() {
         onOpenNewBooking={() => {
           if (!canUserAccessView(currentUser, 'bookings', users)) return;
           setBookingModalProduct(undefined);
+          setBookingToEdit(null);
           setIsBookingModalOpen(true);
         }}
       />

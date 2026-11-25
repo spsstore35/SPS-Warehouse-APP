@@ -1166,213 +1166,287 @@ export async function clearAuditLogsInDb(): Promise<void> {
  * CLIENT BOOKINGS & QUOTATIONS DATABASE SYNCHRONIZATION
  */
 
-export async function fetchBookingsFromDb(): Promise<Booking[]> {
-  try {
-    const { data: bookingsData, error: bookingsError } = await fetchAllRows('bookings', {
-      orderColumn: 'created_at',
-      ascending: false,
-    });
+function extractMissingColumnName(error: any): string | null {
+  const msg = String(error?.message || '');
+  const details = String(error?.details || '');
+  // PostgREST PGRST204: "Could not find the 'col_name' column of 'table' in the schema cache"
+  const pgrstMatch = msg.match(/Could not find the '([^']+)' column/i);
+  if (pgrstMatch?.[1]) return pgrstMatch[1];
+  // PostgreSQL 42703: column "col_name" of relation "table" does not exist / column table.col_name does not exist
+  const pgMatch =
+    msg.match(/column "([^"]+)"/i) ||
+    details.match(/column "([^"]+)"/i) ||
+    msg.match(/column [a-z_]+\.([a-z0-9_]+) does not exist/i);
+  if (pgMatch?.[1]) return pgMatch[1];
+  return null;
+}
 
-    if (bookingsError || !bookingsData || bookingsData.length === 0) {
-      if (bookingsError && !bookingsError.message?.includes('does not exist')) {
-        console.warn('Notice fetching bookings from DB:', bookingsError.message);
-      }
+export async function fetchBookingsFromDb(): Promise<Booking[]> {
+  const { data: bookingsData, error: bookingsError } = await fetchAllRows('bookings', {
+    orderColumn: 'created_at',
+    ascending: false,
+  });
+
+  if (bookingsError) {
+    if (bookingsError.message?.includes('does not exist')) {
       return [];
     }
+    throw bookingsError;
+  }
 
-    // Explicit columns: skips product_image (a full photo copy per line item).
-    // The photo is filled in from the product list in App.tsx instead.
-    const { data: itemsData, error: itemsError } = await fetchAllRows('booking_items', {
-      select:
-        'id, booking_id, product_id, product_name, product_sku, variant_id, size, color_name, color_hex, quantity, unit_price, total_price, available_stock, deficit_quantity, min_threshold, recommended_production',
-    });
-
-    if (itemsError && !itemsError.message?.includes('does not exist')) {
-      console.warn('Notice fetching booking items from DB:', itemsError.message);
-    }
-
-    const allItems = itemsData || [];
-
-    return bookingsData.map((b: any) => {
-      const lineItems: BookingItem[] = allItems
-        .filter((it: any) => it.booking_id === b.id)
-        .map((it: any) => ({
-          id: it.id,
-          productId: it.product_id,
-          productName: it.product_name,
-          productSku: it.product_sku,
-          productImage: it.product_image || undefined,
-          variantId: it.variant_id,
-          size: it.size as GarmentSize,
-          colorName: it.color_name,
-          colorHex: it.color_hex,
-          quantity: it.quantity,
-          unitPrice: Number(it.unit_price) || 0,
-          totalPrice: Number(it.total_price) || 0,
-          availableStock: it.available_stock ?? 0,
-          deficitQuantity: it.deficit_quantity ?? 0,
-          minThreshold: it.min_threshold ?? 5,
-          recommendedProduction: it.recommended_production ?? 0,
-        }));
-
-      return {
-        id: b.id,
-        bookingNumber: b.booking_number,
-        clientName: b.client_name,
-        troopGroup: b.troop_group || undefined,
-        assignedFare2: b.assigned_fare2 || undefined,
-        assignedToId: b.assigned_to_id || undefined,
-        assignedToName: b.assigned_to_name || undefined,
-        clientPhone: b.client_phone || 'N/A',
-        notes: b.notes || undefined,
-        items: lineItems,
-        subtotal: Number(b.subtotal) || 0,
-        discount: Number(b.discount) || 0,
-        total: Number(b.total) || 0,
-        depositRate: Number(b.deposit_rate) || 0.5,
-        depositPercentage: b.deposit_percentage ? Number(b.deposit_percentage) : (b.deposit_rate ? Math.round(Number(b.deposit_rate) * 100) : 50),
-        pendingDepositPercentage: b.pending_deposit_percentage ? Number(b.pending_deposit_percentage) : undefined,
-        pendingDepositPercentageBy: b.pending_deposit_percentage_by || undefined,
-        pendingDepositPercentageAt: b.pending_deposit_percentage_at || undefined,
-        depositRequired: Number(b.deposit_required) || 0,
-        depositPaid: Boolean(b.deposit_paid),
-        depositPaidAmount: Number(b.deposit_paid_amount) || 0,
-        depositPaidAt: b.deposit_paid_at || undefined,
-        finalPaidAmount: b.final_paid_amount !== null ? Number(b.final_paid_amount) : undefined,
-        finalPaidAt: b.final_paid_at || undefined,
-        paymentVerificationRequested: Boolean(b.payment_verification_requested),
-        paymentVerificationRequestedBy: b.payment_verification_requested_by || undefined,
-        paymentVerificationRequestedAt: b.payment_verification_requested_at || undefined,
-        paymentVerificationNote: b.payment_verification_note || undefined,
-        status: (b.status || 'pending') as BookingStatus,
-        stockCheckStatus: (b.stock_check_status as BookingStockCheckStatus) || undefined,
-        inventoryDeducted: Boolean(b.inventory_deducted),
-        createdById: b.created_by_id,
-        createdByName: b.created_by_name,
-        createdByRole: b.created_by_role as Role,
-        createdAt: b.created_at,
-        updatedAt: b.updated_at || b.created_at,
-      };
-    });
-  } catch (err: any) {
-    console.warn('Error fetching bookings from Supabase:', err?.message);
+  if (!bookingsData || bookingsData.length === 0) {
     return [];
   }
+
+  // Explicit columns: skips product_image (a full photo copy per line item).
+  // The photo is filled in from the product list in App.tsx instead.
+  let { data: itemsData, error: itemsError } = await fetchAllRows('booking_items', {
+    select:
+      'id, booking_id, product_id, product_name, product_sku, variant_id, size, color_name, color_hex, quantity, unit_price, total_price, available_stock, deficit_quantity, min_threshold, recommended_production',
+  });
+
+  if (
+    itemsError &&
+    (itemsError.code === 'PGRST204' ||
+      itemsError.code === '42703' ||
+      itemsError.message?.includes('column'))
+  ) {
+    const fallbackItems = await fetchAllRows('booking_items', {
+      select:
+        'id, booking_id, product_id, product_name, product_sku, variant_id, size, color_name, color_hex, quantity, unit_price, total_price, available_stock, deficit_quantity',
+    });
+    itemsData = fallbackItems.data;
+    itemsError = fallbackItems.error;
+  }
+
+  if (itemsError && !itemsError.message?.includes('does not exist')) {
+    console.warn('Notice fetching booking items from DB:', itemsError.message);
+  }
+
+  const allItems = itemsData || [];
+
+  return bookingsData.map((b: any) => {
+    const lineItems: BookingItem[] = allItems
+      .filter((it: any) => it.booking_id === b.id)
+      .map((it: any) => ({
+        id: it.id,
+        productId: it.product_id,
+        productName: it.product_name,
+        productSku: it.product_sku,
+        productImage: it.product_image || undefined,
+        variantId: it.variant_id,
+        size: it.size as GarmentSize,
+        colorName: it.color_name,
+        colorHex: it.color_hex,
+        quantity: it.quantity,
+        unitPrice: Number(it.unit_price) || 0,
+        totalPrice: Number(it.total_price) || 0,
+        availableStock: it.available_stock ?? 0,
+        deficitQuantity: it.deficit_quantity ?? 0,
+        minThreshold: it.min_threshold ?? 5,
+        recommendedProduction: it.recommended_production ?? 0,
+      }));
+
+    return {
+      id: b.id,
+      bookingNumber: b.booking_number,
+      clientName: b.client_name,
+      troopGroup: b.troop_group || undefined,
+      assignedFare2: b.assigned_fare2 || undefined,
+      assignedToId: b.assigned_to_id || undefined,
+      assignedToName: b.assigned_to_name || undefined,
+      clientPhone: b.client_phone || 'N/A',
+      notes: b.notes || undefined,
+      items: lineItems,
+      subtotal: Number(b.subtotal) || 0,
+      discount: Number(b.discount) || 0,
+      total: Number(b.total) || 0,
+      depositRate: Number(b.deposit_rate) || 0.5,
+      depositPercentage: b.deposit_percentage
+        ? Number(b.deposit_percentage)
+        : b.deposit_rate
+        ? Math.round(Number(b.deposit_rate) * 100)
+        : 50,
+      pendingDepositPercentage: b.pending_deposit_percentage ? Number(b.pending_deposit_percentage) : undefined,
+      pendingDepositPercentageBy: b.pending_deposit_percentage_by || undefined,
+      pendingDepositPercentageAt: b.pending_deposit_percentage_at || undefined,
+      depositRequired: Number(b.deposit_required) || 0,
+      depositPaid: Boolean(b.deposit_paid),
+      depositPaidAmount: Number(b.deposit_paid_amount) || 0,
+      depositPaidAt: b.deposit_paid_at || undefined,
+      finalPaidAmount: b.final_paid_amount !== null ? Number(b.final_paid_amount) : undefined,
+      finalPaidAt: b.final_paid_at || undefined,
+      paymentVerificationRequested: Boolean(b.payment_verification_requested),
+      paymentVerificationRequestedBy: b.payment_verification_requested_by || undefined,
+      paymentVerificationRequestedAt: b.payment_verification_requested_at || undefined,
+      paymentVerificationNote: b.payment_verification_note || undefined,
+      status: (b.status || 'pending') as BookingStatus,
+      stockCheckStatus: (b.stock_check_status as BookingStockCheckStatus) || undefined,
+      inventoryDeducted: Boolean(b.inventory_deducted),
+      createdById: b.created_by_id,
+      createdByName: b.created_by_name,
+      createdByRole: b.created_by_role as Role,
+      createdAt: b.created_at,
+      updatedAt: b.updated_at || b.created_at,
+    };
+  });
 }
 
 export async function insertBookingInDb(booking: Booking): Promise<void> {
-  try {
-    const bookingPayload: Record<string, any> = {
-      id: booking.id,
-      booking_number: booking.bookingNumber,
-      client_name: booking.clientName,
-      troop_group: booking.troopGroup || null,
-      assigned_fare2: booking.assignedFare2 || null,
-      assigned_to_id: booking.assignedToId || null,
-      assigned_to_name: booking.assignedToName || null,
-      client_phone: booking.clientPhone || 'N/A',
-      notes: booking.notes || null,
-      subtotal: booking.subtotal,
-      discount: booking.discount,
-      total: booking.total,
-      deposit_rate: booking.depositRate,
-      deposit_percentage: booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50),
-      pending_deposit_percentage: booking.pendingDepositPercentage || null,
-      pending_deposit_percentage_by: booking.pendingDepositPercentageBy || null,
-      pending_deposit_percentage_at: booking.pendingDepositPercentageAt || null,
-      deposit_required: booking.depositRequired,
-      deposit_paid: booking.depositPaid,
-      deposit_paid_amount: booking.depositPaidAmount || 0,
-      deposit_paid_at: booking.depositPaidAt || null,
-      final_paid_amount: booking.finalPaidAmount || 0,
-      final_paid_at: booking.finalPaidAt || null,
-      payment_verification_requested: Boolean(booking.paymentVerificationRequested),
-      payment_verification_requested_by: booking.paymentVerificationRequestedBy || null,
-      payment_verification_requested_at: booking.paymentVerificationRequestedAt || null,
-      payment_verification_note: booking.paymentVerificationNote || null,
-      status: booking.status,
-      stock_check_status: booking.stockCheckStatus || null,
-      inventory_deducted: booking.inventoryDeducted,
-      created_by_id: booking.createdById,
-      created_by_name: booking.createdByName,
-      created_by_role: booking.createdByRole,
-      created_at: booking.createdAt,
-      updated_at: booking.updatedAt,
-    };
+  const bookingPayload: Record<string, any> = {
+    id: booking.id,
+    booking_number: booking.bookingNumber,
+    client_name: booking.clientName,
+    troop_group: booking.troopGroup || null,
+    assigned_fare2: booking.assignedFare2 || null,
+    assigned_to_id: booking.assignedToId || null,
+    assigned_to_name: booking.assignedToName || null,
+    client_phone: booking.clientPhone || 'N/A',
+    notes: booking.notes || null,
+    subtotal: booking.subtotal,
+    discount: booking.discount,
+    total: booking.total,
+    deposit_rate: booking.depositRate,
+    deposit_percentage: booking.depositPercentage ?? (booking.depositRate ? Math.round(booking.depositRate * 100) : 50),
+    pending_deposit_percentage: booking.pendingDepositPercentage || null,
+    pending_deposit_percentage_by: booking.pendingDepositPercentageBy || null,
+    pending_deposit_percentage_at: booking.pendingDepositPercentageAt || null,
+    deposit_required: booking.depositRequired,
+    deposit_paid: booking.depositPaid,
+    deposit_paid_amount: booking.depositPaidAmount || 0,
+    deposit_paid_at: booking.depositPaidAt || null,
+    final_paid_amount: booking.finalPaidAmount || 0,
+    final_paid_at: booking.finalPaidAt || null,
+    payment_verification_requested: Boolean(booking.paymentVerificationRequested),
+    payment_verification_requested_by: booking.paymentVerificationRequestedBy || null,
+    payment_verification_requested_at: booking.paymentVerificationRequestedAt || null,
+    payment_verification_note: booking.paymentVerificationNote || null,
+    status: booking.status,
+    stock_check_status: booking.stockCheckStatus || null,
+    inventory_deducted: booking.inventoryDeducted,
+    created_by_id: booking.createdById,
+    created_by_name: booking.createdByName,
+    created_by_role: booking.createdByRole,
+    created_at: booking.createdAt,
+    updated_at: booking.updatedAt,
+  };
 
-    let { error: bookingErr } = await supabase.from('bookings').upsert(bookingPayload);
+  let bookingErr: any = null;
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const res = await supabase.from('bookings').upsert(bookingPayload);
+    bookingErr = res.error;
+    if (!bookingErr) break;
+
     if (
-      bookingErr &&
-      (bookingErr.message?.includes('troop_group') ||
-        bookingErr.details?.includes('troop_group') ||
-        bookingErr.message?.includes('assigned_fare2') ||
-        bookingErr.message?.includes('assigned_to') ||
-        bookingErr.message?.includes('stock_check_status') ||
-        bookingErr.message?.includes('payment_verification') ||
-        bookingErr.details?.includes('payment_verification') ||
-        bookingErr.code === 'PGRST204' ||
-        bookingErr.code === '42703')
+      bookingErr.code === 'PGRST204' ||
+      bookingErr.code === '42703' ||
+      bookingErr.message?.includes('Could not find the')
     ) {
-      if (bookingErr.message?.includes('troop_group') || bookingErr.details?.includes('troop_group')) {
-        delete bookingPayload.troop_group;
+      const missingCol = extractMissingColumnName(bookingErr);
+      if (missingCol && missingCol in bookingPayload) {
+        delete bookingPayload[missingCol];
+        continue;
       }
-      delete bookingPayload.stock_check_status;
-      delete bookingPayload.assigned_fare2;
-      delete bookingPayload.assigned_to_id;
-      delete bookingPayload.assigned_to_name;
-      delete bookingPayload.payment_verification_requested;
-      delete bookingPayload.payment_verification_requested_by;
-      delete bookingPayload.payment_verification_requested_at;
-      delete bookingPayload.payment_verification_note;
-      const retry = await supabase.from('bookings').upsert(bookingPayload);
-      bookingErr = retry.error;
-    }
-
-    if (bookingErr) {
-      console.warn('Notice inserting booking in Supabase:', bookingErr.message);
-      throw bookingErr;
-    }
-
-    // Cleanly replace line items so any removed items during an Admin edit are removed in DB
-    const { error: delItemsErr } = await supabase
-      .from('booking_items')
-      .delete()
-      .eq('booking_id', booking.id);
-    if (delItemsErr) {
-      console.warn('Notice clearing old booking items in Supabase:', delItemsErr.message);
-    }
-
-    if (booking.items && booking.items.length > 0) {
-      const itemsPayload = booking.items.map((it) => ({
-        id: it.id,
-        booking_id: booking.id,
-        product_id: it.productId,
-        product_name: it.productName,
-        product_sku: it.productSku,
-        // Never store a second full copy of the photo; the app fills it in from the product.
-        product_image: isInlineImage(it.productImage) ? null : it.productImage || null,
-        variant_id: it.variantId,
-        size: it.size,
-        color_name: it.colorName,
-        color_hex: it.colorHex,
-        quantity: it.quantity,
-        unit_price: it.unitPrice,
-        total_price: it.totalPrice,
-        available_stock: it.availableStock,
-        deficit_quantity: it.deficitQuantity,
-        min_threshold: it.minThreshold ?? 5,
-        recommended_production: it.recommendedProduction ?? 0,
-        created_at: booking.createdAt,
-      }));
-
-      const { error: itemsErr } = await supabase.from('booking_items').upsert(itemsPayload);
-      if (itemsErr) {
-        console.warn('Notice inserting booking items in Supabase:', itemsErr.message);
+      // Fallback strip known optional columns if message format wasn't matched
+      const optionalCols = [
+        'stock_check_status',
+        'assigned_fare2',
+        'assigned_to_id',
+        'assigned_to_name',
+        'payment_verification_requested',
+        'payment_verification_requested_by',
+        'payment_verification_requested_at',
+        'payment_verification_note',
+        'pending_deposit_percentage',
+        'pending_deposit_percentage_by',
+        'pending_deposit_percentage_at',
+        'deposit_percentage',
+        'troop_group',
+      ];
+      let removedAny = false;
+      for (const col of optionalCols) {
+        if (col in bookingPayload) {
+          delete bookingPayload[col];
+          removedAny = true;
+        }
       }
+      if (removedAny) continue;
     }
-  } catch (err: any) {
-    console.warn('Supabase booking sync warning:', err?.message);
-    throw err;
+
+    if (
+      (bookingErr.code === '22P02' || bookingErr.message?.includes('user_role')) &&
+      (bookingPayload.created_by_role === 'full_admin' || bookingPayload.created_by_role === 'leader')
+    ) {
+      bookingPayload.created_by_role = bookingPayload.created_by_role === 'full_admin' ? 'admin' : 'worker';
+      continue;
+    }
+    break;
+  }
+
+  if (bookingErr) {
+    console.warn('Notice inserting booking in Supabase:', bookingErr.message);
+    throw bookingErr;
+  }
+
+  // Cleanly replace line items so any removed items during an Admin edit are removed in DB
+  const { error: delItemsErr } = await supabase
+    .from('booking_items')
+    .delete()
+    .eq('booking_id', booking.id);
+  if (delItemsErr) {
+    console.warn('Notice clearing old booking items in Supabase:', delItemsErr.message);
+  }
+
+  if (booking.items && booking.items.length > 0) {
+    let itemsPayload: Record<string, any>[] = booking.items.map((it) => ({
+      id: it.id,
+      booking_id: booking.id,
+      product_id: it.productId,
+      product_name: it.productName,
+      product_sku: it.productSku,
+      // Never store a second full copy of the photo; the app fills it in from the product.
+      product_image: isInlineImage(it.productImage) ? null : it.productImage || null,
+      variant_id: it.variantId,
+      size: it.size,
+      color_name: it.colorName,
+      color_hex: it.colorHex,
+      quantity: it.quantity,
+      unit_price: it.unitPrice,
+      total_price: it.totalPrice,
+      available_stock: it.availableStock,
+      deficit_quantity: it.deficitQuantity,
+      min_threshold: it.minThreshold ?? 5,
+      recommended_production: it.recommendedProduction ?? 0,
+      created_at: booking.createdAt,
+    }));
+
+    let itemsErr: any = null;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const res = await supabase.from('booking_items').upsert(itemsPayload);
+      itemsErr = res.error;
+      if (!itemsErr) break;
+      if (
+        itemsErr.code === 'PGRST204' ||
+        itemsErr.code === '42703' ||
+        itemsErr.message?.includes('Could not find the')
+      ) {
+        const missingCol = extractMissingColumnName(itemsErr);
+        if (missingCol && missingCol in itemsPayload[0]) {
+          itemsPayload = itemsPayload.map((row) => {
+            const copy = { ...row };
+            delete copy[missingCol];
+            return copy;
+          });
+          continue;
+        }
+      }
+      break;
+    }
+
+    if (itemsErr) {
+      console.warn('Notice inserting booking items in Supabase:', itemsErr.message);
+      throw itemsErr;
+    }
   }
 }
 
@@ -1380,81 +1454,68 @@ export async function updateBookingInDb(
   bookingId: string,
   updates: Partial<Booking>
 ): Promise<void> {
-  try {
-    const payload: Record<string, any> = {
-      updated_at: new Date().toISOString(),
-    };
+  const payload: Record<string, any> = {
+    updated_at: new Date().toISOString(),
+  };
 
-    if (updates.status !== undefined) payload.status = updates.status;
-    if (updates.stockCheckStatus !== undefined) payload.stock_check_status = updates.stockCheckStatus || null;
-    if (updates.clientName !== undefined) payload.client_name = updates.clientName;
-    if (updates.clientPhone !== undefined) payload.client_phone = updates.clientPhone;
-    if (updates.troopGroup !== undefined) payload.troop_group = updates.troopGroup;
-    if (updates.assignedFare2 !== undefined) payload.assigned_fare2 = updates.assignedFare2 || null;
-    if (updates.assignedToId !== undefined) payload.assigned_to_id = updates.assignedToId || null;
-    if (updates.assignedToName !== undefined) payload.assigned_to_name = updates.assignedToName || null;
-    if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
-    if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
-    if (updates.depositPercentage !== undefined) payload.deposit_percentage = updates.depositPercentage;
-    if (updates.pendingDepositPercentage !== undefined) payload.pending_deposit_percentage = updates.pendingDepositPercentage;
-    if (updates.pendingDepositPercentageBy !== undefined) payload.pending_deposit_percentage_by = updates.pendingDepositPercentageBy;
-    if (updates.pendingDepositPercentageAt !== undefined) payload.pending_deposit_percentage_at = updates.pendingDepositPercentageAt;
-    if (updates.depositRequired !== undefined) payload.deposit_required = updates.depositRequired;
-    if (updates.depositPaid !== undefined) payload.deposit_paid = updates.depositPaid;
-    if (updates.depositPaidAmount !== undefined) payload.deposit_paid_amount = updates.depositPaidAmount;
-    if (updates.depositPaidAt !== undefined) payload.deposit_paid_at = updates.depositPaidAt;
-    if (updates.finalPaidAmount !== undefined) payload.final_paid_amount = updates.finalPaidAmount;
-    if (updates.finalPaidAt !== undefined) payload.final_paid_at = updates.finalPaidAt;
-    if (updates.paymentVerificationRequested !== undefined) {
-      payload.payment_verification_requested = Boolean(updates.paymentVerificationRequested);
-    }
-    if (updates.paymentVerificationRequestedBy !== undefined) {
-      payload.payment_verification_requested_by = updates.paymentVerificationRequestedBy || null;
-    }
-    if (updates.paymentVerificationRequestedAt !== undefined) {
-      payload.payment_verification_requested_at = updates.paymentVerificationRequestedAt || null;
-    }
-    if (updates.paymentVerificationNote !== undefined) {
-      payload.payment_verification_note = updates.paymentVerificationNote || null;
-    }
-    if (updates.notes !== undefined) payload.notes = updates.notes;
-    if (updates.subtotal !== undefined) payload.subtotal = updates.subtotal;
-    if (updates.discount !== undefined) payload.discount = updates.discount;
-    if (updates.total !== undefined) payload.total = updates.total;
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.stockCheckStatus !== undefined) payload.stock_check_status = updates.stockCheckStatus || null;
+  if (updates.clientName !== undefined) payload.client_name = updates.clientName;
+  if (updates.clientPhone !== undefined) payload.client_phone = updates.clientPhone;
+  if (updates.troopGroup !== undefined) payload.troop_group = updates.troopGroup;
+  if (updates.assignedFare2 !== undefined) payload.assigned_fare2 = updates.assignedFare2 || null;
+  if (updates.assignedToId !== undefined) payload.assigned_to_id = updates.assignedToId || null;
+  if (updates.assignedToName !== undefined) payload.assigned_to_name = updates.assignedToName || null;
+  if (updates.inventoryDeducted !== undefined) payload.inventory_deducted = updates.inventoryDeducted;
+  if (updates.depositRate !== undefined) payload.deposit_rate = updates.depositRate;
+  if (updates.depositPercentage !== undefined) payload.deposit_percentage = updates.depositPercentage;
+  if (updates.pendingDepositPercentage !== undefined) payload.pending_deposit_percentage = updates.pendingDepositPercentage;
+  if (updates.pendingDepositPercentageBy !== undefined) payload.pending_deposit_percentage_by = updates.pendingDepositPercentageBy;
+  if (updates.pendingDepositPercentageAt !== undefined) payload.pending_deposit_percentage_at = updates.pendingDepositPercentageAt;
+  if (updates.depositRequired !== undefined) payload.deposit_required = updates.depositRequired;
+  if (updates.depositPaid !== undefined) payload.deposit_paid = updates.depositPaid;
+  if (updates.depositPaidAmount !== undefined) payload.deposit_paid_amount = updates.depositPaidAmount;
+  if (updates.depositPaidAt !== undefined) payload.deposit_paid_at = updates.depositPaidAt;
+  if (updates.finalPaidAmount !== undefined) payload.final_paid_amount = updates.finalPaidAmount;
+  if (updates.finalPaidAt !== undefined) payload.final_paid_at = updates.finalPaidAt;
+  if (updates.paymentVerificationRequested !== undefined) {
+    payload.payment_verification_requested = Boolean(updates.paymentVerificationRequested);
+  }
+  if (updates.paymentVerificationRequestedBy !== undefined) {
+    payload.payment_verification_requested_by = updates.paymentVerificationRequestedBy || null;
+  }
+  if (updates.paymentVerificationRequestedAt !== undefined) {
+    payload.payment_verification_requested_at = updates.paymentVerificationRequestedAt || null;
+  }
+  if (updates.paymentVerificationNote !== undefined) {
+    payload.payment_verification_note = updates.paymentVerificationNote || null;
+  }
+  if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.subtotal !== undefined) payload.subtotal = updates.subtotal;
+  if (updates.discount !== undefined) payload.discount = updates.discount;
+  if (updates.total !== undefined) payload.total = updates.total;
 
-    let { error } = await supabase.from('bookings').update(payload).eq('id', bookingId);
+  let error: any = null;
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const res = await supabase.from('bookings').update(payload).eq('id', bookingId);
+    error = res.error;
+    if (!error) break;
     if (
-      error &&
-      (error.message?.includes('troop_group') ||
-        error.details?.includes('troop_group') ||
-        error.message?.includes('assigned_fare2') ||
-        error.message?.includes('assigned_to') ||
-        error.message?.includes('stock_check_status') ||
-        error.message?.includes('payment_verification') ||
-        error.details?.includes('payment_verification') ||
-        error.code === 'PGRST204' ||
-        error.code === '42703')
+      error.code === 'PGRST204' ||
+      error.code === '42703' ||
+      error.message?.includes('Could not find the')
     ) {
-      if (error.message?.includes('troop_group') || error.details?.includes('troop_group')) {
-        delete payload.troop_group;
+      const missingCol = extractMissingColumnName(error);
+      if (missingCol && missingCol in payload) {
+        delete payload[missingCol];
+        continue;
       }
-      delete payload.stock_check_status;
-      delete payload.assigned_fare2;
-      delete payload.assigned_to_id;
-      delete payload.assigned_to_name;
-      delete payload.payment_verification_requested;
-      delete payload.payment_verification_requested_by;
-      delete payload.payment_verification_requested_at;
-      delete payload.payment_verification_note;
-      const retry = await supabase.from('bookings').update(payload).eq('id', bookingId);
-      error = retry.error;
     }
-    if (error) {
-      throw error;
-    }
-  } catch (err: any) {
-    console.warn('Supabase updateBooking error:', err?.message);
-    throw err;
+    break;
+  }
+  if (error) {
+    console.warn('Supabase updateBooking error:', error?.message);
+    throw error;
   }
 }
 

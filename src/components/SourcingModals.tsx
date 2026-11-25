@@ -267,6 +267,7 @@ interface StartBatchModalProps {
   productStageVendors: ProductStageVendor[];
   priceHistory: VendorPriceEntry[];
   existingBatchCount: number;
+  initialBatch?: ProductionBatch | null;
   onClose: () => void;
   onCreateBatch: (batch: ProductionBatch) => void;
 }
@@ -279,6 +280,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
   productStageVendors,
   priceHistory,
   existingBatchCount,
+  initialBatch,
   onClose,
   onCreateBatch,
 }) => {
@@ -291,6 +293,26 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    if (initialBatch) {
+      setBatchCode(initialBatch.batchCode);
+      setQuantity(initialBatch.quantity);
+      setVariantId(initialBatch.variantId || product.variants[0]?.id || '');
+      setTargetDate(initialBatch.targetDate || '');
+
+      const mergedAssignments: Record<string, BatchStageAssignment> = {
+        ...(initialBatch.stageAssignments || {}),
+      };
+      activeStages.forEach((stageKey) => {
+        if (stageKey === 'stock_in') return;
+        if (!mergedAssignments[stageKey]) {
+          mergedAssignments[stageKey] = {};
+        }
+      });
+      setAssignments(mergedAssignments);
+      setError('');
+      return;
+    }
+
     setBatchCode(`Batch #${105 + existingBatchCount}`);
     setQuantity(100);
     setVariantId(product.variants[0]?.id || '');
@@ -319,7 +341,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
     });
     setAssignments(nextAssignments);
     setError('');
-  }, [isOpen, product, activeStages, productStageVendors, priceHistory, existingBatchCount]);
+  }, [isOpen, initialBatch, product, activeStages, productStageVendors, priceHistory, existingBatchCount]);
 
   if (!isOpen) return null;
 
@@ -337,18 +359,27 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
       return;
     }
 
-    const batch: ProductionBatch = {
-      id: `batch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      batchCode: batchCode.trim(),
-      productId: product.id,
-      variantId: variantId || undefined,
-      quantity: Math.round(quantity),
-      targetDate: targetDate || undefined,
-      currentStageKey: firstStage,
-      status: 'in_progress',
-      stageAssignments: assignments,
-      createdAt: new Date().toISOString(),
-    };
+    const batch: ProductionBatch = initialBatch
+      ? {
+          ...initialBatch,
+          batchCode: batchCode.trim(),
+          variantId: variantId || undefined,
+          quantity: Math.round(quantity),
+          targetDate: targetDate || undefined,
+          stageAssignments: assignments,
+        }
+      : {
+          id: `batch_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          batchCode: batchCode.trim(),
+          productId: product.id,
+          variantId: variantId || undefined,
+          quantity: Math.round(quantity),
+          targetDate: targetDate || undefined,
+          currentStageKey: firstStage,
+          status: 'in_progress',
+          stageAssignments: assignments,
+          createdAt: new Date().toISOString(),
+        };
     onCreateBatch(batch);
   };
 
@@ -357,7 +388,9 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
       <div className="w-full max-w-xl bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden my-4">
         <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
           <div>
-            <h3 className="text-base font-bold text-slate-900">Start New Production Batch</h3>
+            <h3 className="text-base font-bold text-slate-900">
+              {initialBatch ? 'Edit Open Production Batch' : 'Start New Production Batch'}
+            </h3>
             <p className="text-xs text-slate-500 mt-0.5 truncate max-w-[340px]">
               {product.name} · SKU {product.sku}
             </p>
@@ -548,7 +581,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
               className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 min-h-[40px]"
             >
               <Check className="w-4 h-4" />
-              <span>Start Batch</span>
+              <span>{initialBatch ? 'Save Batch Changes' : 'Start Batch'}</span>
             </button>
           </div>
         </form>

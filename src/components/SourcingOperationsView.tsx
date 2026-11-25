@@ -100,6 +100,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
+  const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [stockInBatch, setStockInBatch] = useState<ProductionBatch | null>(null);
 
   // Stage Drawer Controls
@@ -833,7 +834,10 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => setIsStartBatchOpen(true)}
+                    onClick={() => {
+                      setEditingBatch(null);
+                      setIsStartBatchOpen(true);
+                    }}
                     className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 min-h-[40px]"
                   >
                     <Plus className="w-4 h-4" />
@@ -913,14 +917,30 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               )}
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => onDeleteBatch(batch.id)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                              title="Delete batch"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              {batch.status === 'in_progress' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingBatch(batch);
+                                    setIsStartBatchOpen(true);
+                                  }}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-200/70 inline-flex items-center gap-1"
+                                  title="Edit batch quantity & choose vendors"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                  <span>Qty &amp; Vendors</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => onDeleteBatch(batch.id)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                                title="Delete batch"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
 
                           {/* Clean Progress Bar */}
@@ -1463,7 +1483,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               );
             })()}
 
-            {/* Start New Batch Modal */}
+            {/* Start / Edit Production Batch Modal */}
             <StartBatchModal
               isOpen={isStartBatchOpen}
               product={selectedProduct}
@@ -1472,12 +1492,22 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               productStageVendors={stageVendors}
               priceHistory={priceHistory}
               existingBatchCount={batches.length}
-              onClose={() => setIsStartBatchOpen(false)}
+              initialBatch={editingBatch}
+              onClose={() => {
+                setIsStartBatchOpen(false);
+                setEditingBatch(null);
+              }}
               onCreateBatch={(batch) => {
                 onSaveBatch(batch);
                 setIsStartBatchOpen(false);
+                const wasEdit = Boolean(editingBatch);
+                setEditingBatch(null);
                 setBatchTab('active');
-                onShowToast?.(`${batch.batchCode} started at ${getStageMeta(batch.currentStageKey).shortLabel}.`);
+                onShowToast?.(
+                  wasEdit
+                    ? `${batch.batchCode} updated (${batch.quantity} pcs).`
+                    : `${batch.batchCode} started at ${getStageMeta(batch.currentStageKey).shortLabel}.`
+                );
               }}
             />
 

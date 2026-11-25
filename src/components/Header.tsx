@@ -182,7 +182,7 @@ export const Header: React.FC<HeaderProps> = ({
                   title="Client bookings, quotations and deposit tracking"
                 >
                   <CalendarCheck className="w-4 h-4 text-blue-600" />
-                  <span>Bookings</span>
+                  <span>Client Bookings</span>
                   {pendingBookingsCount > 0 && (
                     <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
                       {pendingBookingsCount}
@@ -202,7 +202,7 @@ export const Header: React.FC<HeaderProps> = ({
                   title="Store calendar events, tasks, and mobile calendar sync"
                 >
                   <CalendarDays className="w-4 h-4 text-blue-600" />
-                  <span>Calendar</span>
+                  <span>Calendar &amp; Tasks</span>
                 </button>
               )}
 
@@ -221,6 +221,21 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
+              {canUserAccessView(currentUser, 'analytics', users) && (
+                <button
+                  onClick={() => onNavigate('analytics')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'analytics'
+                      ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
+                      : ''
+                  }`}
+                  title="Admin sales analytics, branch demand & production aggregator"
+                >
+                  <BarChart3 className="w-4 h-4 text-emerald-600" />
+                  <span>Analytics &amp; Production</span>
+                </button>
+              )}
+
               {canUserAccessView(currentUser, 'sourcing', users) && (
                 <button
                   onClick={() => onNavigate('sourcing')}
@@ -233,21 +248,6 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Factory className="w-4 h-4 text-amber-600" />
                   <span>Sourcing &amp; Operations</span>
-                </button>
-              )}
-
-              {canUserAccessView(currentUser, 'marketing', users) && (
-                <button
-                  onClick={() => onNavigate('marketing')}
-                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'marketing'
-                      ? 'text-rose-700 font-bold border-b-2 border-rose-600 pb-0.5'
-                      : ''
-                  }`}
-                  title="Marketing Team promos, product discounts & offer campaigns"
-                >
-                  <Megaphone className="w-4 h-4 text-rose-600" />
-                  <span>Marketing &amp; Offers</span>
                 </button>
               )}
 
@@ -266,18 +266,18 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'analytics', users) && (
+              {canUserAccessView(currentUser, 'marketing', users) && (
                 <button
-                  onClick={() => onNavigate('analytics')}
+                  onClick={() => onNavigate('marketing')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'analytics'
-                      ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5'
+                    activeView === 'marketing'
+                      ? 'text-rose-700 font-bold border-b-2 border-rose-600 pb-0.5'
                       : ''
                   }`}
-                  title="Admin sales analytics, branch demand & production aggregator"
+                  title="Marketing Team promos, product discounts & offer campaigns"
                 >
-                  <BarChart3 className="w-4 h-4 text-emerald-600" />
-                  <span>Analytics</span>
+                  <Megaphone className="w-4 h-4 text-rose-600" />
+                  <span>Marketing &amp; Offers</span>
                 </button>
               )}
 
@@ -296,6 +296,22 @@ export const Header: React.FC<HeaderProps> = ({
                   {pendingStockCount > 0 && (
                     <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[11px] rounded-full min-w-[18px]">
                       {pendingStockCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'audit-log', users) && (
+                <button
+                  onClick={() => onNavigate('audit-log')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
+                  }`}
+                >
+                  <span>Stock Audit Log</span>
+                  {pendingAuditNotificationsCount > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
+                      {pendingAuditNotificationsCount}
                     </span>
                   )}
                 </button>
@@ -345,22 +361,6 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   {isAdmin ? 'Add New Item' : '+ Add New Item'}
-                </button>
-              )}
-
-              {canUserAccessView(currentUser, 'audit-log', users) && (
-                <button
-                  onClick={() => onNavigate('audit-log')}
-                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                    activeView === 'audit-log' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                  }`}
-                >
-                  <span>Stock Audit Log</span>
-                  {pendingAuditNotificationsCount > 0 && (
-                    <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse shadow-xs">
-                      {pendingAuditNotificationsCount}
-                    </span>
-                  )}
                 </button>
               )}
             </nav>
@@ -465,7 +465,7 @@ export const Header: React.FC<HeaderProps> = ({
                     )}
                   </div>
 
-                  {/* Fast Navigation Links */}
+                  {/* Fast Navigation Links (Ordered 1-11 per Keep Notes) */}
                   <div className="py-2 space-y-1 max-h-[55vh] overflow-y-auto">
                     <button
                       type="button"
@@ -492,7 +492,7 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <span className="flex items-center gap-2">
                           <CalendarCheck className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Client Bookings</span>
+                          <span>Client Bookings &amp; Quotations</span>
                         </span>
                         {pendingBookingsCount > 0 && (
                           <span className="px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[10px] rounded-full">
@@ -534,6 +534,22 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
+                    {canUserAccessView(currentUser, 'analytics', users) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('analytics');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-900 bg-emerald-50/70 hover:bg-emerald-100/70 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Analytics &amp; Production</span>
+                        </span>
+                      </button>
+                    )}
+
                     {canUserAccessView(currentUser, 'sourcing', users) && (
                       <button
                         type="button"
@@ -546,22 +562,6 @@ export const Header: React.FC<HeaderProps> = ({
                         <span className="flex items-center gap-2">
                           <Factory className="w-3.5 h-3.5 text-amber-600" />
                           <span>Sourcing &amp; Operations</span>
-                        </span>
-                      </button>
-                    )}
-
-                    {canUserAccessView(currentUser, 'marketing', users) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          onNavigate('marketing');
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-950 bg-rose-50/80 hover:bg-rose-100/80 transition-colors"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Megaphone className="w-3.5 h-3.5 text-rose-600" />
-                          <span>Marketing &amp; Offers</span>
                         </span>
                       </button>
                     )}
@@ -582,56 +582,19 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'add-product', users) && (
+                    {canUserAccessView(currentUser, 'marketing', users) && (
                       <button
                         type="button"
                         onClick={() => {
                           setIsProfileOpen(false);
-                          onNavigate('add-product');
+                          onNavigate('marketing');
                         }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-950 bg-rose-50/80 hover:bg-rose-100/80 transition-colors"
                       >
                         <span className="flex items-center gap-2">
-                          <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
-                          <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
+                          <Megaphone className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Marketing &amp; Offers</span>
                         </span>
-                      </button>
-                    )}
-
-                    {canUserAccessView(currentUser, 'analytics', users) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          onNavigate('analytics');
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-emerald-900 bg-emerald-50/70 hover:bg-emerald-100/70 transition-colors"
-                      >
-                        <span className="flex items-center gap-2">
-                          <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Analytics &amp; Production</span>
-                        </span>
-                      </button>
-                    )}
-
-                    {canUserAccessView(currentUser, 'account-approvals', users) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          onNavigate('account-approvals');
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Users className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Account Approvals</span>
-                        </span>
-                        {pendingAccountsCount > 0 && (
-                          <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full animate-pulse">
-                            {pendingAccountsCount}
-                          </span>
-                        )}
                       </button>
                     )}
 
@@ -646,7 +609,7 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <span className="flex items-center gap-2">
                           <CheckSquare className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Stock Approvals</span>
+                          <span>Stock Adjustment Approvals</span>
                         </span>
                         {pendingStockCount > 0 && (
                           <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full">
@@ -677,6 +640,43 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
+                    {canUserAccessView(currentUser, 'account-approvals', users) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('account-approvals');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Users className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Account Approvals &amp; Staff List</span>
+                        </span>
+                        {pendingAccountsCount > 0 && (
+                          <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 font-bold text-[10px] rounded-full animate-pulse">
+                            {pendingAccountsCount}
+                          </span>
+                        )}
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'add-product', users) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('add-product');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <PlusCircle className="w-3.5 h-3.5 text-amber-600" />
+                          <span>{isAdmin ? 'Add New Item' : 'Submit New Item'}</span>
+                        </span>
+                      </button>
+                    )}
+
                     {!isLeader && (
                       <button
                         type="button"
@@ -696,7 +696,7 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <span className="flex items-center gap-2">
                           <Bell className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Phone Alerts &amp; Test</span>
+                          <span>Phone Notifications &amp; Test Alert</span>
                         </span>
                         <span className="text-[10px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.5 rounded">
                           Test Alert

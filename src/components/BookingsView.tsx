@@ -1,5 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Booking, BookingStatus, Fare2LeaderAssignment, Product, ProductionBatch, User } from '../types/inventory';
+import {
+  BatchStageAssignment,
+  Booking,
+  BookingStatus,
+  Fare2LeaderAssignment,
+  OperationStageKey,
+  Product,
+  ProductStageVendor,
+  ProductWorkflow,
+  ProductionBatch,
+  ShortageBatchConfig,
+  User,
+  Vendor,
+  VendorPriceEntry,
+} from '../types/inventory';
+import {
+  DEFAULT_STAGE_KEYS,
+  getStageMeta,
+  inferDefaultWorkflowType,
+} from '../utils/sourcing';
 import {
   SCOUT_FERA2_LIST,
   getScoutFare2Meta,
@@ -40,6 +59,10 @@ interface BookingsViewProps {
   products?: Product[];
   users?: User[];
   batches?: ProductionBatch[];
+  vendors?: Vendor[];
+  workflows?: ProductWorkflow[];
+  stageVendors?: ProductStageVendor[];
+  priceHistory?: VendorPriceEntry[];
   fare2Leaders?: Record<string, Fare2LeaderAssignment>;
   currentUser: User;
   onOpenNewBookingModal: () => void;
@@ -50,7 +73,11 @@ interface BookingsViewProps {
   onDeclinePaymentVerification?: (bookingId: string) => void;
   onDeleteBooking: (bookingId: string) => void;
   onUpdateBooking?: (booking: Booking) => void;
-  onSendShortageToPurchases?: (booking: Booking, targetDate?: string) => void;
+  onSendShortageToPurchases?: (
+    booking: Booking,
+    targetDate?: string,
+    customConfigs?: ShortageBatchConfig[]
+  ) => void;
   onConfirmBookingStockReady?: (booking: Booking) => void;
   onOpenSourcing?: () => void;
   onOpenCalendar?: () => void;
@@ -65,6 +92,10 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   products = [],
   users = [],
   batches = [],
+  vendors = [],
+  workflows = [],
+  stageVendors = [],
+  priceHistory = [],
   fare2Leaders = {},
   currentUser,
   onOpenNewBookingModal,
@@ -135,6 +166,93 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     d.setDate(d.getDate() + 5);
     return d.toISOString().slice(0, 10);
   });
+  const [shortageBatchDraft, setShortageBatchDraft] = useState<{
+    booking: Booking;
+    targetDate: string;
+    items: Array<{
+      productId: string;
+      variantId: string;
+      productName: string;
+      size: string;
+      colorName: string;
+      minShortage: number;
+      orderQty: number;
+      activeStages: OperationStageKey[];
+      stageAssignments: Record<string, BatchStageAssignment>;
+    }>;
+  } | null>(null);
+
+  const openShortageBatchModal = (booking: Booking) => {
+    const draftItems: Array<{
+      productId: string;
+      variantId: string;
+      productName: string;
+      size: string;
+      colorName: string;
+      minShortage: number;
+      orderQty: number;
+      activeStages: OperationStageKey[];
+      stageAssignments: Record<string, BatchStageAssignment>;
+    }> = [];
+
+    booking.items.forEach((it) => {
+      const prod = products.find((p) => p.id === it.productId);
+      const variant = prod?.variants.find((v) => v.id === it.variantId);
+      const liveAvail = variant ? variant.quantity : it.availableStock ?? 0;
+      const deficit = booking.inventoryDeducted ? 0 : Math.max(0, (it.quantity || 0) - liveAvail);
+      if (deficit <= 0) return;
+
+      const wf = workflows.find((w) => w.productId === it.productId);
+      const wfType = wf?.workflowType || (prod ? inferDefaultWorkflowType(prod) : 'manufactured');
+      const activeStages = (
+        wf?.activeStages && wf.activeStages.length > 0
+          ? wf.activeStages
+          : DEFAULT_STAGE_KEYS[wfType]
+      ).filter((k) => k !== 'stock_in');
+
+      const initialAssignments: Record<string, BatchStageAssignment> = {};
+      activeStages.forEach((stageKey) => {
+        const links = stageVendors.filter(
+          (psv) => psv.productId === it.productId && psv.stageKey === stageKey
+        );
+        const primary = links.find((l) => l.isPrimary) || links[0];
+        if (primary) {
+          const latestPrice = priceHistory
+            .filter((ph) => ph.productStageVendorId === primary.id)
+            .sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate))[0];
+          initialAssignments[stageKey] = {
+            vendorId: primary.vendorId,
+            cost: latestPrice?.unitPrice,
+          };
+        } else {
+          initialAssignments[stageKey] = {};
+        }
+      });
+
+      draftItems.push({
+        productId: it.productId,
+        variantId: it.variantId,
+        productName: it.productName,
+        size: String(it.size || 'Standard'),
+        colorName: it.colorName || 'Standard',
+        minShortage: deficit,
+        orderQty: deficit,
+        activeStages,
+        stageAssignments: initialAssignments,
+      });
+    });
+
+    if (draftItems.length === 0) {
+      onShowToast?.(`Order #${booking.bookingNumber} already has enough stock in warehouse.`);
+      return;
+    }
+
+    setShortageBatchDraft({
+      booking,
+      targetDate: purchaseTargetDate,
+      items: draftItems,
+    });
+  };
 
   // Compute live shortage for any booking against current live catalog stock
   const getBookingShortageInfo = (b: Booking) => {
@@ -1455,7 +1573,7 @@ This is our official Scout Store number. Through this chat, you can:
                               />
                               <button
                                 type="button"
-                                onClick={() => onSendShortageToPurchases(activeBooking, purchaseTargetDate)}
+                                onClick={() => openShortageBatchModal(activeBooking)}
                                 className="px-3.5 py-2 min-h-[38px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5"
                               >
                                 <Factory className="w-3.5 h-3.5" />
@@ -2337,6 +2455,310 @@ This is our official Scout Store number. Through this chat, you can:
                 <Check className="w-4 h-4 stroke-[3]" />
                 <span>Send Request</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: CONFIGURE SHORTAGE PRODUCTION BATCHES (EDITABLE QTY + STAGE VENDORS) */}
+      {shortageBatchDraft && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-4">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+                  <Factory className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-slate-900">
+                    Open Production Batches for Purchases Team
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Order #{shortageBatchDraft.booking.bookingNumber} · Customize batch quantity (order extra if needed) &amp; pick stage vendors
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShortageBatchDraft(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+                aria-label="Close modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-blue-50/70 border border-blue-200">
+                <div className="text-xs text-blue-950 font-semibold">
+                  Batches remain <strong>open</strong> in Sourcing &amp; Operations so vendors &amp; quantities can also be updated anytime.
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold text-slate-700">Target Date:</span>
+                  <input
+                    type="date"
+                    value={shortageBatchDraft.targetDate}
+                    onChange={(e) =>
+                      setShortageBatchDraft((prev) =>
+                        prev ? { ...prev, targetDate: e.target.value } : prev
+                      )
+                    }
+                    className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {shortageBatchDraft.items.map((item, idx) => (
+                  <div
+                    key={`${item.productId}_${item.variantId}_${idx}`}
+                    className="p-4 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-black text-slate-900">
+                          {item.productName}
+                        </div>
+                        <div className="text-xs text-slate-600 mt-0.5 flex flex-wrap items-center gap-2">
+                          <span>
+                            {item.size} / {item.colorName}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-mono font-bold text-[11px]">
+                            Min Shortage: {item.minShortage} pcs
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1.5">
+                        <label className="text-[11px] font-bold text-slate-700">
+                          Batch Quantity (pcs)
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.orderQty || ''}
+                            onChange={(e) => {
+                              const nextVal = Math.max(0, Number(e.target.value) || 0);
+                              setShortageBatchDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      items: prev.items.map((it, i) =>
+                                        i === idx ? { ...it, orderQty: nextVal } : it
+                                      ),
+                                    }
+                                  : prev
+                              );
+                            }}
+                            className="w-24 px-2.5 py-1.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-black text-slate-900 text-center"
+                          />
+                          {[10, 25, 50].map((inc) => (
+                            <button
+                              key={inc}
+                              type="button"
+                              onClick={() =>
+                                setShortageBatchDraft((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        items: prev.items.map((it, i) =>
+                                          i === idx ? { ...it, orderQty: (it.orderQty || 0) + inc } : it
+                                        ),
+                                      }
+                                    : prev
+                                )
+                              }
+                              className="px-2 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-[11px] font-mono font-bold text-slate-800"
+                              title={`Add +${inc} pcs to batch`}
+                            >
+                              +{inc}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stage Vendors & Expected Unit Cost */}
+                    <div className="space-y-2 pt-2 border-t border-slate-200/80">
+                      <div className="text-[11px] font-bold text-slate-600">
+                        Choose Stage Vendors (or leave open to assign later in Sourcing)
+                      </div>
+                      <div className="space-y-2">
+                        {item.activeStages.map((stageKey, sIdx) => {
+                          const meta = getStageMeta(stageKey);
+                          const stageLinks = stageVendors.filter(
+                            (psv) => psv.productId === item.productId && psv.stageKey === stageKey
+                          );
+                          const linkedIds = new Set(stageLinks.map((l) => l.vendorId));
+                          const orderedVendors = [
+                            ...vendors.filter((v) => linkedIds.has(v.id)),
+                            ...vendors.filter((v) => !linkedIds.has(v.id)),
+                          ];
+                          const currentAssign = item.stageAssignments[stageKey] || {};
+
+                          return (
+                            <div
+                              key={stageKey}
+                              className="p-2.5 rounded-xl bg-white border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center"
+                            >
+                              <div className="sm:col-span-4 text-xs font-bold text-slate-800">
+                                0{sIdx + 1}. {meta.shortLabel}
+                              </div>
+                              <div className="sm:col-span-5">
+                                <select
+                                  value={currentAssign.vendorId || ''}
+                                  onChange={(e) => {
+                                    const vId = e.target.value;
+                                    const matchLink = stageLinks.find((l) => l.vendorId === vId);
+                                    const latestPrice = matchLink
+                                      ? priceHistory
+                                          .filter((ph) => ph.productStageVendorId === matchLink.id)
+                                          .sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate))[0]
+                                      : undefined;
+
+                                    setShortageBatchDraft((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            items: prev.items.map((it, i) =>
+                                              i === idx
+                                                ? {
+                                                    ...it,
+                                                    stageAssignments: {
+                                                      ...it.stageAssignments,
+                                                      [stageKey]: {
+                                                        ...it.stageAssignments[stageKey],
+                                                        vendorId: vId || undefined,
+                                                        cost:
+                                                          latestPrice?.unitPrice !== undefined
+                                                            ? latestPrice.unitPrice
+                                                            : it.stageAssignments[stageKey]?.cost,
+                                                      },
+                                                    },
+                                                  }
+                                                : it
+                                            ),
+                                          }
+                                        : prev
+                                    );
+                                  }}
+                                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-900"
+                                >
+                                  <option value="">Leave open / Choose later...</option>
+                                  {orderedVendors.map((v) => {
+                                    const link = stageLinks.find((l) => l.vendorId === v.id);
+                                    return (
+                                      <option key={v.id} value={v.id}>
+                                        {link?.isPrimary ? `★ ${v.name} (Primary)` : v.name}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
+                              <div className="sm:col-span-3 relative">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  value={currentAssign.cost ?? ''}
+                                  onChange={(e) => {
+                                    const nextCost =
+                                      e.target.value === '' ? undefined : Number(e.target.value);
+                                    setShortageBatchDraft((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            items: prev.items.map((it, i) =>
+                                              i === idx
+                                                ? {
+                                                    ...it,
+                                                    stageAssignments: {
+                                                      ...it.stageAssignments,
+                                                      [stageKey]: {
+                                                        ...it.stageAssignments[stageKey],
+                                                        cost: nextCost,
+                                                      },
+                                                    },
+                                                  }
+                                                : it
+                                            ),
+                                          }
+                                        : prev
+                                    );
+                                  }}
+                                  placeholder="Cost"
+                                  className="w-full pl-2.5 pr-9 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono text-slate-900"
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-400">
+                                  EGP
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShortageBatchDraft(null)}
+                className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold min-h-[40px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0)}
+                onClick={() => {
+                  if (!shortageBatchDraft || !onSendShortageToPurchases) return;
+                  const configs: ShortageBatchConfig[] = shortageBatchDraft.items.map((it) => ({
+                    productId: it.productId,
+                    variantId: it.variantId,
+                    quantity: Math.round(it.orderQty),
+                    stageAssignments: it.stageAssignments,
+                    targetDate: shortageBatchDraft.targetDate,
+                  }));
+                  const targetBooking = shortageBatchDraft.booking;
+                  const targetDt = shortageBatchDraft.targetDate;
+                  setShortageBatchDraft(null);
+                  onSendShortageToPurchases(targetBooking, targetDt, configs);
+                }}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 min-h-[40px]"
+              >
+                <Check className="w-4 h-4" />
+                <span>Send Open Batches to Purchases &amp; Calendar</span>
+              </button>
+              {onOpenSourcing && (
+                <button
+                  type="button"
+                  disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0)}
+                  onClick={() => {
+                    if (!shortageBatchDraft || !onSendShortageToPurchases) return;
+                    const configs: ShortageBatchConfig[] = shortageBatchDraft.items.map((it) => ({
+                      productId: it.productId,
+                      variantId: it.variantId,
+                      quantity: Math.round(it.orderQty),
+                      stageAssignments: it.stageAssignments,
+                      targetDate: shortageBatchDraft.targetDate,
+                    }));
+                    const targetBooking = shortageBatchDraft.booking;
+                    const targetDt = shortageBatchDraft.targetDate;
+                    setShortageBatchDraft(null);
+                    onSendShortageToPurchases(targetBooking, targetDt, configs);
+                    onOpenSourcing();
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 min-h-[40px]"
+                >
+                  <Factory className="w-4 h-4" />
+                  <span>Send &amp; Open Batch in Sourcing</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

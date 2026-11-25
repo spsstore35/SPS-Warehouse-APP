@@ -77,13 +77,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     ? { view: 'budgeting', label: 'Budgeting', icon: 'budgeting' as const, activeClass: 'text-emerald-700' }
     : { view: 'calendar', label: 'Calendar', icon: 'calendar' as const, activeClass: 'text-blue-700' };
 
-  // Secondary quick tab (Tab 4)
-  const secondaryTab = canAudit
-    ? { view: 'audit-log', label: 'Stock Audit', icon: 'audit' as const }
-    : canCalendar
-    ? { view: 'calendar', label: 'Calendar', icon: 'calendar' as const }
+  // Secondary quick tab (Tab 4) - Calendar & Tasks in place of Stock Audit
+  const secondaryTab = canCalendar
+    ? { view: 'calendar', label: 'Calendar & Tasks', icon: 'calendar' as const }
     : canBoard
     ? { view: 'board', label: 'Team Board', icon: 'board' as const }
+    : canAudit
+    ? { view: 'audit-log', label: 'Stock Audit', icon: 'audit' as const }
     : { view: 'inventory', label: 'Catalog', icon: 'inventory' as const };
 
   return (
@@ -173,7 +173,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 </span>
               )}
             </div>
-            <span className="text-[10px] tracking-tight">{secondaryTab.label}</span>
+            <span className="text-[9.5px] sm:text-[10px] leading-tight text-center tracking-tight">{secondaryTab.label}</span>
           </button>
 
           {/* Tab 5: Account Profile & Menu */}
@@ -303,64 +303,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 </button>
               ) : (
                 <>
-                  {canAnalytics && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAccountSheet(false);
-                        onNavigate('analytics');
-                      }}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-emerald-950 font-bold text-xs hover:bg-emerald-100 transition-colors"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <BarChart3 className="w-4 h-4 text-emerald-700" />
-                        <span>Analytics & Production</span>
-                      </span>
-                    </button>
-                  )}
-
-                  {canAccountApprovals && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAccountSheet(false);
-                        onNavigate('account-approvals');
-                      }}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-50/60 border border-amber-200 text-slate-900 font-bold text-xs hover:bg-amber-100/60 transition-colors"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <Users className="w-4 h-4 text-amber-700" />
-                        <span>Account Approvals & Staff List</span>
-                      </span>
-                      {pendingAccountsCount > 0 && (
-                        <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full animate-pulse">
-                          {pendingAccountsCount} pending
-                        </span>
-                      )}
-                    </button>
-                  )}
-
-                  {canAudit && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAccountSheet(false);
-                        onNavigate('audit-log');
-                      }}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <History className="w-4 h-4 text-slate-500" />
-                        <span>Stock Audit Log</span>
-                      </span>
-                      {pendingAuditNotificationsCount > 0 && (
-                        <span className="px-2 py-0.5 bg-rose-600 text-white font-black text-[11px] rounded-full animate-pulse">
-                          {pendingAuditNotificationsCount} pending approval
-                        </span>
-                      )}
-                    </button>
-                  )}
-
                   {canBookings && (
                     <button
                       type="button"
@@ -372,7 +314,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     >
                       <span className="flex items-center gap-2.5">
                         <CalendarCheck className="w-4 h-4 text-blue-600" />
-                        <span>Client Bookings & Quotations</span>
+                        <span>Client Bookings &amp; Quotations</span>
                       </span>
                     </button>
                   )}
@@ -409,6 +351,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     </button>
                   )}
 
+                  {canAnalytics && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountSheet(false);
+                        onNavigate('analytics');
+                      }}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-emerald-950 font-bold text-xs hover:bg-emerald-100 transition-colors"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <BarChart3 className="w-4 h-4 text-emerald-700" />
+                        <span>Analytics &amp; Production</span>
+                      </span>
+                    </button>
+                  )}
+
                   {canSourcing && (
                     <button
                       type="button"
@@ -425,22 +383,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     </button>
                   )}
 
-                  {canMarketing && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAccountSheet(false);
-                        onNavigate('marketing');
-                      }}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-rose-50/80 border border-rose-200 text-rose-950 font-bold text-xs hover:bg-rose-100 transition-colors"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <Megaphone className="w-4 h-4 text-rose-600" />
-                        <span>Marketing &amp; Offers</span>
-                      </span>
-                    </button>
-                  )}
-
                   {canBudgeting && (
                     <button
                       type="button"
@@ -453,6 +395,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                       <span className="flex items-center gap-2.5">
                         <Wallet className="w-4 h-4 text-emerald-700" />
                         <span>Store Budgeting &amp; Liquidity</span>
+                      </span>
+                    </button>
+                  )}
+
+                  {canMarketing && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountSheet(false);
+                        onNavigate('marketing');
+                      }}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-rose-50/80 border border-rose-200 text-rose-950 font-bold text-xs hover:bg-rose-100 transition-colors"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Megaphone className="w-4 h-4 text-rose-600" />
+                        <span>Marketing &amp; Offers</span>
                       </span>
                     </button>
                   )}
@@ -499,6 +457,48 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     </button>
                   )}
 
+                  {canAudit && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountSheet(false);
+                        onNavigate('audit-log');
+                      }}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <History className="w-4 h-4 text-slate-500" />
+                        <span>Stock Audit Log</span>
+                      </span>
+                      {pendingAuditNotificationsCount > 0 && (
+                        <span className="px-2 py-0.5 bg-rose-600 text-white font-black text-[11px] rounded-full animate-pulse">
+                          {pendingAuditNotificationsCount} pending approval
+                        </span>
+                      )}
+                    </button>
+                  )}
+
+                  {canAccountApprovals && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountSheet(false);
+                        onNavigate('account-approvals');
+                      }}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-50/60 border border-amber-200 text-slate-900 font-bold text-xs hover:bg-amber-100/60 transition-colors"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Users className="w-4 h-4 text-amber-700" />
+                        <span>Account Approvals &amp; Staff List</span>
+                      </span>
+                      {pendingAccountsCount > 0 && (
+                        <span className="px-2 py-0.5 bg-amber-500 text-slate-950 font-black text-[11px] rounded-full animate-pulse">
+                          {pendingAccountsCount} pending
+                        </span>
+                      )}
+                    </button>
+                  )}
+
                   {/* Phone Notifications & Test Alert */}
                   <button
                     type="button"
@@ -517,7 +517,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   >
                     <span className="flex items-center gap-2.5">
                       <Bell className="w-4 h-4 text-amber-600" />
-                      <span>Phone Notifications & Test Alert</span>
+                      <span>Phone Notifications &amp; Test Alert</span>
                     </span>
                     <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded-md">
                       Send Test
