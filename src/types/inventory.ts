@@ -418,3 +418,9 @@ export interface ScoutSeason {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface Fare2LeaderAssignment {
+  userId: string;
+  userName: string;
+}
+

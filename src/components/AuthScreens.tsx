@@ -1,15 +1,6 @@
 import React, { useState } from 'react';
 import { User, Role } from '../types/inventory';
 import {
-  authenticateUser,
-  getStoredFullAdminIds,
-  getStoredTeamDirectory,
-  getStoredUserFare2Map,
-  registerNewUser,
-  saveStoredTeamDirectory,
-  saveStoredUserFare2Map,
-} from '../utils/storage';
-import {
   Warehouse,
   Mail,
   Lock,
@@ -63,7 +54,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Check live Supabase profiles table
+    // Authenticate strictly against live Supabase profiles table
     try {
       const { supabase } = await import('../services/supabaseClient');
       const { data: profile, error } = await supabase
@@ -72,109 +63,75 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
         .ilike('email', cleanEmail)
         .maybeSingle();
 
-      if (profile && !error) {
-        if (profile.status === 'pending') {
-          setPendingAccountInfo({
-            id: profile.id,
-            name: profile.full_name,
-            email: profile.email,
-            role: profile.role,
-            status: 'pending',
-            requestedRole: profile.requested_role,
-          });
-          setIsSubmitting(false);
-          return;
-        }
-
-        if (profile.status === 'rejected') {
-          setLoginError('Your account request was declined by the administrator.');
-          setIsSubmitting(false);
-          return;
-        }
-
-        const { verifyPassword, hashPassword, normalizeRole } = await import('../utils/security');
-        const isMatch = await verifyPassword(password, profile.password_hash);
-        if (!isMatch) {
-          setLoginError('Invalid email or password. Please check your credentials.');
-          setIsSubmitting(false);
-          return;
-        }
-
-        // Auto-upgrade legacy plain text or null passwords to secure SHA-256 hash in Supabase
-        if (profile.password_hash === password || !profile.password_hash) {
-          const newSecureHash = await hashPassword(password);
-          supabase
-            .from('profiles')
-            .update({ password_hash: newSecureHash })
-            .eq('id', profile.id)
-            .then(() => {});
-        }
-
-        const parsedRole = normalizeRole(profile.role || profile.requested_role);
-        const normalizedRole: Role =
-          parsedRole === 'admin' && getStoredFullAdminIds().includes(profile.id)
-            ? 'full_admin'
-            : parsedRole;
-        const normalizedReqRole: Role = normalizeRole(profile.requested_role || profile.role);
-
-        const storedDir = getStoredTeamDirectory();
-        const storedFare2 = getStoredUserFare2Map();
-        const hasDbTeams = Array.isArray(profile.assigned_teams);
-        const hasDbFare2 = Array.isArray(profile.assigned_fare2);
-        const resolvedTeams = hasDbTeams
-          ? profile.assigned_teams
-          : storedDir[profile.id] || [];
-        const resolvedFare2 = hasDbFare2
-          ? profile.assigned_fare2
-          : storedFare2[profile.id] || [];
-
-        if (hasDbTeams) {
-          saveStoredTeamDirectory({ ...storedDir, [profile.id]: resolvedTeams });
-        }
-        if (hasDbFare2) {
-          saveStoredUserFare2Map({ ...storedFare2, [profile.id]: resolvedFare2 });
-        }
-
-        const userObj: User = {
-          id: profile.id,
-          name: profile.full_name || 'Staff User',
-          email: profile.email,
-          role: normalizedRole,
-          status: profile.status,
-          requestedRole: normalizedReqRole,
-          employeeId: profile.employee_id,
-          avatarColor: profile.avatar_color,
-          assignedTeams: resolvedTeams,
-          assignedFare2: resolvedFare2,
-        };
-        onLogin(userObj);
+      if (error) {
+        setLoginError(`Database authentication error: ${error.message}`);
         setIsSubmitting(false);
         return;
       }
-    } catch (err) {
-      console.warn('Supabase profile query fallback:', err);
-    }
 
-    // 2. Fallback to local accounts
-    const result = authenticateUser(email, password);
+      if (!profile) {
+        setLoginError('No account found with this email address.');
+        setIsSubmitting(false);
+        return;
+      }
 
-    if (result.success && result.user) {
-      const storedDir = getStoredTeamDirectory();
-      const storedFare2 = getStoredUserFare2Map();
-      const hydratedUser: User = {
-        ...result.user,
-        assignedTeams: Array.isArray(result.user.assignedTeams)
-          ? result.user.assignedTeams
-          : storedDir[result.user.id] || [],
-        assignedFare2: Array.isArray(result.user.assignedFare2)
-          ? result.user.assignedFare2
-          : storedFare2[result.user.id] || [],
+      if (profile.status === 'pending') {
+        setPendingAccountInfo({
+          id: profile.id,
+          name: profile.full_name,
+          email: profile.email,
+          role: profile.role,
+          status: 'pending',
+          requestedRole: profile.requested_role,
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (profile.status === 'rejected') {
+        setLoginError('Your account request was declined by the administrator.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const { verifyPassword, hashPassword, normalizeRole } = await import('../utils/security');
+      const isMatch = await verifyPassword(password, profile.password_hash);
+      if (!isMatch) {
+        setLoginError('Invalid email or password. Please check your credentials.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Auto-upgrade legacy plain text or null passwords to secure SHA-256 hash in Supabase
+      if (profile.password_hash === password || !profile.password_hash) {
+        const newSecureHash = await hashPassword(password);
+        await supabase
+          .from('profiles')
+          .update({ password_hash: newSecureHash })
+          .eq('id', profile.id);
+      }
+
+      const normalizedRole: Role = normalizeRole(profile.role || profile.requested_role);
+      const normalizedReqRole: Role = normalizeRole(profile.requested_role || profile.role);
+
+      const resolvedTeams = Array.isArray(profile.assigned_teams) ? profile.assigned_teams : [];
+      const resolvedFare2 = Array.isArray(profile.assigned_fare2) ? profile.assigned_fare2 : [];
+
+      const userObj: User = {
+        id: profile.id,
+        name: profile.full_name || 'Staff User',
+        email: profile.email,
+        role: normalizedRole,
+        status: profile.status,
+        requestedRole: normalizedReqRole,
+        employeeId: profile.employee_id,
+        avatarColor: profile.avatar_color,
+        assignedTeams: resolvedTeams,
+        assignedFare2: resolvedFare2,
       };
-      onLogin(hydratedUser);
-    } else if (result.isPending && result.user) {
-      setPendingAccountInfo(result.user);
-    } else {
-      setLoginError(result.error || 'Authentication failed. Please verify credentials or register.');
+      onLogin(userObj);
+    } catch (err: any) {
+      setLoginError(err?.message || 'Unable to connect to the database. Please try again.');
     }
     setIsSubmitting(false);
   };
@@ -201,7 +158,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       return;
     }
 
-    // 1. Insert into Supabase profiles
+    // Insert strictly into Supabase profiles
     try {
       const { registerUserInDb } = await import('../services/supabaseService');
       const newUser = await registerUserInDb({
@@ -215,32 +172,12 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       setSignUpName('');
       setSignUpEmail('');
       setSignUpPassword('');
-      setIsSubmitting(false);
-      return;
     } catch (err: any) {
-      console.warn('Supabase registration error:', err);
       if (err?.message?.includes('duplicate key') || err?.message?.includes('profiles_email_key')) {
         setSignUpError('An account with this email already exists.');
-        setIsSubmitting(false);
-        return;
+      } else {
+        setSignUpError(err?.message || 'Registration failed. Check database connection.');
       }
-    }
-
-    // 2. Local fallback registration
-    const result = registerNewUser({
-      name: signUpName,
-      email: signUpEmail,
-      password: signUpPassword,
-      requestedRole: signUpRole,
-    });
-
-    if (result.success && result.user) {
-      setSignUpSuccess(result.user);
-      setSignUpName('');
-      setSignUpEmail('');
-      setSignUpPassword('');
-    } else {
-      setSignUpError(result.error || 'Failed to register account');
     }
     setIsSubmitting(false);
   };

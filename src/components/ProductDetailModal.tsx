@@ -282,16 +282,18 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             {/* Product Meta */}
             <div className="sm:col-span-7 flex flex-col justify-between space-y-3">
               <div className="space-y-2">
-                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 grid grid-cols-3 gap-2">
-                  <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
-                      Total In Stock
-                    </span>
-                    <div className="text-xl sm:text-2xl font-black font-mono tabular-nums text-slate-900 mt-0.5">
-                      {product.totalQuantity} <span className="text-xs font-sans font-normal text-slate-500">pcs</span>
+                <div className={`p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 grid ${isLeader ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
+                  {!isLeader && (
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
+                        Total In Stock
+                      </span>
+                      <div className="text-xl sm:text-2xl font-black font-mono tabular-nums text-slate-900 mt-0.5">
+                        {product.totalQuantity} <span className="text-xs font-sans font-normal text-slate-500">pcs</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-center">
+                  )}
+                  <div className={isLeader ? 'text-left' : 'text-center'}>
                     <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">
                       Unit Price
                     </span>
@@ -370,13 +372,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 <Package className="w-3.5 h-3.5 text-amber-600" />
                 <span>
                   {isStandardItem
-                    ? 'Item Stock & Balance'
+                    ? isLeader
+                      ? 'Item Specifications'
+                      : 'Item Stock & Balance'
                     : `Sizes for ${uniqueColors.length > 1 ? selectedColor : 'Standard'} (${displayedVariants.length} sizes)`}
                 </span>
               </h3>
-              <span className="text-[11px] text-slate-500">
-                {displayedVariants.reduce((sum, v) => sum + v.quantity, 0)} units in this color
-              </span>
+              {!isLeader && (
+                <span className="text-[11px] text-slate-500">
+                  {displayedVariants.reduce((sum, v) => sum + v.quantity, 0)} units in this color
+                </span>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -407,7 +413,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                               ? 'Standard Size'
                               : `Size ${variant.size}`}
                           </span>
-                          {isLow && (
+                          {!isLeader && isLow && (
                             <span className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-1">
                               <AlertCircle className="w-3 h-3 text-rose-600" />
                               Low Stock (≤{variant.minThreshold})
@@ -421,15 +427,15 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     </div>
 
                     {/* Right: Quantity & Actions */}
-                    <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200">
-                      <div className="text-right">
-                        <span className="text-lg font-black font-mono tabular-nums text-slate-900">
-                          {variant.quantity}
-                        </span>
-                        <span className="text-xs text-slate-500 ml-1 font-medium">units</span>
-                      </div>
+                    {!isLeader && (
+                      <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200">
+                        <div className="text-right">
+                          <span className="text-lg font-black font-mono tabular-nums text-slate-900">
+                            {variant.quantity}
+                          </span>
+                          <span className="text-xs text-slate-500 ml-1 font-medium">units</span>
+                        </div>
 
-                      {!isLeader && (
                         <button
                           type="button"
                           onClick={() => onRequestAdjustment(product, variant)}
@@ -442,20 +448,20 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                           <SlidersHorizontal className="w-3.5 h-3.5" />
                           <span>{isAdmin ? 'Direct Adjust' : 'Request Count'}</span>
                         </button>
-                      )}
 
-                      {/* Admin-only delete variant size button */}
-                      {isAdmin && cleanVariants.length > 1 && onDeleteVariant && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSingleVariantClick(variant)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200"
-                          title="Delete this size variant (Admin Only)"
-                        >
-                          <Trash2 className="w-4 h-4 text-rose-500" />
-                        </button>
-                      )}
-                    </div>
+                        {/* Admin-only delete variant size button */}
+                        {isAdmin && cleanVariants.length > 1 && onDeleteVariant && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSingleVariantClick(variant)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-200"
+                            title="Delete this size variant (Admin Only)"
+                          >
+                            <Trash2 className="w-4 h-4 text-rose-500" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

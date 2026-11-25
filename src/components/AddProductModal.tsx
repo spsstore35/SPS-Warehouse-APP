@@ -605,21 +605,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     e.preventDefault();
     saveProductNow();
   };
-  const fallbackFolders = [
-    'Wegla',
-    'Pins & Badges',
-    'Wa3d',
-    'Accessories',
-    'Souvenirs',
-    'Sharat hewayat',
-    'Sharat hewayat / Ashbal',
-    'Sharat hewayat / Kashafeen',
-    'Sharat hewayat / Zahrat',
-    'Sharat hewayat / Morshedat',
-  ];
   const mergedFolderPresets = Array.from(
     new Set(
-      (availableFolders.length > 0 ? availableFolders : fallbackFolders).map((f) =>
+      availableFolders.map((f) =>
         f
           .split('/')
           .map((s) => s.trim())

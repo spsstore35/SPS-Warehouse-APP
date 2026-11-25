@@ -169,7 +169,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         )}
 
         {/* Low Stock Warning Badge */}
-        {lowStockVariants.length > 0 && (
+        {!isLeader && lowStockVariants.length > 0 && (
           <div className="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-rose-50 border border-rose-200 text-[11px] text-rose-700 font-semibold flex items-center gap-1 shadow-sm">
             <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
             <span>{lowStockVariants.length} Low Variant{lowStockVariants.length > 1 ? 's' : ''}</span>
@@ -277,18 +277,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         {/* Bottom Stock Breakdown & Action Buttons */}
         <div className="mt-4 pt-3.5 border-t border-slate-100">
           <div className="flex items-center justify-between mb-3.5 bg-slate-50/80 p-2.5 rounded-xl border border-slate-100">
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Available Pieces</div>
-              <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 flex items-baseline gap-1">
-                <span>{product.totalQuantity}</span>
-                <span className="text-xs font-semibold text-slate-500 font-sans">pcs</span>
+            {!isLeader ? (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Available Pieces</div>
+                <div className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 flex items-baseline gap-1">
+                  <span>{product.totalQuantity}</span>
+                  <span className="text-xs font-semibold text-slate-500 font-sans">pcs</span>
+                </div>
               </div>
-            </div>
-
-            <div className="text-right">
+            ) : (
               <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
                 {resolvedOffer.isActive ? 'Offer Price' : 'Unit Price'}
               </div>
+            )}
+
+            <div className="text-right">
+              {!isLeader && (
+                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                  {resolvedOffer.isActive ? 'Offer Price' : 'Unit Price'}
+                </div>
+              )}
               <div
                 className={`text-base sm:text-lg font-black font-mono tabular-nums flex items-baseline justify-end gap-1.5 ${
                   resolvedOffer.isActive ? 'text-rose-700' : 'text-emerald-700'

@@ -64,7 +64,6 @@ interface SourcingOperationsViewProps {
     finalQuantity: number;
     variantId: string;
   }) => void;
-  onSeedStarterCatalog?: () => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -87,7 +86,6 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onSaveBatch,
   onDeleteBatch,
   onCompleteBatchStockIn,
-  onSeedStarterCatalog,
   onShowToast,
 }) => {
   const [topTab, setTopTab] = useState<TopTab>('catalog');
@@ -426,18 +424,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 No Inventory Catalog Items Found
               </h3>
               <p className="text-xs text-slate-500">
-                Add products to your Inventory Catalog or load starter items (Cotton T-Shirt &amp; Costume Wig) to test the supply chain pipeline.
+                Add products to your Inventory Catalog first to configure supply chain pipelines.
               </p>
-              {onSeedStarterCatalog && (
-                <button
-                  type="button"
-                  onClick={onSeedStarterCatalog}
-                  className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 min-h-[40px]"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Load Starter Products &amp; Vendors</span>
-                </button>
-              )}
             </div>
           ) : filteredCatalogProducts.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center space-y-2">

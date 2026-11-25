@@ -1,12 +1,20 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Product, ProductVariant, Booking, BookingItem, User, Role, MarketingOffer } from '../types/inventory';
+import {
+  Product,
+  ProductVariant,
+  Booking,
+  BookingItem,
+  User,
+  Role,
+  MarketingOffer,
+  Fare2LeaderAssignment,
+} from '../types/inventory';
 import { getEffectiveProductOffer } from '../utils/offers';
 import {
   SCOUT_FERA2_LIST,
   getScoutFare2Meta,
   isCoreScoutFare2,
 } from '../utils/scoutFera2';
-import { getStoredFare2Leaders } from '../utils/storage';
 import {
   X,
   Plus,
@@ -41,6 +49,7 @@ interface BookingModalProps {
   bookingToEdit?: Booking | null;
   currentUser: User;
   existingBookings?: Booking[];
+  fare2Leaders?: Record<string, Fare2LeaderAssignment>;
   onSaveBooking: (booking: Booking, autoAdvanceToPreparing?: boolean) => void;
 }
 
@@ -104,12 +113,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   bookingToEdit,
   currentUser,
   existingBookings = [],
+  fare2Leaders = {},
   onSaveBooking,
 }) => {
   const isUserAdmin = currentUser.role === 'admin' || currentUser.role === 'full_admin';
   const isEditMode = Boolean(bookingToEdit);
-
-  const fare2Leaders = useMemo(() => getStoredFare2Leaders(), [isOpen]);
   const activeMembers = useMemo(
     () =>
       users

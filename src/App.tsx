@@ -23,70 +23,14 @@ import {
   BudgetExpenseEntry,
   BudgetSettings,
   ScoutSeason,
+  Fare2LeaderAssignment,
 } from './types/inventory';
 import {
-  getStoredProducts,
-  saveStoredProducts,
-  getStoredRequests,
-  saveStoredRequests,
-  getStoredAuditLogs,
-  saveStoredAuditLogs,
   getStoredUser,
   saveStoredUser,
-  getStoredUsers,
-  saveStoredUsers,
-  approveUserAccount,
-  rejectUserAccount,
-  resetAllToDemo,
-  getStoredCategories,
-  saveStoredCategories,
-  clearStoredAuditLogs,
-  getStoredBookings,
-  saveStoredBookings,
-  getStoredCalendarEvents,
-  saveStoredCalendarEvents,
-  getStoredBoardStatusMap,
-  saveStoredBoardStatusMap,
-  getUnsyncedCalendarIds,
-  markCalendarIdUnsynced,
-  clearCalendarIdUnsynced,
-  getStoredFare2Leaders,
-  saveStoredFare2Leaders,
-  getStoredTeamDirectory,
-  saveStoredTeamDirectory,
-  getStoredUserFare2Map,
-  saveStoredUserFare2Map,
-  getStoredBookingAssignmentMap,
-  saveStoredBookingAssignmentMap,
-  Fare2LeaderAssignment,
-  getStoredVendors,
-  saveStoredVendors,
-  getStoredProductWorkflows,
-  saveStoredProductWorkflows,
-  getStoredProductStageVendors,
-  saveStoredProductStageVendors,
-  getStoredVendorPriceHistory,
-  saveStoredVendorPriceHistory,
-  getStoredProductionBatches,
-  saveStoredProductionBatches,
-  isSourcingSeeded,
-  markSourcingSeeded,
-  getStoredMarketingOffers,
-  saveStoredMarketingOffers,
-  getStoredBookingStockCheckMap,
-  saveStoredBookingStockCheckMap,
-  getStoredBudgetProfiles,
-  saveStoredBudgetProfiles,
-  getStoredBudgetExpenses,
-  saveStoredBudgetExpenses,
-  getStoredBudgetSettings,
-  saveStoredBudgetSettings,
-  getStoredScoutSeasons,
-  saveStoredScoutSeasons,
-  getStoredFullAdminIds,
-  setUserFullAdminFlag,
+  clearLegacyLocalEntityCaches,
 } from './utils/storage';
-import { buildInitialSourcingSeed, getStageMeta } from './utils/sourcing';
+import { getStageMeta } from './utils/sourcing';
 import { getEffectiveProductOffer } from './utils/offers';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import {
@@ -98,7 +42,6 @@ import {
   normalizeRole,
   getRoleDisplayName,
 } from './utils/security';
-import { INITIAL_USERS, SEED_CATALOG_DATA, INITIAL_CATEGORIES } from './data/initialData';
 import {
   checkSupabaseConnection,
   fetchProductsFromDb,
@@ -211,14 +154,13 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // State
+  // State (strictly DB-driven; only signed-in user session persists locally)
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
-  const [users, setUsers] = useState<User[]>(() => getStoredUsers());
-  const [products, setProducts] = useState<Product[]>(() => getStoredProducts());
-  const [requests, setRequests] = useState<AdjustmentRequest[]>(() => getStoredRequests());
-  const [categories, setCategories] = useState<Category[]>(() => getStoredCategories());
-  // Audit logs preserved in state, storage, and Supabase
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => getStoredAuditLogs());
+  const [users, setUsers] = useState<User[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [requests, setRequests] = useState<AdjustmentRequest[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [dbStatus, setDbStatus] = useState<DbConnectionStatus>({ connected: false, tablesExist: false });
   const [isDbLoading, setIsDbLoading] = useState<boolean>(true);
   const [showManageCategoriesModal, setShowManageCategoriesModal] = useState(false);
@@ -251,58 +193,8 @@ export default function App() {
     return { parent: parts[0], child: parts.slice(1).join(' / ') };
   };
 
-  const DEFAULT_OTHERS_FOLDERS = [
-    'Wegla',
-    'Pins & Badges',
-    'Wa3d',
-    'Accessories',
-    'Souvenirs',
-    'Sharat hewayat',
-    'Sharat hewayat / Ashbal',
-    'Sharat hewayat / Kashafeen',
-    'Sharat hewayat / Zahrat',
-    'Sharat hewayat / Morshedat',
-  ];
-
-  const getDeletedFoldersSet = (): Set<string> => {
-    try {
-      const raw = localStorage.getItem('sps_others_deleted_folders');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) return new Set(arr.map((s: string) => String(s).toLowerCase()));
-      }
-    } catch {}
-    return new Set();
-  };
-
-  const [customFolders, setCustomFolders] = useState<string[]>(() => {
-    const deletedSet = getDeletedFoldersSet();
-    const initialMerged: string[] = [];
-    const addUnique = (val: string) => {
-      const norm = normalizeFolderPath(val);
-      if (!norm || norm.toLowerCase() === 'all items') return;
-      if (!initialMerged.some((f) => f.toLowerCase() === norm.toLowerCase())) {
-        initialMerged.push(norm);
-      }
-    };
-    try {
-      const saved = localStorage.getItem('sps_others_folders');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          parsed.forEach((f: string) => {
-            if (f !== 'All Folders') addUnique(String(f));
-          });
-        }
-      }
-    } catch {}
-    DEFAULT_OTHERS_FOLDERS.forEach((defPath) => {
-      if (!deletedSet.has(defPath.toLowerCase())) {
-        addUnique(defPath);
-      }
-    });
-    return initialMerged;
-  });
+  const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const [fare2Leaders, setFare2Leaders] = useState<Record<string, Fare2LeaderAssignment>>({});
   const [selectedOtherFolder, setSelectedOtherFolder] = useState<string>('All Items');
   const [showNewFolderModal, setShowNewFolderModal] = useState<boolean>(false);
   const [newFolderNameInput, setNewFolderNameInput] = useState<string>('');
@@ -363,14 +255,9 @@ export default function App() {
       nextFolders.push(fullPath);
     }
     setCustomFolders(nextFolders);
-    try {
-      localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
-      const deletedSet = getDeletedFoldersSet();
-      deletedSet.delete(fullPath.toLowerCase());
-      if (cleanParent) deletedSet.delete(cleanParent.toLowerCase());
-      localStorage.setItem('sps_others_deleted_folders', JSON.stringify(Array.from(deletedSet)));
-    } catch {}
-    syncOthersFoldersToDb(nextFolders);
+    syncOthersFoldersToDb(nextFolders).then((res) => {
+      if (!res.ok && res.error) showToast(`Database folder sync error: ${res.error}`);
+    });
 
     // If creating a sub-sub-folder inside a parent, stay inside parent so user immediately sees its Folder Card
     setSelectedOtherFolder(cleanParent || fullPath);
@@ -417,10 +304,9 @@ export default function App() {
       )
     );
     setCustomFolders(updatedFolderList);
-    try {
-      localStorage.setItem('sps_others_folders', JSON.stringify(updatedFolderList));
-    } catch {}
-    syncOthersFoldersToDb(updatedFolderList);
+    syncOthersFoldersToDb(updatedFolderList).then((res) => {
+      if (!res.ok && res.error) showToast(`Database folder sync error: ${res.error}`);
+    });
 
     const modifiedProducts: Product[] = [];
     const nextProducts = products.map((p) => {
@@ -443,9 +329,8 @@ export default function App() {
 
     if (modifiedProducts.length > 0) {
       setProducts(nextProducts);
-      saveStoredProducts(nextProducts);
       modifiedProducts.forEach((mp) => {
-        upsertProductToDb(mp).catch((err) => console.warn('Supabase folder rename notice:', err?.message));
+        upsertProductToDb(mp).catch((err) => showToast(`Database sync error: ${err?.message || 'Failed to update product folder'}`));
       });
     }
 
@@ -478,18 +363,9 @@ export default function App() {
       return true;
     });
     setCustomFolders(updatedFolderList);
-    try {
-      localStorage.setItem('sps_others_folders', JSON.stringify(updatedFolderList));
-      const deletedSet = getDeletedFoldersSet();
-      deletedSet.add(targetLower);
-      allFolderPaths.forEach((f) => {
-        if (!isNested && f.toLowerCase().startsWith(targetPrefix)) {
-          deletedSet.add(f.toLowerCase());
-        }
-      });
-      localStorage.setItem('sps_others_deleted_folders', JSON.stringify(Array.from(deletedSet)));
-    } catch {}
-    syncOthersFoldersToDb(updatedFolderList);
+    syncOthersFoldersToDb(updatedFolderList).then((res) => {
+      if (!res.ok && res.error) showToast(`Database folder sync error: ${res.error}`);
+    });
 
     const modifiedProducts: Product[] = [];
     const nextProducts = products.map((p) => {
@@ -511,9 +387,8 @@ export default function App() {
 
     if (modifiedProducts.length > 0) {
       setProducts(nextProducts);
-      saveStoredProducts(nextProducts);
       modifiedProducts.forEach((mp) => {
-        upsertProductToDb(mp).catch((err) => console.warn('Supabase folder delete notice:', err?.message));
+        upsertProductToDb(mp).catch((err) => showToast(`Database sync error: ${err?.message || 'Failed to update product folder'}`));
       });
     }
 
@@ -567,7 +442,7 @@ export default function App() {
   };
 
   // Bookings state
-  const [bookings, setBookings] = useState<Booking[]>(() => getStoredBookings());
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [bookingModalProduct, setBookingModalProduct] = useState<Product | undefined>(undefined);
   const [bookingToEdit, setBookingToEdit] = useState<Booking | null>(null);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -577,61 +452,29 @@ export default function App() {
   const [selectedBookingForDetails, setSelectedBookingForDetails] = useState<string | null>(null);
 
   // Store Calendar & Tasks state
-  const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>(() => getStoredCalendarEvents());
-  const [scoutSeasons, setScoutSeasons] = useState<ScoutSeason[]>(() => getStoredScoutSeasons());
+  const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>([]);
+  const [scoutSeasons, setScoutSeasons] = useState<ScoutSeason[]>([]);
   const lastCalendarMutationAtRef = useRef<number>(0);
 
   // Sourcing & Production Operations state
-  const [vendors, setVendors] = useState<Vendor[]>(() => getStoredVendors());
-  const [productWorkflows, setProductWorkflows] = useState<ProductWorkflow[]>(() => getStoredProductWorkflows());
-  const [productStageVendors, setProductStageVendors] = useState<ProductStageVendor[]>(() =>
-    getStoredProductStageVendors()
-  );
-  const [vendorPriceHistory, setVendorPriceHistory] = useState<VendorPriceEntry[]>(() =>
-    getStoredVendorPriceHistory()
-  );
-  const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>(() =>
-    getStoredProductionBatches()
-  );
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [productWorkflows, setProductWorkflows] = useState<ProductWorkflow[]>([]);
+  const [productStageVendors, setProductStageVendors] = useState<ProductStageVendor[]>([]);
+  const [vendorPriceHistory, setVendorPriceHistory] = useState<VendorPriceEntry[]>([]);
+  const [productionBatches, setProductionBatches] = useState<ProductionBatch[]>([]);
 
   // Marketing & Store Offers state
-  const [marketingOffers, setMarketingOffers] = useState<MarketingOffer[]>(() =>
-    getStoredMarketingOffers()
-  );
+  const [marketingOffers, setMarketingOffers] = useState<MarketingOffer[]>([]);
 
   // Budgeting, Unit Costs, Expenses & Liquidity state
-  const [budgetProfiles, setBudgetProfiles] = useState<Record<string, ProductBudgetProfile>>(() =>
-    getStoredBudgetProfiles()
-  );
-  const [budgetExpenses, setBudgetExpenses] = useState<BudgetExpenseEntry[]>(() =>
-    getStoredBudgetExpenses()
-  );
-  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>(() =>
-    getStoredBudgetSettings()
-  );
+  const [budgetProfiles, setBudgetProfiles] = useState<Record<string, ProductBudgetProfile>>({});
+  const [budgetExpenses, setBudgetExpenses] = useState<BudgetExpenseEntry[]>([]);
+  const [budgetSettings, setBudgetSettings] = useState<BudgetSettings>({
+    id: 'default',
+    reserveBuffer: 0,
+    updatedAt: '',
+  });
   const [isBudgetingUnlocked, setIsBudgetingUnlocked] = useState<boolean>(false);
-
-  // Auto-seed realistic Sourcing & Operations starter bundle once products exist
-  useEffect(() => {
-    if (isSourcingSeeded()) return;
-    if (products.length === 0) return;
-    if (vendors.length > 0 || productStageVendors.length > 0 || productionBatches.length > 0) {
-      markSourcingSeeded();
-      return;
-    }
-    const seed = buildInitialSourcingSeed(products);
-    setVendors(seed.vendors);
-    saveStoredVendors(seed.vendors);
-    setProductWorkflows(seed.workflows);
-    saveStoredProductWorkflows(seed.workflows);
-    setProductStageVendors(seed.stageVendors);
-    saveStoredProductStageVendors(seed.stageVendors);
-    setVendorPriceHistory(seed.priceHistory);
-    saveStoredVendorPriceHistory(seed.priceHistory);
-    setProductionBatches(seed.batches);
-    saveStoredProductionBatches(seed.batches);
-    markSourcingSeeded();
-  }, [products, vendors.length, productStageVendors.length, productionBatches.length]);
 
   const handleOpenBookingDetails = (bookingNumberOrId: string) => {
     const cleanQuery = bookingNumberOrId.trim().toLowerCase();
@@ -651,38 +494,10 @@ export default function App() {
     setSelectedActivityLog(null);
   };
 
-  // Sync to localStorage as offline cache
+  // Keep only active user login session in localStorage
   useEffect(() => {
     saveStoredUser(currentUser);
   }, [currentUser]);
-
-  useEffect(() => {
-    saveStoredProducts(products);
-  }, [products]);
-
-  useEffect(() => {
-    saveStoredRequests(requests);
-  }, [requests]);
-
-  useEffect(() => {
-    saveStoredCategories(categories);
-  }, [categories]);
-
-  useEffect(() => {
-    saveStoredAuditLogs(auditLogs);
-  }, [auditLogs]);
-
-  useEffect(() => {
-    saveStoredBookings(bookings);
-  }, [bookings]);
-
-  useEffect(() => {
-    saveStoredCalendarEvents(calendarEvents);
-  }, [calendarEvents]);
-
-  useEffect(() => {
-    saveStoredScoutSeasons(scoutSeasons);
-  }, [scoutSeasons]);
 
   // Category handlers
   const handleAddCategory = async (name: string, description?: string) => {
@@ -696,14 +511,15 @@ export default function App() {
     };
     const nextCats = [...categories, newCat];
     setCategories(nextCats);
-    saveStoredCategories(nextCats);
 
     try {
       await createCategoryInDb(newCat);
+      showToast(`Category "${name}" created.`);
     } catch (err: any) {
-      console.warn('Supabase category create notice:', err?.message);
+      console.warn('Supabase category create error:', err?.message);
+      setCategories(categories);
+      showToast(`Failed to save category to database: ${err?.message || 'Sync error'}`);
     }
-    showToast(`Category "${name}" created.`);
   };
 
   const handleDeleteCategory = async (catId: string) => {
@@ -714,7 +530,6 @@ export default function App() {
     const deletedCat = categories.find((c) => c.id === catId);
     const nextCats = categories.filter((c) => c.id !== catId);
     setCategories(nextCats);
-    saveStoredCategories(nextCats);
 
     // Any products that belonged to this category now become Unassigned
     const nextProducts = products.map((p) => {
@@ -728,12 +543,15 @@ export default function App() {
       return p;
     });
     setProducts(nextProducts);
-    saveStoredProducts(nextProducts);
 
     try {
       await deleteCategoryFromDb(catId);
     } catch (err: any) {
-      console.warn('Supabase category delete notice:', err?.message);
+      console.warn('Supabase category delete error:', err?.message);
+      setCategories(categories);
+      setProducts(products);
+      showToast(`Failed to delete category from database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const newLog: AuditLogEntry = {
@@ -760,12 +578,14 @@ export default function App() {
     const targetProd = products.find((p) => p.id === productId);
     const nextProds = products.filter((p) => p.id !== productId);
     setProducts(nextProds);
-    saveStoredProducts(nextProds);
 
     try {
       await deleteProductFromDb(productId);
     } catch (err: any) {
-      console.warn('Supabase product delete notice:', err?.message);
+      console.warn('Supabase product delete error:', err?.message);
+      setProducts(products);
+      showToast(`Failed to delete product from database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const newLog: AuditLogEntry = {
@@ -821,12 +641,14 @@ export default function App() {
     });
 
     setProducts(nextProducts);
-    saveStoredProducts(nextProducts);
 
     try {
       await deleteProductVariantFromDb(variantId);
     } catch (err: any) {
-      console.warn('Supabase variant delete notice:', err?.message);
+      console.warn('Supabase variant delete error:', err?.message);
+      setProducts(products);
+      showToast(`Failed to delete variant from database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const newLog: AuditLogEntry = {
@@ -857,11 +679,12 @@ export default function App() {
     setUsers(nextUsers);
 
     try {
-      const { saveStoredUsers } = await import('./utils/storage');
-      saveStoredUsers(nextUsers);
       await deleteUserFromDb(userId);
     } catch (err: any) {
-      console.warn('Supabase user delete notice:', err?.message);
+      console.warn('Supabase user delete error:', err?.message);
+      setUsers(users);
+      showToast(`Failed to delete user from database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const newLog: AuditLogEntry = {
@@ -888,7 +711,6 @@ export default function App() {
 
     const targetUser = users.find((u) => u.id === userId);
     const oldRole = targetUser?.role || 'worker';
-    setUserFullAdminFlag(userId, newRole === 'full_admin');
 
     const nextUsers = users.map((u) => {
       if (u.id !== userId) return u;
@@ -908,23 +730,26 @@ export default function App() {
     });
 
     setUsers(nextUsers);
-    saveStoredUsers(nextUsers);
 
     // If current logged-in user changed their own role, update currentUser state
     if (currentUser && currentUser.id === userId) {
-      const updatedCurrent = {
+      setCurrentUser({
         ...currentUser,
         role: newRole,
         requestedRole: newRole,
-      };
-      setCurrentUser(updatedCurrent);
-      saveStoredUser(updatedCurrent);
+      });
     }
 
     try {
       await updateUserRoleInDb(userId, newRole);
     } catch (err: any) {
-      console.warn('Supabase user role update notice:', err?.message);
+      console.warn('Supabase user role update error:', err?.message);
+      setUsers(users);
+      if (currentUser && currentUser.id === userId) {
+        setCurrentUser(currentUser);
+      }
+      showToast(`Failed to update role in database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const nextRoleLabel = getRoleDisplayName(newRole);
@@ -987,17 +812,7 @@ export default function App() {
           dbProductFolders = dbProducts.value
             .map((p) => (p.folder ? normalizeFolderPath(p.folder) : ''))
             .filter(Boolean);
-          setProducts((prev) => {
-            const merged = dbProducts.value.map((p) => {
-              const localMatch = prev.find((lp) => lp.id === p.id);
-              return {
-                ...p,
-                folder: p.folder || localMatch?.folder,
-              };
-            });
-            saveStoredProducts(merged);
-            return merged;
-          });
+          setProducts(dbProducts.value);
         }
         // Product photos are downloaded once with the products; requests and order
         // items no longer download their own copy, so fill them in from here.
@@ -1014,55 +829,17 @@ export default function App() {
             productImage: r.productImage || productImageById.get(r.productId) || '',
           }));
           setRequests(withImages);
-          saveStoredRequests(withImages);
         }
         if (dbFare2Leaders.status === 'fulfilled' && dbFare2Leaders.value !== null) {
-          const mergedLeaders = {
-            ...getStoredFare2Leaders(),
-            ...dbFare2Leaders.value,
-          };
-          saveStoredFare2Leaders(mergedLeaders);
+          setFare2Leaders(dbFare2Leaders.value);
         }
         if (dbUsers.status === 'fulfilled') {
-          const localTeamDir = getStoredTeamDirectory();
-          const localFare2Map = getStoredUserFare2Map();
-          let dirDirty = false;
-          let fare2Dirty = false;
-          const fullAdminIds = new Set(getStoredFullAdminIds());
-          const enrichedUsers = dbUsers.value.map((u) => {
-            if (u.role === 'full_admin') {
-              setUserFullAdminFlag(u.id, true);
-              fullAdminIds.add(u.id);
-            }
-            const resolvedRole: Role =
-              u.role === 'admin' && fullAdminIds.has(u.id) ? 'full_admin' : u.role;
-            const dbTeams =
-              Array.isArray(u.assignedTeams) && u.assignedTeams.length > 0
-                ? u.assignedTeams
-                : undefined;
-            const dbFare2 =
-              Array.isArray(u.assignedFare2) && u.assignedFare2.length > 0
-                ? u.assignedFare2
-                : undefined;
-            if (dbTeams) {
-              localTeamDir[u.id] = dbTeams;
-              dirDirty = true;
-            }
-            if (dbFare2) {
-              localFare2Map[u.id] = dbFare2;
-              fare2Dirty = true;
-            }
-            return {
-              ...u,
-              role: resolvedRole,
-              assignedTeams: dbTeams || localTeamDir[u.id] || [],
-              assignedFare2: dbFare2 || localFare2Map[u.id] || [],
-            };
-          });
-          if (dirDirty) saveStoredTeamDirectory(localTeamDir);
-          if (fare2Dirty) saveStoredUserFare2Map(localFare2Map);
+          const enrichedUsers = dbUsers.value.map((u) => ({
+            ...u,
+            assignedTeams: Array.isArray(u.assignedTeams) ? u.assignedTeams : [],
+            assignedFare2: Array.isArray(u.assignedFare2) ? u.assignedFare2 : [],
+          }));
           setUsers(enrichedUsers);
-          saveStoredUsers(enrichedUsers);
           setCurrentUser((prevUser) => {
             if (!prevUser) return prevUser;
             const matched = enrichedUsers.find(
@@ -1070,12 +847,13 @@ export default function App() {
                 u.id === prevUser.id ||
                 (u.email && prevUser.email && u.email.toLowerCase() === prevUser.email.toLowerCase())
             );
-            if (!matched) return prevUser;
+            if (!matched || matched.status !== 'active') return null;
             const prevTeams = JSON.stringify(prevUser.assignedTeams ?? []);
             const nextTeams = JSON.stringify(matched.assignedTeams ?? []);
             const prevFare2 = JSON.stringify(prevUser.assignedFare2 ?? []);
             const nextFare2 = JSON.stringify(matched.assignedFare2 ?? []);
             if (
+              matched.name === prevUser.name &&
               matched.role === prevUser.role &&
               matched.status === prevUser.status &&
               prevTeams === nextTeams &&
@@ -1083,231 +861,90 @@ export default function App() {
             ) {
               return prevUser;
             }
-            const updatedCurrentUser: User = {
+            return {
               ...prevUser,
+              name: matched.name,
               role: matched.role,
               status: matched.status,
               assignedTeams: matched.assignedTeams,
               assignedFare2: matched.assignedFare2,
             };
-            saveStoredUser(updatedCurrentUser);
-            return updatedCurrentUser;
           });
         }
         if (dbCategories.status === 'fulfilled') {
-          const cats = dbCategories.value.length > 0 ? dbCategories.value : INITIAL_CATEGORIES;
-          setCategories(cats);
-          saveStoredCategories(cats);
+          setCategories(dbCategories.value);
         }
         if (dbLogs.status === 'fulfilled') {
-          setAuditLogs((prev) => {
-            const merged = dbLogs.value.map((l) => {
-              const localMatch = prev.find((ll) => ll.id === l.id);
-              if (!localMatch) return l;
-              return {
-                ...l,
-                productImage: l.productImage || localMatch.productImage,
-                variantSize: l.variantSize || localMatch.variantSize,
-                variantColor: l.variantColor || localMatch.variantColor,
-                oldQuantity: l.oldQuantity !== undefined ? l.oldQuantity : localMatch.oldQuantity,
-                newQuantity: l.newQuantity !== undefined ? l.newQuantity : localMatch.newQuantity,
-                delta: l.delta !== undefined ? l.delta : localMatch.delta,
-                totalQuantityBefore: l.totalQuantityBefore !== undefined ? l.totalQuantityBefore : localMatch.totalQuantityBefore,
-                totalQuantityAfter: l.totalQuantityAfter !== undefined ? l.totalQuantityAfter : localMatch.totalQuantityAfter,
-                reason: l.reason || localMatch.reason,
-                note: l.note || localMatch.note,
-                bookingId: l.bookingId || localMatch.bookingId,
-                bookingNumber: l.bookingNumber || localMatch.bookingNumber,
-              };
-            });
-            saveStoredAuditLogs(merged);
-            return merged;
-          });
+          setAuditLogs(dbLogs.value);
         }
         if (dbBookings.status === 'fulfilled') {
-          const assignmentMap = getStoredBookingAssignmentMap();
-          const stockCheckMap = getStoredBookingStockCheckMap();
-          setBookings((prev) => {
-            const merged = dbBookings.value.map((b) => {
-              const localMatch = prev.find((lb) => lb.id === b.id);
-              const savedAssign = assignmentMap[b.id];
-              const isPaidNow = Boolean(b.depositPaid || b.status !== 'pending');
-              const mergedTroop = b.troopGroup || localMatch?.troopGroup;
-              const resolvedFare2 =
-                b.assignedFare2 ||
-                savedAssign?.assignedFare2 ||
-                localMatch?.assignedFare2 ||
-                (isCoreScoutFare2(mergedTroop) ? mergedTroop : undefined);
-              return {
-                ...b,
-                items: b.items.map((it) => ({
-                  ...it,
-                  productImage: it.productImage || productImageById.get(it.productId) || undefined,
-                })),
-                troopGroup: mergedTroop,
-                assignedFare2: resolvedFare2,
-                assignedToId: b.assignedToId || savedAssign?.assignedToId || localMatch?.assignedToId,
-                assignedToName: b.assignedToName || savedAssign?.assignedToName || localMatch?.assignedToName,
-                stockCheckStatus:
-                  b.stockCheckStatus || stockCheckMap[b.id] || localMatch?.stockCheckStatus,
-                paymentVerificationRequested: isPaidNow
-                  ? false
-                  : Boolean(b.paymentVerificationRequested || localMatch?.paymentVerificationRequested),
-                paymentVerificationRequestedBy: isPaidNow
-                  ? undefined
-                  : (b.paymentVerificationRequestedBy || localMatch?.paymentVerificationRequestedBy),
-                paymentVerificationRequestedAt: isPaidNow
-                  ? undefined
-                  : (b.paymentVerificationRequestedAt || localMatch?.paymentVerificationRequestedAt),
-                paymentVerificationNote: isPaidNow
-                  ? undefined
-                  : (b.paymentVerificationNote || localMatch?.paymentVerificationNote),
-              };
-            });
-            saveStoredBookings(merged);
-            return merged;
+          const syncedBookings = dbBookings.value.map((b) => {
+            const isPaidNow = Boolean(b.depositPaid || b.status !== 'pending');
+            const resolvedFare2 =
+              b.assignedFare2 || (isCoreScoutFare2(b.troopGroup) ? b.troopGroup : undefined);
+            return {
+              ...b,
+              items: b.items.map((it) => ({
+                ...it,
+                productImage: it.productImage || productImageById.get(it.productId) || undefined,
+              })),
+              assignedFare2: resolvedFare2,
+              paymentVerificationRequested: isPaidNow ? false : Boolean(b.paymentVerificationRequested),
+              paymentVerificationRequestedBy: isPaidNow ? undefined : b.paymentVerificationRequestedBy,
+              paymentVerificationRequestedAt: isPaidNow ? undefined : b.paymentVerificationRequestedAt,
+              paymentVerificationNote: isPaidNow ? undefined : b.paymentVerificationNote,
+            };
           });
+          setBookings(syncedBookings);
         }
 
-        // Sync Others folders, sub-folders & sub-sub-folders from Supabase & products
+        // Sync Others folders, sub-folders & sub-sub-folders strictly from Supabase & DB products
         if (dbFolders.status === 'fulfilled') {
           const remoteFolders = dbFolders.value;
-
           if (remoteFolders !== null) {
-            if (remoteFolders.length > 0) {
-              const merged = Array.from(new Set([...remoteFolders, ...dbProductFolders]));
-              setCustomFolders(merged);
-              try {
-                localStorage.setItem('sps_others_folders', JSON.stringify(merged));
-              } catch {}
-            } else {
-              // Seed table if newly created and empty
-              setCustomFolders((prev) => {
-                const seedList = Array.from(new Set([...prev, ...DEFAULT_OTHERS_FOLDERS, ...dbProductFolders]));
-                try {
-                  localStorage.setItem('sps_others_folders', JSON.stringify(seedList));
-                } catch {}
-                syncOthersFoldersToDb(seedList);
-                return seedList;
-              });
-            }
-          } else if (dbProductFolders.length > 0) {
-            setCustomFolders((prev) => {
-              const merged = Array.from(new Set([...prev, ...dbProductFolders]));
-              try {
-                localStorage.setItem('sps_others_folders', JSON.stringify(merged));
-              } catch {}
-              return merged;
-            });
+            setCustomFolders(Array.from(new Set([...remoteFolders, ...dbProductFolders])));
+          } else {
+            setCustomFolders(dbProductFolders);
           }
         }
 
-        // Sync Store Calendar Events & Tasks from Supabase (never drop unsynced local items)
+        // Sync Store Calendar Events & Tasks strictly from Supabase
         if (
           dbCalendar.status === 'fulfilled' &&
           dbCalendar.value !== null &&
           Date.now() - lastCalendarMutationAtRef.current > 3000
         ) {
-          const remoteCalendar = dbCalendar.value;
-          const boardMap = getStoredBoardStatusMap();
-          const unsyncedIds = new Set(getUnsyncedCalendarIds());
-          const remoteIds = new Set(remoteCalendar.map((r) => r.id));
-
-          setCalendarEvents((prev) => {
-            const mergedRemote = remoteCalendar.map((item) => {
-              const localMatch = prev.find((lc) => lc.id === item.id);
-              const preferLocal = unsyncedIds.has(item.id) && localMatch;
-              if (preferLocal) return localMatch!;
-              const fallbackStatus = item.completed
-                ? 'done'
-                : (item.boardStatus || localMatch?.boardStatus || boardMap[item.id]);
-              return {
-                ...item,
-                boardStatus: fallbackStatus,
-                team: item.team || localMatch?.team,
-                assignedToId: item.assignedToId || localMatch?.assignedToId,
-                assignedToName: item.assignedToName || localMatch?.assignedToName,
-                linkedBookingId: item.linkedBookingId || localMatch?.linkedBookingId,
-                linkedBatchId: item.linkedBatchId || localMatch?.linkedBatchId,
-                linkedOfferId: item.linkedOfferId || localMatch?.linkedOfferId,
-                workflowStage: item.workflowStage || localMatch?.workflowStage,
-              };
-            });
-
-            // Keep any local calendar items that have not synced to Supabase yet
-            const pendingLocalItems = prev.filter(
-              (lc) => !remoteIds.has(lc.id) && (unsyncedIds.has(lc.id) || remoteCalendar.length === 0)
-            );
-
-            // Retry syncing any unsynced local items cleanly
-            pendingLocalItems.forEach((pendingItem) => {
-              upsertCalendarEventToDb(pendingItem).then((res) => {
-                if (res.ok) clearCalendarIdUnsynced(pendingItem.id);
-              });
-            });
-
-            const finalCalendar = [...pendingLocalItems, ...mergedRemote];
-            saveStoredCalendarEvents(finalCalendar);
-            return finalCalendar;
-          });
+          setCalendarEvents(dbCalendar.value);
         }
 
-        // Sync Sourcing & Operations relational tables from Supabase when available
+        // Sync Sourcing & Operations relational tables strictly from Supabase
         if (dbSourcing.status === 'fulfilled' && dbSourcing.value !== null && dbSourcing.value.tablesReady) {
           const remote = dbSourcing.value;
-          const hasRemoteSourcing =
-            remote.vendors.length > 0 ||
-            remote.workflows.length > 0 ||
-            remote.stageVendors.length > 0 ||
-            remote.priceHistory.length > 0 ||
-            remote.batches.length > 0;
-          if (hasRemoteSourcing) {
-            setVendors(remote.vendors);
-            saveStoredVendors(remote.vendors);
-            setProductWorkflows(remote.workflows);
-            saveStoredProductWorkflows(remote.workflows);
-            setProductStageVendors(remote.stageVendors);
-            saveStoredProductStageVendors(remote.stageVendors);
-            setVendorPriceHistory(remote.priceHistory);
-            saveStoredVendorPriceHistory(remote.priceHistory);
-            setProductionBatches(remote.batches);
-            saveStoredProductionBatches(remote.batches);
-            markSourcingSeeded();
-          }
+          setVendors(remote.vendors);
+          setProductWorkflows(remote.workflows);
+          setProductStageVendors(remote.stageVendors);
+          setVendorPriceHistory(remote.priceHistory);
+          setProductionBatches(remote.batches);
         }
 
         // Sync Marketing Offers
         if (dbOffers.status === 'fulfilled' && dbOffers.value !== null) {
           setMarketingOffers(dbOffers.value);
-          saveStoredMarketingOffers(dbOffers.value);
         }
 
         // Sync Budgeting Profiles, Expenses & Liquidity Settings
         if (dbBudgeting.status === 'fulfilled' && dbBudgeting.value !== null) {
           const bData = dbBudgeting.value;
-          if (Object.keys(bData.profiles).length > 0) {
-            setBudgetProfiles((prev) => {
-              const merged = { ...prev, ...bData.profiles };
-              saveStoredBudgetProfiles(merged);
-              return merged;
-            });
-          }
-          if (bData.expenses.length > 0) {
-            setBudgetExpenses(bData.expenses);
-            saveStoredBudgetExpenses(bData.expenses);
-          }
-          if (bData.settings) {
-            setBudgetSettings(bData.settings);
-            saveStoredBudgetSettings(bData.settings);
-          }
+          setBudgetProfiles(bData.profiles);
+          setBudgetExpenses(bData.expenses);
+          setBudgetSettings(
+            bData.settings || { id: 'default', reserveBuffer: 0, updatedAt: '' }
+          );
         }
 
         // Sync Calendar Scout Seasons
         if (dbScoutSeasons.status === 'fulfilled' && dbScoutSeasons.value !== null) {
-          if (dbScoutSeasons.value.length > 0) {
-            setScoutSeasons(dbScoutSeasons.value);
-            saveStoredScoutSeasons(dbScoutSeasons.value);
-          }
+          setScoutSeasons(dbScoutSeasons.value);
         }
 
         if (notify) {
@@ -1326,10 +963,9 @@ export default function App() {
     }
   };
 
-  // Load all data ONCE when the app opens (or the page is reloaded).
-  // The old 5-second full re-download of every table (including product photos)
-  // used up the Supabase free egress quota, so it was removed.
+  // Load all data ONCE when the app opens and clear any legacy client-only entity caches.
   useEffect(() => {
+    clearLegacyLocalEntityCaches();
     refreshFromSupabase(false);
   }, []);
 
@@ -1359,7 +995,6 @@ export default function App() {
             const merged = [...fresh, ...prev].sort(
               (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
             );
-            saveStoredAuditLogs(merged);
             return merged;
           });
         }
@@ -1457,33 +1092,6 @@ export default function App() {
     setActiveView('inventory');
   };
 
-  const handleSwitchRole = () => {
-    if (!currentUser) return;
-    setIsBudgetingUnlocked(false);
-    if (isUserAdmin(currentUser)) {
-      const worker = users.find((u) => u.role === 'worker' && u.status === 'active') || {
-        id: 'user_worker_01',
-        name: 'Staff Member',
-        role: 'worker',
-        email: 'karim@wearhouse.com',
-        status: 'active',
-      };
-      setCurrentUser(worker as User);
-      showToast(`Switched to Staff: ${worker.name}`);
-    } else {
-      const admin =
-        users.find((u) => (u.role === 'full_admin' || u.role === 'admin') && u.status === 'active') || {
-          id: 'user_admin_01',
-          name: 'Warehouse Admin',
-          role: 'full_admin',
-          email: 'admin@wearhouse.com',
-          status: 'active',
-        };
-      setCurrentUser(admin as User);
-      showToast(`Switched to ${getRoleDisplayName(admin.role)}`);
-    }
-  };
-
   // Product CRUD (Persisted to Supabase)
   const handleSaveProduct = async (product: Product) => {
     const existingProd = products.find((p) => p.id === product.id);
@@ -1528,10 +1136,7 @@ export default function App() {
     if (finalProd.folder && !customFolders.some((f) => f.toLowerCase() === finalProd.folder!.toLowerCase())) {
       const nextFolders = [...customFolders, finalProd.folder];
       setCustomFolders(nextFolders);
-      try {
-        localStorage.setItem('sps_others_folders', JSON.stringify(nextFolders));
-      } catch {}
-      syncOthersFoldersToDb(nextFolders);
+      syncOthersFoldersToDb(nextFolders).catch(() => {});
     }
 
     let updatedProducts: Product[];
@@ -1788,20 +1393,23 @@ export default function App() {
       };
     }
 
-    setAuditLogs((prev) => [newLog, ...prev]);
-
-    // Save product to Supabase FIRST so foreign key constraint is satisfied before writing audit logs
+    // Save product to Supabase FIRST so foreign key constraint is satisfied and no unsaved data remains in state
     try {
       await upsertProductToDb(finalProd);
     } catch (err: any) {
       console.warn('Supabase upsert product error:', err?.message);
+      setProducts(products);
+      setAuditLogs(auditLogs);
       const msg = String(err?.message || '');
-      if (msg.includes('exceed_egress_quota')) {
-        showToast('Saved locally only — Supabase project is restricted (exceed_egress_quota).');
-      } else if (msg) {
-        showToast(`Saved locally, Supabase sync warning: ${msg}`);
-      }
+      showToast(
+        msg.includes('exceed_egress_quota')
+          ? 'Could not save to database — Supabase project quota restricted (exceed_egress_quota).'
+          : `Database save failed: ${msg || 'Could not persist product'}`
+      );
+      return;
     }
+
+    setAuditLogs((prev) => [newLog, ...prev]);
 
     // Then record audit log
     insertAuditLogInDb(newLog).catch(() => {});
@@ -1831,12 +1439,14 @@ export default function App() {
 
     const nextProds = products.map((p) => (p.id === productId ? approvedProd : p));
     setProducts(nextProds);
-    saveStoredProducts(nextProds);
 
     try {
       await upsertProductToDb(approvedProd);
     } catch (err: any) {
       console.warn('Supabase product approve error:', err?.message);
+      setProducts(products);
+      showToast(`Failed to approve product in database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const newLog: AuditLogEntry = {
@@ -1866,12 +1476,14 @@ export default function App() {
 
     const nextProds = products.filter((p) => p.id !== productId);
     setProducts(nextProds);
-    saveStoredProducts(nextProds);
 
     try {
       await deleteProductFromDb(productId);
     } catch (err: any) {
       console.warn('Supabase product reject delete error:', err?.message);
+      setProducts(products);
+      showToast(`Failed to decline product in database: ${err?.message || 'Sync error'}`);
+      return;
     }
 
     const newLog: AuditLogEntry = {
@@ -2167,12 +1779,24 @@ export default function App() {
   const handleApproveUser = (userId: string) => {
     if (!currentUser) return;
     const targetUser = users.find((u) => u.id === userId);
-    const updated = approveUserAccount(userId, currentUser);
+    const updated = users.map((u) =>
+      u.id === userId
+        ? {
+            ...u,
+            status: 'active' as const,
+            approvedAt: new Date().toISOString(),
+            approvedBy: currentUser.id,
+            approvedByName: currentUser.name,
+          }
+        : u
+    );
     setUsers(updated);
 
     // Persist to Supabase
     updateUserStatusInDb(userId, 'active', currentUser).catch((err) => {
       console.warn('Supabase user approval error:', err.message);
+      setUsers(users);
+      showToast(`Failed to approve account in database: ${err.message}`);
     });
 
     const newLog: AuditLogEntry = {
@@ -2192,12 +1816,16 @@ export default function App() {
   // Admin Rejects a pending staff registration (Persisted to Supabase)
   const handleRejectUser = (userId: string) => {
     const targetUser = users.find((u) => u.id === userId);
-    const updated = rejectUserAccount(userId);
+    const updated = users.map((u) =>
+      u.id === userId ? { ...u, status: 'rejected' as const } : u
+    );
     setUsers(updated);
 
     // Persist to Supabase
     updateUserStatusInDb(userId, 'rejected', currentUser || undefined).catch((err) => {
       console.warn('Supabase user reject error:', err.message);
+      setUsers(users);
+      showToast(`Failed to reject account in database: ${err.message}`);
     });
 
     const newLog: AuditLogEntry = {
@@ -2236,7 +1864,6 @@ export default function App() {
       const { hashPassword } = await import('./utils/security');
       const plainPassword = data.password && data.password.trim().length >= 4 ? data.password.trim() : '123456';
       const securePasswordHash = await hashPassword(plainPassword);
-      const dbRoleFallback = data.role === 'full_admin' ? 'admin' : data.role;
 
       // 2. Check if user already exists in remote Supabase profiles table
       const { data: existingProfile, error: existingErr } = await supabase
@@ -2248,7 +1875,6 @@ export default function App() {
       if (existingErr) throw existingErr;
 
       if (existingProfile) {
-        setUserFullAdminFlag(existingProfile.id, data.role === 'full_admin');
         const updatePayload: Record<string, any> = {
           full_name: data.name.trim(),
           role: data.role,
@@ -2262,18 +1888,10 @@ export default function App() {
           updatePayload.password_hash = securePasswordHash;
         }
 
-        let { error: updateErr } = await supabase
+        const { error: updateErr } = await supabase
           .from('profiles')
           .update(updatePayload)
           .eq('id', existingProfile.id);
-
-        if (updateErr && data.role === 'full_admin') {
-          const retryRes = await supabase
-            .from('profiles')
-            .update({ ...updatePayload, role: dbRoleFallback, requested_role: dbRoleFallback })
-            .eq('id', existingProfile.id);
-          updateErr = retryRes.error;
-        }
 
         if (updateErr) throw updateErr;
 
@@ -2295,7 +1913,6 @@ export default function App() {
 
       // 3. Insert new user profile with secure password hash
       const newId = crypto.randomUUID();
-      setUserFullAdminFlag(newId, data.role === 'full_admin');
       const newUser: User = {
         id: newId,
         name: data.name.trim(),
@@ -2330,14 +1947,7 @@ export default function App() {
         created_at: newUser.createdAt,
       };
 
-      let { error: insertErr } = await supabase.from('profiles').insert(insertPayload);
-
-      if (insertErr && data.role === 'full_admin' && String(insertErr.message || '').includes('user_role')) {
-        const retryInsert = await supabase
-          .from('profiles')
-          .insert({ ...insertPayload, role: dbRoleFallback, requested_role: dbRoleFallback });
-        insertErr = retryInsert.error;
-      }
+      const { error: insertErr } = await supabase.from('profiles').insert(insertPayload);
 
       if (insertErr) {
         // If unique constraint on email was hit, update existing row instead
@@ -2359,21 +1969,7 @@ export default function App() {
               approved_by_name: currentUser?.name || 'Admin',
             })
             .ilike('email', cleanEmail);
-          if (dupRetryErr && data.role === 'full_admin') {
-            await supabase
-              .from('profiles')
-              .update({
-                status: 'active',
-                role: dbRoleFallback,
-                requested_role: dbRoleFallback,
-                assigned_teams: initialTeams,
-                full_name: newUser.name,
-                password_hash: securePasswordHash,
-                approved_at: new Date().toISOString(),
-                approved_by_name: currentUser?.name || 'Admin',
-              })
-              .ilike('email', cleanEmail);
-          }
+          if (dupRetryErr) throw dupRetryErr;
 
           refreshFromSupabase();
           showToast(`Account for ${cleanEmail} activated.`);
@@ -2382,25 +1978,7 @@ export default function App() {
         throw insertErr;
       }
 
-      if (initialTeams.length > 0) {
-        const dir = getStoredTeamDirectory();
-        saveStoredTeamDirectory({ ...dir, [newUser.id]: initialTeams });
-      }
       setUsers((prev) => [newUser, ...prev]);
-
-      // Local account cache
-      try {
-        const { registerNewUser, approveUserAccount } = await import('./utils/storage');
-        const reg = registerNewUser({
-          name: newUser.name,
-          email: newUser.email,
-          password: data.password || '123456',
-          requestedRole: newUser.role,
-        });
-        if (reg.user && currentUser) {
-          approveUserAccount(reg.user.id, currentUser);
-        }
-      } catch (_err) {}
 
       // Record audit log
       const newLog: AuditLogEntry = {
@@ -2418,7 +1996,7 @@ export default function App() {
       showToast(`Account created for ${newUser.name}! They can log in immediately.`);
       return { success: true };
     } catch (err: any) {
-      console.warn('Direct user creation notice:', err?.message);
+      console.warn('Direct user creation error:', err?.message);
       const rawMsg = String(err?.message || '');
       if (rawMsg.includes('exceed_egress_quota')) {
         return {
@@ -2427,29 +2005,14 @@ export default function App() {
             'Supabase project is currently restricted by Free Plan monthly egress quota (exceed_egress_quota). To restore database writes, open Supabase Dashboard → Organization Billing to upgrade/remove the spend cap, or connect a new Supabase project.',
         };
       }
-      if (rawMsg.includes('user_role') && rawMsg.includes('leader')) {
+      if (rawMsg.includes('user_role') && (rawMsg.includes('leader') || rawMsg.includes('full_admin'))) {
         return {
           success: false,
           error:
-            'Database enum "user_role" is missing "leader". Run the SQL update from Account Approvals → View Supabase SQL.',
+            'Database enum "user_role" is missing "leader" or "full_admin". Run the SQL update from Account Approvals → View Supabase SQL.',
         };
       }
       return { success: false, error: rawMsg || 'Failed to create user' };
-    }
-  };
-
-  // 1-Click Seed initial sample catalog into Supabase if desired
-  const handleSeedToSupabase = async () => {
-    showToast('Seeding initial apparel products into your Supabase database...');
-    try {
-      for (const prod of SEED_CATALOG_DATA) {
-        await upsertProductToDb(prod);
-      }
-      setProducts(SEED_CATALOG_DATA);
-      showToast('Apparel catalog seeded into Supabase successfully!');
-    } catch (err: any) {
-      console.error('Seed error:', err);
-      showToast(`Seeding notice: ${err.message || 'Run SQL migration in Supabase first.'}`);
     }
   };
 
@@ -2458,25 +2021,21 @@ export default function App() {
     if (itemsToUpsert.length === 0) return;
     lastCalendarMutationAtRef.current = Date.now();
     const byId = new Map(itemsToUpsert.map((it) => [it.id, it]));
-    const boardMap = getStoredBoardStatusMap();
 
     setCalendarEvents((prev) => {
       const updatedExisting = prev.map((ev) => byId.get(ev.id) || ev);
       const existingIds = new Set(prev.map((ev) => ev.id));
       const freshOnes = itemsToUpsert.filter((it) => !existingIds.has(it.id));
-      const finalList = [...freshOnes, ...updatedExisting];
-      saveStoredCalendarEvents(finalList);
-      return finalList;
+      return [...freshOnes, ...updatedExisting];
     });
 
     itemsToUpsert.forEach((it) => {
-      markCalendarIdUnsynced(it.id);
-      if (it.boardStatus) boardMap[it.id] = it.boardStatus;
       upsertCalendarEventToDb(it).then((res) => {
-        if (res.ok) clearCalendarIdUnsynced(it.id);
+        if (!res.ok && res.error) {
+          showToast(`Database calendar sync error: ${res.error}`);
+        }
       });
     });
-    saveStoredBoardStatusMap(boardMap);
   };
 
   // Connected Order Sync across Scout Fera2 Team, Inventory Mgmt Team & Calendar
@@ -2486,7 +2045,6 @@ export default function App() {
       getScoutFare2Meta(booking.assignedFare2);
     const taskId = `task_order_${booking.id}`;
     const invTaskId = `task_inv_${booking.id}`;
-    const assignMap = getStoredBookingAssignmentMap();
     const createdDate = (booking.createdAt || new Date().toISOString()).slice(0, 10);
     const totalUnits = booking.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
     const itemsSummary = booking.items
@@ -2566,34 +2124,18 @@ export default function App() {
     const tasksToSync: CalendarItem[] = [invTask];
 
     if (!fare2Meta && !booking.assignedToId) {
-      if (assignMap[booking.id]) {
-        delete assignMap[booking.id];
-        saveStoredBookingAssignmentMap(assignMap);
-      }
       setCalendarEvents((prev) => {
         if (!prev.some((ev) => ev.id === taskId)) return prev;
-        const updated = prev.filter((ev) => ev.id !== taskId);
-        saveStoredCalendarEvents(updated);
-        return updated;
+        return prev.filter((ev) => ev.id !== taskId);
       });
-      clearCalendarIdUnsynced(taskId);
       deleteCalendarEventFromDb(taskId).catch(() => {});
       upsertCalendarItemsBatch(tasksToSync);
       return;
     }
 
-    const leaders = getStoredFare2Leaders();
-    const defaultLeader = fare2Meta ? leaders[fare2Meta.id] : undefined;
+    const defaultLeader = fare2Meta ? fare2Leaders[fare2Meta.id] : undefined;
     const assignedToId = booking.assignedToId || defaultLeader?.userId || undefined;
     const assignedToName = booking.assignedToName || defaultLeader?.userName || undefined;
-
-    // Persist booking->Fare2/member assignment locally so reload never drops it
-    assignMap[booking.id] = {
-      assignedFare2: fare2Meta?.id,
-      assignedToId,
-      assignedToName,
-    };
-    saveStoredBookingAssignmentMap(assignMap);
 
     const existingTask = calendarEvents.find((ev) => ev.id === taskId);
 
@@ -2744,28 +2286,22 @@ export default function App() {
       });
     });
 
-    setProductionBatches((prev) => {
-      const next = [...createdBatches, ...prev];
-      saveStoredProductionBatches(next);
-      return next;
-    });
-    createdBatches.forEach((b) => upsertProductionBatchToDb(b).catch(() => {}));
-
-    const stockMap = getStoredBookingStockCheckMap();
-    stockMap[booking.id] = 'in_production';
-    saveStoredBookingStockCheckMap(stockMap);
+    setProductionBatches((prev) => [...createdBatches, ...prev]);
+    createdBatches.forEach((b) =>
+      upsertProductionBatchToDb(b).catch((err) =>
+        showToast(`Database batch sync error: ${err?.message || 'Sync error'}`)
+      )
+    );
 
     const updatedBooking: Booking = {
       ...booking,
       stockCheckStatus: 'in_production',
       updatedAt: new Date().toISOString(),
     };
-    setBookings((prev) => {
-      const next = prev.map((b) => (b.id === booking.id ? updatedBooking : b));
-      saveStoredBookings(next);
-      return next;
-    });
-    updateBookingInDb(booking.id, updatedBooking).catch(() => {});
+    setBookings((prev) => prev.map((b) => (b.id === booking.id ? updatedBooking : b)));
+    updateBookingInDb(booking.id, updatedBooking).catch((err) =>
+      showToast(`Database booking sync error: ${err?.message || 'Sync error'}`)
+    );
 
     upsertCalendarItemsBatch(createdCalendarTasks);
     syncOrderTaskToScoutFera2(updatedBooking);
@@ -2777,21 +2313,15 @@ export default function App() {
 
   // Inventory Mgmt confirms stock is ready -> Handover to Scout Fera2 Team for client delivery
   const handleConfirmBookingStockReady = (booking: Booking) => {
-    const stockMap = getStoredBookingStockCheckMap();
-    stockMap[booking.id] = 'ready_for_handover';
-    saveStoredBookingStockCheckMap(stockMap);
-
     const updatedBooking: Booking = {
       ...booking,
       stockCheckStatus: 'ready_for_handover',
       updatedAt: new Date().toISOString(),
     };
-    setBookings((prev) => {
-      const next = prev.map((b) => (b.id === booking.id ? updatedBooking : b));
-      saveStoredBookings(next);
-      return next;
-    });
-    updateBookingInDb(booking.id, updatedBooking).catch(() => {});
+    setBookings((prev) => prev.map((b) => (b.id === booking.id ? updatedBooking : b)));
+    updateBookingInDb(booking.id, updatedBooking).catch((err) =>
+      showToast(`Database booking sync error: ${err?.message || 'Sync error'}`)
+    );
     syncOrderTaskToScoutFera2(updatedBooking);
 
     showToast(
@@ -2800,36 +2330,43 @@ export default function App() {
   };
 
   const handleFare2LeaderChange = (fare2Id: string, leader: Fare2LeaderAssignment | null) => {
-    upsertFare2LeaderInDb(fare2Id, leader).catch(() => {});
+    setFare2Leaders((prev) => {
+      const next = { ...prev };
+      if (leader) next[fare2Id] = leader;
+      else delete next[fare2Id];
+      return next;
+    });
+    upsertFare2LeaderInDb(fare2Id, leader).then((res) => {
+      if (!res.ok && res.error) {
+        showToast(`Database Fare2 leader sync error: ${res.error}`);
+      }
+    });
     if (!leader) return;
     // Update open unassigned tasks for this Fare2 so they route to the new leader immediately
-    setCalendarEvents((prev) => {
-      let changed = false;
-      const next = prev.map((ev) => {
+    setCalendarEvents((prev) =>
+      prev.map((ev) => {
         if (
           ev.team === 'troops' &&
           ev.troopGroup === fare2Id &&
           !ev.assignedToId &&
           ev.boardStatus !== 'done'
         ) {
-          changed = true;
           const updatedEv = {
             ...ev,
             assignedToId: leader.userId,
             assignedToName: leader.userName,
             updatedAt: new Date().toISOString(),
           };
-          markCalendarIdUnsynced(updatedEv.id);
           upsertCalendarEventToDb(updatedEv).then((res) => {
-            if (res.ok) clearCalendarIdUnsynced(updatedEv.id);
+            if (!res.ok && res.error) {
+              showToast(`Database calendar sync error: ${res.error}`);
+            }
           });
           return updatedEv;
         }
         return ev;
-      });
-      if (changed) saveStoredCalendarEvents(next);
-      return next;
-    });
+      })
+    );
   };
 
   const handleUserTeamsChange = (
@@ -2841,24 +2378,18 @@ export default function App() {
       showToast('Only Admins can modify Store Team assignments.');
       return;
     }
-    const dir = getStoredTeamDirectory();
-    saveStoredTeamDirectory({ ...dir, [userId]: assignedTeams });
-    const f2Map = getStoredUserFare2Map();
-    saveStoredUserFare2Map({ ...f2Map, [userId]: assignedFare2 });
 
-    setUsers((prev) => {
-      const updated = prev.map((u) =>
-        u.id === userId ? { ...u, assignedTeams, assignedFare2 } : u
-      );
-      saveStoredUsers(updated);
-      return updated;
-    });
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, assignedTeams, assignedFare2 } : u))
+    );
     if (currentUser && currentUser.id === userId) {
-      const updatedMe = { ...currentUser, assignedTeams, assignedFare2 };
-      setCurrentUser(updatedMe);
-      saveStoredUser(updatedMe);
+      setCurrentUser({ ...currentUser, assignedTeams, assignedFare2 });
     }
-    updateUserTeamAssignmentsInDb(userId, assignedTeams, assignedFare2).catch(() => {});
+    updateUserTeamAssignmentsInDb(userId, assignedTeams, assignedFare2).then((res) => {
+      if (!res.ok && res.error) {
+        showToast(`Database team assignment sync error: ${res.error}`);
+      }
+    });
   };
 
   // Export Full Inventory Catalog (All Items & Variants) to CSV
@@ -2994,7 +2525,6 @@ export default function App() {
         }
       });
       setProducts(nextProducts);
-      saveStoredProducts(nextProducts);
       variantDbUpdates.forEach((u) => {
         updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
           console.warn('Notice deducting booking stock in Supabase:', err?.message);
@@ -3005,11 +2535,11 @@ export default function App() {
 
     const updatedBookings = [newBooking, ...bookings];
     setBookings(updatedBookings);
-    saveStoredBookings(updatedBookings);
 
     // Sync booking & items to Supabase Database
     insertBookingInDb(newBooking).catch((err) => {
       console.warn('Notice saving booking to Supabase:', err?.message);
+      showToast(`Database booking sync error: ${err?.message || 'Failed to save booking'}`);
     });
 
     // Automatically create Scout Fera2 Task for this order
@@ -3049,9 +2579,9 @@ export default function App() {
 
     const nextBookings = bookings.map((b) => (b.id === safeBooking.id ? safeBooking : b));
     setBookings(nextBookings);
-    saveStoredBookings(nextBookings);
     insertBookingInDb(safeBooking).catch((err) => {
       console.warn('Notice saving updated booking to Supabase:', err?.message);
+      showToast(`Database booking sync error: ${err?.message || 'Sync failed'}`);
     });
     syncOrderTaskToScoutFera2(safeBooking);
   };
@@ -3070,10 +2600,10 @@ export default function App() {
 
     const nextBookings = bookings.map((b) => (b.id === editedBooking.id ? editedBooking : b));
     setBookings(nextBookings);
-    saveStoredBookings(nextBookings);
 
     insertBookingInDb(editedBooking).catch((err) => {
       console.warn('Notice updating booking in Supabase:', err?.message);
+      showToast(`Database booking sync error: ${err?.message || 'Sync failed'}`);
     });
     syncOrderTaskToScoutFera2(editedBooking);
 
@@ -3171,10 +2701,10 @@ export default function App() {
 
     const nextBookings = bookings.map((b) => (b.id === bookingId ? updatedBooking : b));
     setBookings(nextBookings);
-    saveStoredBookings(nextBookings);
 
     updateBookingInDb(bookingId, updatedBooking).catch((err) => {
       console.warn('Notice saving payment verification request to Supabase:', err?.message);
+      showToast(`Database booking sync error: ${err?.message || 'Sync failed'}`);
     });
 
     const pct = target.depositPercentage || (target.depositRate ? Math.round(target.depositRate * 100) : 50);
@@ -3216,10 +2746,10 @@ export default function App() {
 
     const nextBookings = bookings.map((b) => (b.id === bookingId ? updatedBooking : b));
     setBookings(nextBookings);
-    saveStoredBookings(nextBookings);
 
     updateBookingInDb(bookingId, updatedBooking).catch((err) => {
       console.warn('Notice declining payment verification in Supabase:', err?.message);
+      showToast(`Database booking sync error: ${err?.message || 'Sync failed'}`);
     });
 
     const newLog: AuditLogEntry = {
@@ -3316,7 +2846,6 @@ export default function App() {
 
     if (affectedBooking) {
       setProducts(nextProducts);
-      saveStoredProducts(nextProducts);
 
       // Persist all deducted variant quantities to Supabase
       variantDbUpdates.forEach((u) => {
@@ -3326,7 +2855,6 @@ export default function App() {
       });
 
       setBookings(updatedBookings);
-      saveStoredBookings(updatedBookings);
 
       const finalAffected = updatedBookings.find((b) => b.id === bookingId);
       if (finalAffected) {
@@ -3382,34 +2910,22 @@ export default function App() {
 
     const nextBookings = bookings.filter((b) => b.id !== bookingId);
     setBookings(nextBookings);
-    saveStoredBookings(nextBookings);
 
     // Delete from Supabase
     deleteBookingFromDb(bookingId).catch((err) => {
       console.warn('Notice deleting booking in Supabase:', err?.message);
+      setBookings(bookings);
+      showToast(`Database booking delete error: ${err?.message || 'Sync failed'}`);
     });
 
-    // Clean up linked order & inventory tasks & assignment/stock-check maps
+    // Clean up linked order & inventory tasks
     const linkedTaskIds = [`task_order_${bookingId}`, `task_inv_${bookingId}`];
-    const assignMap = getStoredBookingAssignmentMap();
-    if (assignMap[bookingId]) {
-      delete assignMap[bookingId];
-      saveStoredBookingAssignmentMap(assignMap);
-    }
-    const stockCheckMap = getStoredBookingStockCheckMap();
-    if (stockCheckMap[bookingId]) {
-      delete stockCheckMap[bookingId];
-      saveStoredBookingStockCheckMap(stockCheckMap);
-    }
     setCalendarEvents((prev) => {
       if (!prev.some((ev) => linkedTaskIds.includes(ev.id))) return prev;
-      const filtered = prev.filter((ev) => !linkedTaskIds.includes(ev.id));
-      saveStoredCalendarEvents(filtered);
       linkedTaskIds.forEach((tid) => {
-        clearCalendarIdUnsynced(tid);
         deleteCalendarEventFromDb(tid).catch(() => {});
       });
-      return filtered;
+      return prev.filter((ev) => !linkedTaskIds.includes(ev.id));
     });
 
     const newLog: AuditLogEntry = {
@@ -3445,24 +2961,14 @@ export default function App() {
       : [normalizedItem, ...calendarEvents];
 
     setCalendarEvents(nextEvents);
-    saveStoredCalendarEvents(nextEvents);
-    markCalendarIdUnsynced(normalizedItem.id);
-
-    const boardMap = getStoredBoardStatusMap();
-    if (normalizedItem.boardStatus) {
-      boardMap[normalizedItem.id] = normalizedItem.boardStatus;
-      saveStoredBoardStatusMap(boardMap);
-    }
 
     upsertCalendarEventToDb(normalizedItem).then((res) => {
-      if (res.ok) {
-        clearCalendarIdUnsynced(normalizedItem.id);
-      } else if (res.error) {
+      if (!res.ok && res.error) {
         console.warn('Notice saving calendar item to Supabase:', res.error);
         if (res.error.includes('exceed_egress_quota')) {
-          showToast('Saved locally — Supabase quota restricted (exceed_egress_quota).');
+          showToast('Database sync error — Supabase quota restricted (exceed_egress_quota).');
         } else {
-          showToast(`Saved locally — Supabase calendar sync notice: ${res.error}`);
+          showToast(`Database calendar sync error: ${res.error}`);
         }
       }
     });
@@ -3495,18 +3001,11 @@ export default function App() {
     lastCalendarMutationAtRef.current = Date.now();
     const nextEvents = calendarEvents.filter((ev) => ev.id !== id);
     setCalendarEvents(nextEvents);
-    saveStoredCalendarEvents(nextEvents);
-    clearCalendarIdUnsynced(id);
-
-    const boardMap = getStoredBoardStatusMap();
-    if (boardMap[id]) {
-      delete boardMap[id];
-      saveStoredBoardStatusMap(boardMap);
-    }
 
     deleteCalendarEventFromDb(id).then((res) => {
       if (!res.ok && res.error) {
         console.warn('Notice deleting calendar item from Supabase:', res.error);
+        showToast(`Database calendar delete error: ${res.error}`);
       }
     });
 
@@ -3519,23 +3018,19 @@ export default function App() {
   const handleSaveScoutSeason = (season: ScoutSeason) => {
     setScoutSeasons((prev) => {
       const exists = prev.some((s) => s.id === season.id);
-      const next = exists
-        ? prev.map((s) => (s.id === season.id ? season : s))
-        : [...prev, season];
-      saveStoredScoutSeasons(next);
-      return next;
+      return exists ? prev.map((s) => (s.id === season.id ? season : s)) : [...prev, season];
     });
-    upsertScoutSeasonToDb(season).catch(() => {});
+    upsertScoutSeasonToDb(season).catch((err) =>
+      showToast(`Database Scout Season sync error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Scout Season "${season.name}" saved.`);
   };
 
   const handleDeleteScoutSeason = (seasonId: string) => {
-    setScoutSeasons((prev) => {
-      const next = prev.filter((s) => s.id !== seasonId);
-      saveStoredScoutSeasons(next);
-      return next;
-    });
-    deleteScoutSeasonFromDb(seasonId).catch(() => {});
+    setScoutSeasons((prev) => prev.filter((s) => s.id !== seasonId));
+    deleteScoutSeasonFromDb(seasonId).catch((err) =>
+      showToast(`Database Scout Season delete error: ${err?.message || 'Sync failed'}`)
+    );
     showToast('Scout Season removed.');
   };
 
@@ -3555,18 +3050,11 @@ export default function App() {
 
     const nextEvents = calendarEvents.map((ev) => (ev.id === id ? updatedItem : ev));
     setCalendarEvents(nextEvents);
-    saveStoredCalendarEvents(nextEvents);
-    markCalendarIdUnsynced(id);
-
-    const boardMap = getStoredBoardStatusMap();
-    boardMap[id] = nextBoardStatus;
-    saveStoredBoardStatusMap(boardMap);
 
     upsertCalendarEventToDb(updatedItem).then((res) => {
-      if (res.ok) {
-        clearCalendarIdUnsynced(id);
-      } else if (res.error) {
+      if (!res.ok && res.error) {
         console.warn('Notice updating task completion in Supabase:', res.error);
+        showToast(`Database calendar sync error: ${res.error}`);
       }
     });
 
@@ -3591,18 +3079,11 @@ export default function App() {
 
     const nextEvents = calendarEvents.map((ev) => (ev.id === id ? updatedItem : ev));
     setCalendarEvents(nextEvents);
-    saveStoredCalendarEvents(nextEvents);
-    markCalendarIdUnsynced(id);
-
-    const boardMap = getStoredBoardStatusMap();
-    boardMap[id] = nextStatus;
-    saveStoredBoardStatusMap(boardMap);
 
     upsertCalendarEventToDb(updatedItem).then((res) => {
-      if (res.ok) {
-        clearCalendarIdUnsynced(id);
-      } else if (res.error) {
+      if (!res.ok && res.error) {
         console.warn('Notice updating board stage in Supabase:', res.error);
+        showToast(`Database board sync error: ${res.error}`);
       }
     });
 
@@ -3619,40 +3100,34 @@ export default function App() {
   const handleSaveVendor = (vendor: Vendor) => {
     setVendors((prev) => {
       const exists = prev.some((v) => v.id === vendor.id);
-      const next = exists ? prev.map((v) => (v.id === vendor.id ? vendor : v)) : [vendor, ...prev];
-      saveStoredVendors(next);
-      return next;
+      return exists ? prev.map((v) => (v.id === vendor.id ? vendor : v)) : [vendor, ...prev];
     });
-    upsertVendorToDb(vendor).catch(() => {});
+    upsertVendorToDb(vendor).catch((err) =>
+      showToast(`Database vendor sync error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Saved vendor "${vendor.name}".`);
   };
 
   const handleDeleteVendor = (vendorId: string) => {
     const target = vendors.find((v) => v.id === vendorId);
-    setVendors((prev) => {
-      const next = prev.filter((v) => v.id !== vendorId);
-      saveStoredVendors(next);
-      return next;
-    });
-    setProductStageVendors((prev) => {
-      const next = prev.filter((psv) => psv.vendorId !== vendorId);
-      saveStoredProductStageVendors(next);
-      return next;
-    });
-    deleteVendorFromDb(vendorId).catch(() => {});
+    setVendors((prev) => prev.filter((v) => v.id !== vendorId));
+    setProductStageVendors((prev) => prev.filter((psv) => psv.vendorId !== vendorId));
+    deleteVendorFromDb(vendorId).catch((err) =>
+      showToast(`Database vendor delete error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Removed vendor "${target?.name || 'Vendor'}".`);
   };
 
   const handleSaveWorkflow = (workflow: ProductWorkflow) => {
     setProductWorkflows((prev) => {
       const exists = prev.some((w) => w.productId === workflow.productId);
-      const next = exists
+      return exists
         ? prev.map((w) => (w.productId === workflow.productId ? workflow : w))
         : [workflow, ...prev];
-      saveStoredProductWorkflows(next);
-      return next;
     });
-    upsertProductWorkflowToDb(workflow).catch(() => {});
+    upsertProductWorkflowToDb(workflow).catch((err) =>
+      showToast(`Database workflow sync error: ${err?.message || 'Sync failed'}`)
+    );
   };
 
   const handleSaveStageVendor = (link: ProductStageVendor) => {
@@ -3666,85 +3141,45 @@ export default function App() {
             : l
         );
       }
-      saveStoredProductStageVendors(next);
       return next;
     });
-    upsertProductStageVendorToDb(link).catch(() => {});
+    upsertProductStageVendorToDb(link).catch((err) =>
+      showToast(`Database stage vendor sync error: ${err?.message || 'Sync failed'}`)
+    );
   };
 
   const handleDeleteStageVendor = (linkId: string) => {
-    setProductStageVendors((prev) => {
-      const next = prev.filter((l) => l.id !== linkId);
-      saveStoredProductStageVendors(next);
-      return next;
-    });
-    deleteProductStageVendorFromDb(linkId).catch(() => {});
+    setProductStageVendors((prev) => prev.filter((l) => l.id !== linkId));
+    deleteProductStageVendorFromDb(linkId).catch((err) =>
+      showToast(`Database stage vendor delete error: ${err?.message || 'Sync failed'}`)
+    );
   };
 
   const handleAddPriceEntry = (entry: VendorPriceEntry) => {
-    setVendorPriceHistory((prev) => {
-      const next = [entry, ...prev];
-      saveStoredVendorPriceHistory(next);
-      return next;
-    });
-    insertVendorPriceEntryToDb(entry).catch(() => {});
+    setVendorPriceHistory((prev) => [entry, ...prev]);
+    insertVendorPriceEntryToDb(entry).catch((err) =>
+      showToast(`Database price log error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Logged price ${entry.unitPrice.toLocaleString()} EGP.`);
   };
 
   const handleSaveBatch = (batch: ProductionBatch) => {
     setProductionBatches((prev) => {
       const exists = prev.some((b) => b.id === batch.id);
-      const next = exists ? prev.map((b) => (b.id === batch.id ? batch : b)) : [batch, ...prev];
-      saveStoredProductionBatches(next);
-      return next;
+      return exists ? prev.map((b) => (b.id === batch.id ? batch : b)) : [batch, ...prev];
     });
-    upsertProductionBatchToDb(batch).catch(() => {});
+    upsertProductionBatchToDb(batch).catch((err) =>
+      showToast(`Database batch sync error: ${err?.message || 'Sync failed'}`)
+    );
   };
 
   const handleDeleteBatch = (batchId: string) => {
     const target = productionBatches.find((b) => b.id === batchId);
-    setProductionBatches((prev) => {
-      const next = prev.filter((b) => b.id !== batchId);
-      saveStoredProductionBatches(next);
-      return next;
-    });
-    deleteProductionBatchFromDb(batchId).catch(() => {});
+    setProductionBatches((prev) => prev.filter((b) => b.id !== batchId));
+    deleteProductionBatchFromDb(batchId).catch((err) =>
+      showToast(`Database batch delete error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Deleted batch ${target?.batchCode || ''}.`);
-  };
-
-  const handleSeedStarterCatalog = () => {
-    let targetProducts = products;
-    if (targetProducts.length === 0) {
-      targetProducts = SEED_CATALOG_DATA;
-      setProducts(targetProducts);
-      saveStoredProducts(targetProducts);
-      targetProducts.forEach((p) => {
-        upsertProductToDb(p).catch(() => {});
-      });
-    }
-    const seed = buildInitialSourcingSeed(targetProducts);
-    setVendors(seed.vendors);
-    saveStoredVendors(seed.vendors);
-    seed.vendors.forEach((v) => upsertVendorToDb(v).catch(() => {}));
-
-    setProductWorkflows(seed.workflows);
-    saveStoredProductWorkflows(seed.workflows);
-    seed.workflows.forEach((w) => upsertProductWorkflowToDb(w).catch(() => {}));
-
-    setProductStageVendors(seed.stageVendors);
-    saveStoredProductStageVendors(seed.stageVendors);
-    seed.stageVendors.forEach((sv) => upsertProductStageVendorToDb(sv).catch(() => {}));
-
-    setVendorPriceHistory(seed.priceHistory);
-    saveStoredVendorPriceHistory(seed.priceHistory);
-    seed.priceHistory.forEach((ph) => insertVendorPriceEntryToDb(ph).catch(() => {}));
-
-    setProductionBatches(seed.batches);
-    saveStoredProductionBatches(seed.batches);
-    seed.batches.forEach((b) => upsertProductionBatchToDb(b).catch(() => {}));
-
-    markSourcingSeeded();
-    showToast('Loaded starter catalog items, supply chain vendors, and Batch #104.');
   };
 
   const handleCompleteBatchStockIn = ({
@@ -3787,8 +3222,9 @@ export default function App() {
 
     const nextProducts = products.map((p) => (p.id === product.id ? updatedProduct : p));
     setProducts(nextProducts);
-    saveStoredProducts(nextProducts);
-    updateVariantQuantityInDb(targetVariant.id, newQty).catch(() => {});
+    updateVariantQuantityInDb(targetVariant.id, newQty).catch((err) =>
+      showToast(`Database stock update error: ${err?.message || 'Sync failed'}`)
+    );
 
     // Log audit entry for Gard stock-in
     const sizeText =
@@ -3815,11 +3251,7 @@ export default function App() {
       summary: `Batch ${batch.batchCode} Stocked In (+${qtyToAdd}): "${product.name}" [${sizeText} / ${targetVariant.colorName}] (${oldQty} -> ${newQty})`,
       details: `Completed production batch ${batch.batchCode}. Stock added via Gard: +${qtyToAdd} pcs (${sizeText} / ${targetVariant.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
     };
-    setAuditLogs((prev) => {
-      const nextLogs = [newLog, ...prev];
-      saveStoredAuditLogs(nextLogs);
-      return nextLogs;
-    });
+    setAuditLogs((prev) => [newLog, ...prev]);
     insertAuditLogInDb(newLog).catch(() => {});
 
     // Auto-log batch stage costs into Vendor Price History
@@ -3861,20 +3293,12 @@ export default function App() {
     });
 
     if (createdLinks.length > 0) {
-      setProductStageVendors((prev) => {
-        const next = [...prev, ...createdLinks];
-        saveStoredProductStageVendors(next);
-        return next;
-      });
+      setProductStageVendors((prev) => [...prev, ...createdLinks]);
       createdLinks.forEach((lnk) => upsertProductStageVendorToDb(lnk).catch(() => {}));
     }
 
     if (createdPrices.length > 0) {
-      setVendorPriceHistory((prev) => {
-        const next = [...createdPrices, ...prev];
-        saveStoredVendorPriceHistory(next);
-        return next;
-      });
+      setVendorPriceHistory((prev) => [...createdPrices, ...prev]);
       createdPrices.forEach((entry) => insertVendorPriceEntryToDb(entry).catch(() => {}));
     }
 
@@ -3889,8 +3313,9 @@ export default function App() {
     };
     const nextBatches = productionBatches.map((b) => (b.id === batch.id ? completedBatch : b));
     setProductionBatches(nextBatches);
-    saveStoredProductionBatches(nextBatches);
-    upsertProductionBatchToDb(completedBatch).catch(() => {});
+    upsertProductionBatchToDb(completedBatch).catch((err) =>
+      showToast(`Database batch sync error: ${err?.message || 'Sync failed'}`)
+    );
 
     // Mark any linked Purchases Team Calendar / Board card as Done
     const purchaseTaskId = `task_purchase_${batch.id}`;
@@ -3916,20 +3341,12 @@ export default function App() {
       );
       const linkedOrder = bookings.find((b) => b.id === batch.linkedBookingId);
       if (linkedOrder && !stillOpenForOrder) {
-        const stockMap = getStoredBookingStockCheckMap();
-        stockMap[linkedOrder.id] = 'ready_for_handover';
-        saveStoredBookingStockCheckMap(stockMap);
-
         const readyOrder: Booking = {
           ...linkedOrder,
           stockCheckStatus: 'ready_for_handover',
           updatedAt: new Date().toISOString(),
         };
-        setBookings((prev) => {
-          const updatedList = prev.map((b) => (b.id === linkedOrder.id ? readyOrder : b));
-          saveStoredBookings(updatedList);
-          return updatedList;
-        });
+        setBookings((prev) => prev.map((b) => (b.id === linkedOrder.id ? readyOrder : b)));
         updateBookingInDb(linkedOrder.id, readyOrder).catch(() => {});
         syncOrderTaskToScoutFera2(readyOrder);
       }
@@ -3947,11 +3364,11 @@ export default function App() {
   const handleSaveMarketingOffer = (offer: MarketingOffer, syncToCalendar: boolean) => {
     setMarketingOffers((prev) => {
       const exists = prev.some((o) => o.id === offer.id);
-      const next = exists ? prev.map((o) => (o.id === offer.id ? offer : o)) : [offer, ...prev];
-      saveStoredMarketingOffers(next);
-      return next;
+      return exists ? prev.map((o) => (o.id === offer.id ? offer : o)) : [offer, ...prev];
     });
-    upsertMarketingOfferToDb(offer).catch(() => {});
+    upsertMarketingOfferToDb(offer).catch((err) =>
+      showToast(`Database marketing offer sync error: ${err?.message || 'Sync failed'}`)
+    );
 
     const eventId = `event_offer_${offer.id}`;
     if (syncToCalendar) {
@@ -4011,21 +3428,14 @@ export default function App() {
 
   const handleDeleteMarketingOffer = (offerId: string) => {
     const target = marketingOffers.find((o) => o.id === offerId);
-    setMarketingOffers((prev) => {
-      const next = prev.filter((o) => o.id !== offerId);
-      saveStoredMarketingOffers(next);
-      return next;
-    });
-    deleteMarketingOfferFromDb(offerId).catch(() => {});
+    setMarketingOffers((prev) => prev.filter((o) => o.id !== offerId));
+    deleteMarketingOfferFromDb(offerId).catch((err) =>
+      showToast(`Database marketing offer delete error: ${err?.message || 'Sync failed'}`)
+    );
 
     const linkedEv = calendarEvents.find((ev) => ev.id === `event_offer_${offerId}`);
     if (linkedEv) {
-      setCalendarEvents((prev) => {
-        const filtered = prev.filter((ev) => ev.id !== linkedEv.id);
-        saveStoredCalendarEvents(filtered);
-        return filtered;
-      });
-      clearCalendarIdUnsynced(linkedEv.id);
+      setCalendarEvents((prev) => prev.filter((ev) => ev.id !== linkedEv.id));
       deleteCalendarEventFromDb(linkedEv.id).catch(() => {});
     }
 
@@ -4034,38 +3444,33 @@ export default function App() {
 
   // Budgeting CRUD Handlers
   const handleSaveBudgetProfile = (profile: ProductBudgetProfile) => {
-    setBudgetProfiles((prev) => {
-      const next = { ...prev, [profile.productId]: profile };
-      saveStoredBudgetProfiles(next);
-      return next;
-    });
-    upsertProductBudgetProfileToDb(profile).catch(() => {});
+    setBudgetProfiles((prev) => ({ ...prev, [profile.productId]: profile }));
+    upsertProductBudgetProfileToDb(profile).catch((err) =>
+      showToast(`Database budget profile sync error: ${err?.message || 'Sync failed'}`)
+    );
   };
 
   const handleAddBudgetExpense = (expense: BudgetExpenseEntry) => {
-    setBudgetExpenses((prev) => {
-      const next = [expense, ...prev];
-      saveStoredBudgetExpenses(next);
-      return next;
-    });
-    upsertBudgetExpenseToDb(expense).catch(() => {});
+    setBudgetExpenses((prev) => [expense, ...prev]);
+    upsertBudgetExpenseToDb(expense).catch((err) =>
+      showToast(`Database expense sync error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Logged expense "${expense.title}" (${expense.amount} EGP).`);
   };
 
   const handleDeleteBudgetExpense = (expenseId: string) => {
-    setBudgetExpenses((prev) => {
-      const next = prev.filter((e) => e.id !== expenseId);
-      saveStoredBudgetExpenses(next);
-      return next;
-    });
-    deleteBudgetExpenseFromDb(expenseId).catch(() => {});
+    setBudgetExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+    deleteBudgetExpenseFromDb(expenseId).catch((err) =>
+      showToast(`Database expense delete error: ${err?.message || 'Sync failed'}`)
+    );
     showToast('Deleted expense entry.');
   };
 
   const handleSaveBudgetSettings = (settings: BudgetSettings) => {
     setBudgetSettings(settings);
-    saveStoredBudgetSettings(settings);
-    upsertBudgetSettingsToDb(settings).catch(() => {});
+    upsertBudgetSettingsToDb(settings).catch((err) =>
+      showToast(`Database budget settings sync error: ${err?.message || 'Sync failed'}`)
+    );
   };
 
   const handleBudgetUpdateProductPrice = (productId: string, newPrice: number) => {
@@ -4076,12 +3481,10 @@ export default function App() {
       price: Math.max(0, newPrice),
       updatedAt: new Date().toISOString(),
     };
-    setProducts((prev) => {
-      const next = prev.map((p) => (p.id === productId ? updated : p));
-      saveStoredProducts(next);
-      return next;
-    });
-    upsertProductToDb(updated).catch(() => {});
+    setProducts((prev) => prev.map((p) => (p.id === productId ? updated : p)));
+    upsertProductToDb(updated).catch((err) =>
+      showToast(`Database product price sync error: ${err?.message || 'Sync failed'}`)
+    );
     showToast(`Updated "${target.name}" catalog price to ${newPrice} EGP.`);
   };
 
@@ -4185,7 +3588,7 @@ export default function App() {
       setActiveView('inventory');
       return;
     }
-    if (!canUserAccessView(currentUser, view)) {
+    if (!canUserAccessView(currentUser, view, users)) {
       showToast(
         'You do not have access to this page. Assign the corresponding Store Team in Account Approvals.'
       );
@@ -4304,13 +3707,13 @@ export default function App() {
         ? 'account-approvals'
         : 'stock-approvals'
       : activeView;
-  const effectiveView = !canUserAccessView(currentUser, resolvedActiveView)
+  const effectiveView = !canUserAccessView(currentUser, resolvedActiveView, users)
     ? 'inventory'
     : resolvedActiveView;
-  const showAccountKpi = canUserAccessView(currentUser, 'account-approvals');
-  const showStockKpi = !showAccountKpi && canUserAccessView(currentUser, 'stock-approvals');
+  const showAccountKpi = canUserAccessView(currentUser, 'account-approvals', users);
+  const showStockKpi = !showAccountKpi && canUserAccessView(currentUser, 'stock-approvals', users);
   const showWorkerReqKpi =
-    !showAccountKpi && !showStockKpi && canUserAccessView(currentUser, 'worker-requests');
+    !showAccountKpi && !showStockKpi && canUserAccessView(currentUser, 'worker-requests', users);
   const showQueueKpiCard = !isLeader && (showAccountKpi || showStockKpi || showWorkerReqKpi);
 
   return (
@@ -4319,9 +3722,9 @@ export default function App() {
         {/* Top Bar Header */}
         <Header
         currentUser={currentUser}
+        users={users}
         activeView={effectiveView}
         onNavigate={handleNavigate}
-        onSwitchRole={handleSwitchRole}
         onLogout={handleLogout}
         pendingCount={pendingCount}
         pendingStockCount={pendingRequestsCount}
@@ -4336,16 +3739,8 @@ export default function App() {
         {/* VIEW 1: CATALOG & INVENTORY */}
         {effectiveView === 'inventory' && (
           <div className="space-y-6">
-            {isLeader && (
-              <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 text-xs text-emerald-950 font-semibold">
-                  <Eye className="w-4 h-4 text-emerald-700 shrink-0" />
-                  <span>Scout Leader Read-Only Catalog — Browse uniform models, sizes, and unit prices.</span>
-                </div>
-              </div>
-            )}
-
-            {/* KPI Metric Strip in Clean Light Mode */}
+            {/* KPI Metric Strip in Clean Light Mode (hidden for Scout Leader) */}
+            {!isLeader && (
             <div className={`grid grid-cols-2 ${showQueueKpiCard ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
               <button
                 type="button"
@@ -4462,6 +3857,7 @@ export default function App() {
                 </div>
               </div>
             </div>
+            )}
 
             {/* Search & Filter Controls */}
             <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
@@ -4501,7 +3897,7 @@ export default function App() {
                   </button>
                 )}
 
-                {!isLeader && canUserAccessView(currentUser, 'add-product') && (
+                {!isLeader && canUserAccessView(currentUser, 'add-product', users) && (
                   <button
                     onClick={() => {
                       setProductToEdit(undefined);
@@ -4885,7 +4281,7 @@ export default function App() {
                       }}
                       onApproveProduct={handleApproveProduct}
                       onOpenBooking={(p) => {
-                        if (isLeader || !canUserAccessView(currentUser, 'bookings')) {
+                        if (isLeader || !canUserAccessView(currentUser, 'bookings', users)) {
                           if (!isLeader) {
                             showToast('Orders & Bookings requires Scout Fera2 Team access.');
                           }
@@ -4903,7 +4299,7 @@ export default function App() {
         )}
 
         {/* VIEW 1B: ADMIN ANALYTICS & PRODUCTION DASHBOARD */}
-        {effectiveView === 'analytics' && canUserAccessView(currentUser, 'analytics') && (
+        {effectiveView === 'analytics' && canUserAccessView(currentUser, 'analytics', users) && (
           <AdminAnalyticsView
             bookings={bookings}
             products={products}
@@ -4913,7 +4309,7 @@ export default function App() {
         )}
 
         {/* VIEW 2A: STOCK APPROVALS (Stock adjustments queue + New item submissions) */}
-        {effectiveView === 'stock-approvals' && canUserAccessView(currentUser, 'stock-approvals') && (
+        {effectiveView === 'stock-approvals' && canUserAccessView(currentUser, 'stock-approvals', users) && (
           <ApprovalsView
             mode="stock"
             requests={requests}
@@ -4936,7 +4332,7 @@ export default function App() {
         )}
 
         {/* VIEW 2B: ACCOUNT APPROVALS (Dedicated Staff Accounts & Registration Approvals) */}
-        {effectiveView === 'account-approvals' && canUserAccessView(currentUser, 'account-approvals') && (
+        {effectiveView === 'account-approvals' && canUserAccessView(currentUser, 'account-approvals', users) && (
           <ApprovalsView
             mode="accounts"
             requests={requests}
@@ -4959,7 +4355,7 @@ export default function App() {
         )}
 
         {/* VIEW 3: WORKER REQUESTS */}
-        {effectiveView === 'worker-requests' && canUserAccessView(currentUser, 'worker-requests') && (
+        {effectiveView === 'worker-requests' && canUserAccessView(currentUser, 'worker-requests', users) && (
           <WorkerRequestsView
             requests={requests}
             currentUser={currentUser}
@@ -4968,7 +4364,7 @@ export default function App() {
         )}
 
         {/* VIEW 4: AUDIT LOG */}
-        {effectiveView === 'audit-log' && canUserAccessView(currentUser, 'audit-log') && (
+        {effectiveView === 'audit-log' && canUserAccessView(currentUser, 'audit-log', users) && (
           <div className="space-y-6">
             <MobileNotificationBanner
               permission={notificationPermission}
@@ -4990,11 +4386,12 @@ export default function App() {
         )}
 
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
-        {effectiveView === 'bookings' && canUserAccessView(currentUser, 'bookings') && (
+        {effectiveView === 'bookings' && canUserAccessView(currentUser, 'bookings', users) && (
           <BookingsView
             bookings={bookings}
             products={products}
             users={users}
+            fare2Leaders={fare2Leaders}
             batches={productionBatches}
             currentUser={currentUser}
             onOpenNewBookingModal={() => {
@@ -5039,7 +4436,7 @@ export default function App() {
           />
         )}
 
-        {effectiveView === 'calendar' && canUserAccessView(currentUser, 'calendar') && (
+        {effectiveView === 'calendar' && canUserAccessView(currentUser, 'calendar', users) && (
           <CalendarView
             items={calendarEvents}
             users={users}
@@ -5054,10 +4451,11 @@ export default function App() {
           />
         )}
 
-        {effectiveView === 'board' && canUserAccessView(currentUser, 'board') && (
+        {effectiveView === 'board' && canUserAccessView(currentUser, 'board', users) && (
           <TeamBoardView
             items={calendarEvents}
             users={users}
+            fare2Leaders={fare2Leaders}
             bookings={bookings}
             currentUser={currentUser}
             onSaveItem={handleSaveCalendarEvent}
@@ -5066,7 +4464,7 @@ export default function App() {
             onFare2LeaderChange={handleFare2LeaderChange}
             onUserTeamsChange={handleUserTeamsChange}
             onOpenBooking={(bid) => {
-              if (!canUserAccessView(currentUser, 'bookings')) {
+              if (!canUserAccessView(currentUser, 'bookings', users)) {
                 showToast('Orders & Bookings page requires Scout Fera2 Team access.');
                 return;
               }
@@ -5079,7 +4477,7 @@ export default function App() {
           />
         )}
 
-        {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing') && (
+        {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <SourcingOperationsView
             products={products}
             vendors={vendors}
@@ -5096,12 +4494,11 @@ export default function App() {
             onSaveBatch={handleSaveBatch}
             onDeleteBatch={handleDeleteBatch}
             onCompleteBatchStockIn={handleCompleteBatchStockIn}
-            onSeedStarterCatalog={handleSeedStarterCatalog}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
 
-        {effectiveView === 'marketing' && canUserAccessView(currentUser, 'marketing') && (
+        {effectiveView === 'marketing' && canUserAccessView(currentUser, 'marketing', users) && (
           <MarketingOffersView
             products={products}
             offers={marketingOffers}
@@ -5120,7 +4517,7 @@ export default function App() {
           />
         )}
 
-        {effectiveView === 'budgeting' && canUserAccessView(currentUser, 'budgeting') && (
+        {effectiveView === 'budgeting' && canUserAccessView(currentUser, 'budgeting', users) && (
           <BudgetingView
             products={products}
             bookings={bookings}
@@ -5155,6 +4552,7 @@ export default function App() {
       {/* Mobile Bottom Navigation */}
       <BottomNav
         currentUser={currentUser}
+        users={users}
         activeView={effectiveView}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
@@ -5164,12 +4562,12 @@ export default function App() {
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         approvalsTab={approvalsTab}
         onOpenAddProduct={() => {
-          if (!canUserAccessView(currentUser, 'add-product')) return;
+          if (!canUserAccessView(currentUser, 'add-product', users)) return;
           setProductToEdit(undefined);
           setShowAddModal(true);
         }}
         onOpenNewBooking={() => {
-          if (!canUserAccessView(currentUser, 'bookings')) return;
+          if (!canUserAccessView(currentUser, 'bookings', users)) return;
           setBookingModalProduct(undefined);
           setIsBookingModalOpen(true);
         }}
@@ -5298,6 +4696,7 @@ export default function App() {
           }}
           products={products}
           users={users}
+          fare2Leaders={fare2Leaders}
           marketingOffers={marketingOffers}
           initialProduct={bookingModalProduct}
           bookingToEdit={bookingToEdit}

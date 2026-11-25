@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { AdjustmentRequest, User, Role, Product, StoreTeamId } from '../types/inventory';
 import { STORE_TEAMS } from './CalendarView';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
-import { getStoredTeamDirectory, getStoredUserFare2Map } from '../utils/storage';
 import {
   Check,
   X,
@@ -148,14 +147,10 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       : 'bg-sky-50 text-sky-800 border-sky-300';
 
   const openEditAccountModal = (user: User) => {
-    const localTeams = getStoredTeamDirectory()[user.id] || [];
-    const localFare2 = getStoredUserFare2Map()[user.id] || [];
-    const resolvedTeams =
-      user.assignedTeams && user.assignedTeams.length > 0 ? user.assignedTeams : localTeams;
-    const resolvedFare2 =
-      user.assignedFare2 && user.assignedFare2.length > 0 ? user.assignedFare2 : localFare2;
+    const resolvedTeams = Array.isArray(user.assignedTeams) ? user.assignedTeams : [];
+    const resolvedFare2 = Array.isArray(user.assignedFare2) ? user.assignedFare2 : [];
     setUserToEditRole(user);
-    setNewSelectedRole(isFullAccessAdmin(user) ? 'full_admin' : normalizeRole(user.role));
+    setNewSelectedRole(isFullAccessAdmin(user, users) ? 'full_admin' : normalizeRole(user.role));
     setNewSelectedTeams(resolvedTeams);
     setNewSelectedFare2(resolvedFare2);
     setOriginalEditTeams(resolvedTeams);
@@ -299,14 +294,14 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
       }
       if (staffRoleFilter === 'full_admin') {
         const isFull =
-          isFullAccessAdmin(u) ||
+          isFullAccessAdmin(u, users) ||
           (u.status === 'pending' && normalizeRole(u.requestedRole) === 'full_admin');
         if (!isFull) return false;
       }
       if (staffRoleFilter === 'admin') {
         const isRegularAdmin =
-          (normalizeRole(u.role) === 'admin' && !isFullAccessAdmin(u)) ||
-          (u.status === 'pending' && normalizeRole(u.requestedRole) === 'admin' && !isFullAccessAdmin(u));
+          (normalizeRole(u.role) === 'admin' && !isFullAccessAdmin(u, users)) ||
+          (u.status === 'pending' && normalizeRole(u.requestedRole) === 'admin' && !isFullAccessAdmin(u, users));
         if (!isRegularAdmin) return false;
       }
 
@@ -919,7 +914,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     >
                       {staffRoleFilter === 'full_admin'
                         ? '✓ Active'
-                        : `(${allStaffUsers.filter((u) => isFullAccessAdmin(u) || normalizeRole(u.requestedRole) === 'full_admin').length})`}
+                        : `(${allStaffUsers.filter((u) => isFullAccessAdmin(u, users) || normalizeRole(u.requestedRole) === 'full_admin').length})`}
                     </span>
                   </div>
                   <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
@@ -965,7 +960,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     >
                       {staffRoleFilter === 'admin'
                         ? '✓ Active'
-                        : `(${allStaffUsers.filter((u) => normalizeRole(u.role) === 'admin' && !isFullAccessAdmin(u)).length})`}
+                        : `(${allStaffUsers.filter((u) => normalizeRole(u.role) === 'admin' && !isFullAccessAdmin(u, users)).length})`}
                     </span>
                   </div>
                   <p className="hidden sm:block text-[11px] text-slate-600 mt-1 leading-relaxed font-medium">
@@ -1157,7 +1152,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           )}
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              isFullAccessAdmin(user) || normalizeRole(user.requestedRole) === 'full_admin'
+                              isFullAccessAdmin(user, users) || normalizeRole(user.requestedRole) === 'full_admin'
                                 ? 'bg-amber-500/15 text-amber-950 border-amber-400'
                                 : normalizeRole(user.role) === 'admin' || normalizeRole(user.requestedRole) === 'admin'
                                 ? 'bg-orange-50 text-orange-900 border-orange-300'
@@ -1166,7 +1161,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                                 : 'bg-sky-50 text-sky-800 border-sky-300'
                             }`}
                           >
-                            {isFullAccessAdmin(user) || normalizeRole(user.requestedRole) === 'full_admin'
+                            {isFullAccessAdmin(user, users) || normalizeRole(user.requestedRole) === 'full_admin'
                               ? 'Full-Access Admin'
                               : normalizeRole(user.role) === 'admin' || normalizeRole(user.requestedRole) === 'admin'
                               ? 'Admin (Team-Scoped)'
@@ -1180,13 +1175,9 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           Registered: {new Date(user.createdAt || Date.now()).toLocaleDateString()}
                         </div>
                         {(() => {
-                          const userTeams = Array.isArray(user.assignedTeams)
-                            ? user.assignedTeams
-                            : getStoredTeamDirectory()[user.id] || [];
-                          const userF2 = Array.isArray(user.assignedFare2)
-                            ? user.assignedFare2
-                            : getStoredUserFare2Map()[user.id] || [];
-                          const userIsFullAdmin = isFullAccessAdmin(user);
+                          const userTeams = Array.isArray(user.assignedTeams) ? user.assignedTeams : [];
+                          const userF2 = Array.isArray(user.assignedFare2) ? user.assignedFare2 : [];
+                          const userIsFullAdmin = isFullAccessAdmin(user, users);
                           const isUnassignedRegularAdmin =
                             normalizeRole(user.role) === 'admin' && !userIsFullAdmin && userTeams.length === 0;
                           if (
@@ -1247,7 +1238,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     <div className="flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100">
                       {isCurrentUser ? (
                         <div className="flex items-center gap-2 flex-wrap">
-                          {onUpdateUserRole && user.role !== 'full_admin' && isFullAccessAdmin(user) && (
+                          {onUpdateUserRole && user.role !== 'full_admin' && isFullAccessAdmin(user, users) && (
                             <button
                               type="button"
                               onClick={() => onUpdateUserRole(user.id, 'full_admin')}

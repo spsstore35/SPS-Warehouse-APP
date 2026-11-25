@@ -26,7 +26,7 @@ interface HeaderProps {
   pendingBookingsCount?: number;
   pendingAuditNotificationsCount?: number;
   approvalsTab?: 'stock' | 'staff';
-  onSwitchRole?: () => void;
+  users?: User[];
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -40,11 +40,12 @@ export const Header: React.FC<HeaderProps> = ({
   pendingBookingsCount = 0,
   pendingAuditNotificationsCount = 0,
   approvalsTab = 'stock',
+  users = [],
 }) => {
   const isAdmin = isUserAdmin(currentUser);
   const isLeader = isUserLeader(currentUser);
   const userTeams = getUserAssignedTeams(currentUser);
-  const fullAccessAdmin = isFullAccessAdmin(currentUser);
+  const fullAccessAdmin = isFullAccessAdmin(currentUser, users);
   const teamScopeKey = userTeams.join(',');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -170,7 +171,7 @@ export const Header: React.FC<HeaderProps> = ({
                 Inventory Catalog
               </button>
 
-              {canUserAccessView(currentUser, 'bookings') && (
+              {canUserAccessView(currentUser, 'bookings', users) && (
                 <button
                   onClick={() => onNavigate('bookings')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -190,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'calendar') && (
+              {canUserAccessView(currentUser, 'calendar', users) && (
                 <button
                   onClick={() => onNavigate('calendar')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -205,7 +206,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'board') && (
+              {canUserAccessView(currentUser, 'board', users) && (
                 <button
                   onClick={() => onNavigate('board')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -220,7 +221,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'sourcing') && (
+              {canUserAccessView(currentUser, 'sourcing', users) && (
                 <button
                   onClick={() => onNavigate('sourcing')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -235,7 +236,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'marketing') && (
+              {canUserAccessView(currentUser, 'marketing', users) && (
                 <button
                   onClick={() => onNavigate('marketing')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -250,7 +251,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'budgeting') && (
+              {canUserAccessView(currentUser, 'budgeting', users) && (
                 <button
                   onClick={() => onNavigate('budgeting')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -265,7 +266,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'analytics') && (
+              {canUserAccessView(currentUser, 'analytics', users) && (
                 <button
                   onClick={() => onNavigate('analytics')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -280,7 +281,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'stock-approvals') && (
+              {canUserAccessView(currentUser, 'stock-approvals', users) && (
                 <button
                   onClick={() => onNavigate('stock-approvals')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -300,7 +301,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'account-approvals') && (
+              {canUserAccessView(currentUser, 'account-approvals', users) && (
                 <button
                   onClick={() => onNavigate('account-approvals')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -320,7 +321,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'worker-requests') && (
+              {canUserAccessView(currentUser, 'worker-requests', users) && (
                 <button
                   onClick={() => onNavigate('worker-requests')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -336,7 +337,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'add-product') && (
+              {canUserAccessView(currentUser, 'add-product', users) && (
                 <button
                   onClick={() => onNavigate('add-product')}
                   className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
@@ -347,7 +348,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'audit-log') && (
+              {canUserAccessView(currentUser, 'audit-log', users) && (
                 <button
                   onClick={() => onNavigate('audit-log')}
                   className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
@@ -480,7 +481,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </button>
 
-                    {canUserAccessView(currentUser, 'bookings') && (
+                    {canUserAccessView(currentUser, 'bookings', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -501,7 +502,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'calendar') && (
+                    {canUserAccessView(currentUser, 'calendar', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -517,7 +518,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'board') && (
+                    {canUserAccessView(currentUser, 'board', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -533,7 +534,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'sourcing') && (
+                    {canUserAccessView(currentUser, 'sourcing', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -549,7 +550,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'marketing') && (
+                    {canUserAccessView(currentUser, 'marketing', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -565,7 +566,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'budgeting') && (
+                    {canUserAccessView(currentUser, 'budgeting', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -581,7 +582,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'add-product') && (
+                    {canUserAccessView(currentUser, 'add-product', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -597,7 +598,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'analytics') && (
+                    {canUserAccessView(currentUser, 'analytics', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -613,7 +614,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'account-approvals') && (
+                    {canUserAccessView(currentUser, 'account-approvals', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -634,7 +635,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'stock-approvals') && (
+                    {canUserAccessView(currentUser, 'stock-approvals', users) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -655,7 +656,7 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     )}
 
-                    {canUserAccessView(currentUser, 'audit-log') && (
+                    {canUserAccessView(currentUser, 'audit-log', users) && (
                       <button
                         type="button"
                         onClick={() => {

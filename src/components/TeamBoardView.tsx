@@ -4,19 +4,11 @@ import {
   Booking,
   CalendarItem,
   CalendarItemType,
+  Fare2LeaderAssignment,
   StoreTeamId,
   User,
 } from '../types/inventory';
 import { STORE_TEAMS, StoreTeamMeta } from './CalendarView';
-import {
-  getStoredTeamDirectory,
-  saveStoredTeamDirectory,
-  getStoredFare2Leaders,
-  saveStoredFare2Leaders,
-  getStoredUserFare2Map,
-  saveStoredUserFare2Map,
-  Fare2LeaderAssignment,
-} from '../utils/storage';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import { isFullAccessAdmin, isUserAdmin, normalizeRole } from '../utils/security';
 import {
@@ -49,6 +41,7 @@ interface TeamBoardViewProps {
   items: CalendarItem[];
   users: User[];
   bookings?: Booking[];
+  fare2Leaders?: Record<string, Fare2LeaderAssignment>;
   currentUser: User;
   onSaveItem: (item: CalendarItem) => void;
   onDeleteItem: (id: string) => void;
@@ -245,6 +238,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   items,
   users,
   bookings = [],
+  fare2Leaders = {},
   currentUser,
   onSaveItem,
   onDeleteItem,
@@ -293,50 +287,6 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   const [peopleSubView, setPeopleSubView] = useState<'by-team' | 'all-people'>('by-team');
   const [peopleSearch, setPeopleSearch] = useState('');
   const [peopleFilter, setPeopleFilter] = useState<'all' | 'multi-team' | 'idle' | 'no-team'>('all');
-  const [teamDirectory, setTeamDirectory] = useState<Record<string, StoreTeamId[]>>(() =>
-    getStoredTeamDirectory()
-  );
-  const [userFare2Map, setUserFare2Map] = useState<Record<string, string[]>>(() =>
-    getStoredUserFare2Map()
-  );
-  const [fare2Leaders, setFare2Leaders] = useState<Record<string, Fare2LeaderAssignment>>(() =>
-    getStoredFare2Leaders()
-  );
-
-  useEffect(() => {
-    setTeamDirectory((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      users.forEach((u) => {
-        if (Array.isArray(u.assignedTeams)) {
-          const prevStr = JSON.stringify(prev[u.id] || []);
-          const nextStr = JSON.stringify(u.assignedTeams);
-          if (prevStr !== nextStr) {
-            next[u.id] = u.assignedTeams;
-            changed = true;
-          }
-        }
-      });
-      if (changed) saveStoredTeamDirectory(next);
-      return changed ? next : prev;
-    });
-    setUserFare2Map((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      users.forEach((u) => {
-        if (Array.isArray(u.assignedFare2)) {
-          const prevStr = JSON.stringify(prev[u.id] || []);
-          const nextStr = JSON.stringify(u.assignedFare2);
-          if (prevStr !== nextStr) {
-            next[u.id] = u.assignedFare2;
-            changed = true;
-          }
-        }
-      });
-      if (changed) saveStoredUserFare2Map(next);
-      return changed ? next : prev;
-    });
-  }, [users]);
 
   // Modals: Detail, Edit Confirm, Delete Confirm, Stage Confirm, Member Profile & Form
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
@@ -465,11 +415,11 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     [items, detailItemId]
   );
 
-  // Build effective teams per user (saved in profile/directory OR inferred from assigned items/fare2 leaders)
+  // Build effective teams per user (saved in Supabase profile OR inferred from assigned items/fare2 leaders)
   const effectiveUserTeams = useMemo(() => {
     const map = new Map<string, Set<StoreTeamId>>();
     activeMembers.forEach((u) => {
-      const saved = teamDirectory[u.id] ?? u.assignedTeams ?? [];
+      const saved = Array.isArray(u.assignedTeams) ? u.assignedTeams : [];
       map.set(u.id, new Set(saved));
     });
     Object.values(fare2Leaders).forEach((leader) => {
@@ -490,13 +440,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       }
     });
     return map;
-  }, [activeMembers, teamDirectory, fare2Leaders, items]);
+  }, [activeMembers, fare2Leaders, items]);
 
-  // Build effective Scout Fare2 assignments per user (saved in profile/localStorage OR leader assignment)
+  // Build effective Scout Fare2 assignments per user (saved in Supabase profile OR leader assignment)
   const effectiveUserFare2 = useMemo(() => {
     const map = new Map<string, Set<string>>();
     activeMembers.forEach((u) => {
-      const saved = userFare2Map[u.id] ?? u.assignedFare2 ?? [];
+      const saved = Array.isArray(u.assignedFare2) ? u.assignedFare2 : [];
       map.set(u.id, new Set(saved));
     });
     Object.entries(fare2Leaders).forEach(([fare2Id, leader]) => {
@@ -505,10 +455,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       }
     });
     return map;
-  }, [activeMembers, userFare2Map, fare2Leaders]);
+  }, [activeMembers, fare2Leaders]);
 
   const toggleUserTeam = (userId: string, teamId: StoreTeamId) => {
-    const currentTeams = new Set(teamDirectory[userId] ?? Array.from(effectiveUserTeams.get(userId) || []));
+    const targetUser = activeMembers.find((m) => m.id === userId);
+    const currentTeams = new Set(
+      targetUser?.assignedTeams ?? Array.from(effectiveUserTeams.get(userId) || [])
+    );
     const wasRemoved = currentTeams.has(teamId);
     if (wasRemoved) {
       currentTeams.delete(teamId);
@@ -516,36 +469,29 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       currentTeams.add(teamId);
     }
     const nextTeamsList = Array.from(currentTeams);
-    const nextDir = { ...teamDirectory, [userId]: nextTeamsList };
-    setTeamDirectory(nextDir);
-    saveStoredTeamDirectory(nextDir);
 
     let nextFare2List = Array.from(effectiveUserFare2.get(userId) || []);
     if (teamId === 'troops' && wasRemoved) {
       nextFare2List = [];
-      const nextF2Map = { ...userFare2Map, [userId]: [] };
-      setUserFare2Map(nextF2Map);
-      saveStoredUserFare2Map(nextF2Map);
     }
 
     onUserTeamsChange?.(userId, nextTeamsList, nextFare2List);
   };
 
   const assignUserToTeam = (userId: string, teamId: StoreTeamId) => {
-    const currentTeams = new Set(teamDirectory[userId] ?? Array.from(effectiveUserTeams.get(userId) || []));
+    const targetUser = activeMembers.find((m) => m.id === userId);
+    const currentTeams = new Set(
+      targetUser?.assignedTeams ?? Array.from(effectiveUserTeams.get(userId) || [])
+    );
     currentTeams.add(teamId);
     const nextTeamsList = Array.from(currentTeams);
-    const nextDir = { ...teamDirectory, [userId]: nextTeamsList };
-    setTeamDirectory(nextDir);
-    saveStoredTeamDirectory(nextDir);
 
     const nextFare2List = Array.from(effectiveUserFare2.get(userId) || []);
     onUserTeamsChange?.(userId, nextTeamsList, nextFare2List);
 
-    const u = activeMembers.find((m) => m.id === userId);
     const t = getTeamMeta(teamId);
-    if (u && t) {
-      onShowToast?.(`Assigned ${u.name} to ${t.label}.`);
+    if (targetUser && t) {
+      onShowToast?.(`Assigned ${targetUser.name} to ${t.label}.`);
     }
   };
 
@@ -581,7 +527,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     const user = activeMembers.find((m) => m.id === userId);
     if (!user) return;
     const currentFare2 = Array.from(
-      new Set(userFare2Map[userId] ?? Array.from(effectiveUserFare2.get(userId) || []))
+      new Set(user.assignedFare2 ?? Array.from(effectiveUserFare2.get(userId) || []))
     );
     const adding = !currentFare2.includes(fare2Id);
     const existingFare2Ids = currentFare2.filter((id) => id !== fare2Id);
@@ -608,7 +554,10 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   };
 
   const toggleUserFare2 = (userId: string, fare2Id: string) => {
-    const currentFare2 = new Set(userFare2Map[userId] ?? Array.from(effectiveUserFare2.get(userId) || []));
+    const targetUser = activeMembers.find((m) => m.id === userId);
+    const currentFare2 = new Set(
+      targetUser?.assignedFare2 ?? Array.from(effectiveUserFare2.get(userId) || [])
+    );
     const adding = !currentFare2.has(fare2Id);
     if (adding) {
       currentFare2.add(fare2Id);
@@ -616,63 +565,50 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       currentFare2.delete(fare2Id);
     }
     const nextFare2List = Array.from(currentFare2);
-    const nextF2Map = { ...userFare2Map, [userId]: nextFare2List };
-    setUserFare2Map(nextF2Map);
-    saveStoredUserFare2Map(nextF2Map);
 
     // Ensure user is in Scout Fera2 team when adding a Fare2
-    const currentTeams = new Set(teamDirectory[userId] ?? Array.from(effectiveUserTeams.get(userId) || []));
+    const currentTeams = new Set(
+      targetUser?.assignedTeams ?? Array.from(effectiveUserTeams.get(userId) || [])
+    );
     if (adding) {
       currentTeams.add('troops');
     }
     const nextTeamsList = Array.from(currentTeams);
-    const nextDir = { ...teamDirectory, [userId]: nextTeamsList };
-    setTeamDirectory(nextDir);
-    saveStoredTeamDirectory(nextDir);
 
     onUserTeamsChange?.(userId, nextTeamsList, nextFare2List);
 
-    const u = activeMembers.find((m) => m.id === userId);
     const fm = getScoutFare2Meta(fare2Id);
-    if (u && fm) {
+    if (targetUser && fm) {
       onShowToast?.(
         adding
-          ? `Assigned ${u.name} to Scout Fera2 → ${fm.label}.`
-          : `Removed ${fm.label} from ${u.name}.`
+          ? `Assigned ${targetUser.name} to Scout Fera2 → ${fm.label}.`
+          : `Removed ${fm.label} from ${targetUser.name}.`
       );
     }
   };
 
   const handleSetFare2Leader = (fare2Id: string, userId: string) => {
     const user = activeMembers.find((m) => m.id === userId) || null;
-    const nextMap = { ...fare2Leaders };
     let assignment: Fare2LeaderAssignment | null = null;
 
     if (user) {
       assignment = { userId: user.id, userName: user.name };
-      nextMap[fare2Id] = assignment;
       // Ensure this leader is also linked inside Scout Fera2 team AND assigned to this Fare2
-      const currentTeams = new Set(teamDirectory[user.id] ?? Array.from(effectiveUserTeams.get(user.id) || []));
+      const currentTeams = new Set(
+        user.assignedTeams ?? Array.from(effectiveUserTeams.get(user.id) || [])
+      );
       currentTeams.add('troops');
       const nextTeamsList = Array.from(currentTeams);
-      const updatedDir = { ...teamDirectory, [user.id]: nextTeamsList };
-      setTeamDirectory(updatedDir);
-      saveStoredTeamDirectory(updatedDir);
 
-      const currentF2 = new Set(userFare2Map[user.id] ?? Array.from(effectiveUserFare2.get(user.id) || []));
+      const currentF2 = new Set(
+        user.assignedFare2 ?? Array.from(effectiveUserFare2.get(user.id) || [])
+      );
       currentF2.add(fare2Id);
       const nextF2List = Array.from(currentF2);
-      const updatedF2Map = { ...userFare2Map, [user.id]: nextF2List };
-      setUserFare2Map(updatedF2Map);
-      saveStoredUserFare2Map(updatedF2Map);
 
       onUserTeamsChange?.(user.id, nextTeamsList, nextF2List);
-    } else {
-      delete nextMap[fare2Id];
     }
 
-    setFare2Leaders(nextMap);
-    saveStoredFare2Leaders(nextMap);
     onFare2LeaderChange?.(fare2Id, assignment);
 
     const fMeta = getScoutFare2Meta(fare2Id);
@@ -902,9 +838,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   const unassignedAccounts = useMemo(
     () =>
       activeMembers.filter(
-        (u) => !isFullAccessAdmin(u) && (effectiveUserTeams.get(u.id)?.size || 0) === 0
+        (u) => !isFullAccessAdmin(u, users) && (effectiveUserTeams.get(u.id)?.size || 0) === 0
       ),
-    [activeMembers, effectiveUserTeams]
+    [activeMembers, effectiveUserTeams, users]
   );
 
   const multiTeamAccounts = useMemo(
@@ -930,7 +866,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       return st.activeCount === 0 && st.activeBookingsCount === 0;
     }
     if (peopleFilter === 'no-team') {
-      return !isFullAccessAdmin(member) && (effectiveUserTeams.get(member.id)?.size || 0) === 0;
+      return !isFullAccessAdmin(member, users) && (effectiveUserTeams.get(member.id)?.size || 0) === 0;
     }
     return true;
   };
@@ -2077,7 +2013,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            {isFullAccessAdmin(member) ? (
+                            {isFullAccessAdmin(member, users) ? (
                               <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
                                 Full-Access Admin (All Pages)
                               </span>
@@ -2087,7 +2023,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               </span>
                             ) : null}
                             {userTeams.size === 0 ? (
-                              !isFullAccessAdmin(member) && (
+                              !isFullAccessAdmin(member, users) && (
                                 <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
                                   No Team Assigned
                                 </span>
@@ -3074,7 +3010,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     </h2>
                     <p className="text-xs text-slate-500 truncate">{selectedMember.email}</p>
                     <div className="flex flex-wrap gap-1.5 mt-2">
-                      {isFullAccessAdmin(selectedMember) ? (
+                      {isFullAccessAdmin(selectedMember, users) ? (
                         <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-300 text-[11px] font-bold">
                           Full-Access Admin (All Pages)
                         </span>
@@ -3108,7 +3044,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                           </span>
                         );
                       })}
-                      {memberTeams.length === 0 && !isFullAccessAdmin(selectedMember) && (
+                      {memberTeams.length === 0 && !isFullAccessAdmin(selectedMember, users) && (
                         <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold">
                           0 Teams Assigned
                         </span>
@@ -3128,7 +3064,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               {/* Body */}
               <div className="p-5 overflow-y-auto space-y-5 flex-1">
                 {/* Warning Note if non-full-admin account has 0 teams */}
-                {memberTeams.length === 0 && !isFullAccessAdmin(selectedMember) && (
+                {memberTeams.length === 0 && !isFullAccessAdmin(selectedMember, users) && (
                   <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 flex items-start gap-2.5">
                     <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                     <div className="text-xs text-amber-950">

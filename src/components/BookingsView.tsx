@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Booking, BookingStatus, Product, ProductionBatch, User } from '../types/inventory';
+import { Booking, BookingStatus, Fare2LeaderAssignment, Product, ProductionBatch, User } from '../types/inventory';
 import {
   SCOUT_FERA2_LIST,
   getScoutFare2Meta,
   isCoreScoutFare2,
 } from '../utils/scoutFera2';
-import { getStoredFare2Leaders } from '../utils/storage';
 import {
   CalendarCheck,
   CalendarDays,
@@ -41,6 +40,7 @@ interface BookingsViewProps {
   products?: Product[];
   users?: User[];
   batches?: ProductionBatch[];
+  fare2Leaders?: Record<string, Fare2LeaderAssignment>;
   currentUser: User;
   onOpenNewBookingModal: () => void;
   onEditBooking?: (booking: Booking) => void;
@@ -65,6 +65,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   products = [],
   users = [],
   batches = [],
+  fare2Leaders = {},
   currentUser,
   onOpenNewBookingModal,
   onEditBooking,
@@ -178,8 +179,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         getScoutFare2Meta(current.assignedFare2)?.id ||
         '';
       setEditAssignedFare2(f);
-      const leaders = getStoredFare2Leaders();
-      setEditAssignedToId(current.assignedToId || (f ? leaders[f]?.userId || '' : ''));
+      setEditAssignedToId(current.assignedToId || (f ? fare2Leaders[f]?.userId || '' : ''));
     } else {
       setEditAssignedFare2('');
       setEditAssignedToId('');
@@ -438,11 +438,10 @@ This is our official Scout Store number. Through this chat, you can:
       return;
     }
 
-    const leaders = getStoredFare2Leaders();
     const resolvedFare2 = isCoreScoutFare2(nextTroop)
       ? nextTroop
       : activeBooking.assignedFare2;
-    const leader = resolvedFare2 ? leaders[resolvedFare2] : undefined;
+    const leader = resolvedFare2 ? fare2Leaders[resolvedFare2] : undefined;
 
     const updated: Booking = {
       ...activeBooking,
@@ -485,9 +484,8 @@ This is our official Scout Store number. Through this chat, you can:
     const isSpecific = isCoreScoutFare2(activeBooking.troopGroup);
     const fare2Meta = getScoutFare2Meta(isSpecific ? activeBooking.troopGroup : editAssignedFare2);
 
-    const leaders = getStoredFare2Leaders();
     const chosenUser = activeMembers.find((m) => m.id === editAssignedToId);
-    const defaultLeader = fare2Meta ? leaders[fare2Meta.id] : undefined;
+    const defaultLeader = fare2Meta ? fare2Leaders[fare2Meta.id] : undefined;
     const finalId = chosenUser?.id || (editAssignedToId === '' ? defaultLeader?.userId : undefined);
     const finalName = chosenUser?.name || (editAssignedToId === '' ? defaultLeader?.userName : undefined);
 
@@ -1259,10 +1257,9 @@ This is our official Scout Store number. Through this chat, you can:
                 const resolvedMeta = getScoutFare2Meta(
                   isSpecific ? activeBooking.troopGroup : activeBooking.assignedFare2
                 );
-                const leaders = getStoredFare2Leaders();
                 const effectiveLeaderName =
                   activeBooking.assignedToName ||
-                  (resolvedMeta ? leaders[resolvedMeta.id]?.userName : undefined);
+                  (resolvedMeta ? fare2Leaders[resolvedMeta.id]?.userName : undefined);
 
                 return (
                   <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
@@ -1299,7 +1296,7 @@ This is our official Scout Store number. Through this chat, you can:
                           onChange={(e) => {
                             const val = e.target.value;
                             setEditAssignedFare2(val);
-                            const l = leaders[val];
+                            const l = fare2Leaders[val];
                             if (l) setEditAssignedToId(l.userId);
                           }}
                           className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
@@ -1320,8 +1317,8 @@ This is our official Scout Store number. Through this chat, you can:
                           className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
                         >
                           <option value="">
-                            {resolvedMeta && leaders[resolvedMeta.id]
-                              ? `Leader: ${leaders[resolvedMeta.id].userName}`
+                            {resolvedMeta && fare2Leaders[resolvedMeta.id]
+                              ? `Leader: ${fare2Leaders[resolvedMeta.id].userName}`
                               : 'Auto / Unassigned'}
                           </option>
                           {activeMembers.map((u) => (

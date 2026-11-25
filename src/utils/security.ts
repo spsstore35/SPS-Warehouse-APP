@@ -1,6 +1,8 @@
 /**
- * Security & Password Hashing Utilities using standard Web Crypto API (SHA-256)
+ * Security, Role & Permission Utilities (Strict DB-backed State)
  */
+
+import type { Role, StoreTeamId, User } from '../types/inventory';
 
 export async function hashPassword(plainText: string): Promise<string> {
   const text = (plainText || 'password123').trim();
@@ -15,8 +17,7 @@ export async function verifyPassword(
   plainText: string,
   storedHash?: string | null
 ): Promise<boolean> {
-  // If storedHash is missing or null, allow login
-  if (!storedHash) return true;
+  if (!storedHash) return false;
 
   const enteredText = (plainText || '').trim();
 
@@ -30,20 +31,16 @@ export async function verifyPassword(
   const computed = await hashPassword(enteredText);
   if (computed.toLowerCase() === cleanStored.toLowerCase()) return true;
 
-  // 3. Bcrypt format ($2a$ or $2b$) compatibility
+  // 3. Bcrypt format ($2a$ or $2b$) compatibility for SQL-seeded hashes
   if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$')) {
-    // If bcrypt format exists from external seed/auth, allow login with valid password
-    return true;
+    return enteredText.length > 0;
   }
 
   return false;
 }
 
-import type { Role, StoreTeamId, User } from '../types/inventory';
-import { getStoredFullAdminIds, getStoredTeamDirectory, getStoredUsers } from './storage';
-
 /**
- * Normalize raw role strings from DB or local storage into strict Role union
+ * Normalize raw role strings from DB into strict Role union
  */
 export function normalizeRole(raw?: string | null): Role {
   const val = String(raw || '').trim().toLowerCase();
@@ -61,14 +58,18 @@ export function normalizeRole(raw?: string | null): Role {
   return 'worker';
 }
 
-/**
- * Universal case-insensitive and alias-aware check for admin authority (both Full-Access Admin and Team-Scoped Admin).
- */
 export function isUserAdmin(user?: { role?: string; requestedRole?: string } | null): boolean {
   if (!user) return false;
   const role = String(user.role || '').trim().toLowerCase();
   const req = String(user.requestedRole || '').trim().toLowerCase();
-  return role === 'full_admin' || role === 'admin' || role.includes('admin') || req === 'full_admin' || req === 'admin' || req.includes('admin');
+  return (
+    role === 'full_admin' ||
+    role === 'admin' ||
+    role.includes('admin') ||
+    req === 'full_admin' ||
+    req === 'admin' ||
+    req.includes('admin')
+  );
 }
 
 export function isUserLeader(user?: { role?: string; requestedRole?: string } | null): boolean {
@@ -83,52 +84,44 @@ export function isUserStaff(user?: { role?: string; requestedRole?: string } | n
   return !isUserAdmin(user) && !isUserLeader(user);
 }
 
-/**
- * Resolve effective Store Teams assigned to a user (explicit user.assignedTeams wins over cached directory).
- */
 export function getUserAssignedTeams(
   user?: Pick<User, 'id' | 'assignedTeams'> | null
 ): StoreTeamId[] {
   if (!user) return [];
-  if (Array.isArray(user.assignedTeams)) {
-    return user.assignedTeams;
-  }
-  const dir = getStoredTeamDirectory();
-  return Array.isArray(dir[user.id]) ? dir[user.id] : [];
+  return Array.isArray(user.assignedTeams) ? user.assignedTeams : [];
 }
 
 export function isExplicitFullAdmin(user?: User | null): boolean {
   if (!user || !isUserAdmin(user)) return false;
   const normRole = normalizeRole(user.role);
   const normReq = normalizeRole(user.requestedRole);
-  if (normRole === 'full_admin' || normReq === 'full_admin') return true;
-  return getStoredFullAdminIds().includes(user.id);
+  return normRole === 'full_admin' || normReq === 'full_admin';
 }
 
 /**
  * Full-Access Admins see ALL pages across the store regardless of team assignments.
  * Regular Admins ('admin') and Staff ('worker') see pages strictly according to their assigned team(s).
- * Includes bootstrap safety: if no live user in storage has been set to 'full_admin' yet,
- * an unassigned legacy 'admin' (0 teams) keeps Full-Access until an explicit Full-Access Admin is assigned.
+ * Includes bootstrap safety when database has no explicit 'full_admin' yet.
  */
-export function isFullAccessAdmin(user?: User | null): boolean {
+export function isFullAccessAdmin(user?: User | null, allUsers?: User[]): boolean {
   if (!user || !isUserAdmin(user)) return false;
   if (isExplicitFullAdmin(user)) return true;
 
   const teams = getUserAssignedTeams(user);
   if (teams.length > 0) return false;
 
-  const knownUsers = getStoredUsers();
-  const hasExplicitLiveFullAdmin = knownUsers.some(
-    (u) => u.id !== 'user_admin_01' && isExplicitFullAdmin(u)
-  );
-  return !hasExplicitLiveFullAdmin;
+  if (Array.isArray(allUsers) && allUsers.length > 0) {
+    const hasExplicitLiveFullAdmin = allUsers.some((u) => isExplicitFullAdmin(u));
+    return !hasExplicitLiveFullAdmin;
+  }
+
+  return false;
 }
 
-export function getEffectiveUserRole(user?: User | null): Role {
+export function getEffectiveUserRole(user?: User | null, allUsers?: User[]): Role {
   if (!user) return 'worker';
   if (isUserLeader(user)) return 'leader';
-  if (isFullAccessAdmin(user)) return 'full_admin';
+  if (isFullAccessAdmin(user, allUsers)) return 'full_admin';
   if (isUserAdmin(user)) return 'admin';
   return 'worker';
 }
@@ -148,12 +141,12 @@ const ALL_ADMIN_VIEWS = [
   'audit-log',
 ] as const;
 
-export function getAllowedViewsForUser(user?: User | null): Set<string> {
+export function getAllowedViewsForUser(user?: User | null, allUsers?: User[]): Set<string> {
   if (!user) return new Set();
   if (isUserLeader(user)) {
     return new Set(['inventory']);
   }
-  if (isFullAccessAdmin(user)) {
+  if (isFullAccessAdmin(user, allUsers)) {
     return new Set<string>(ALL_ADMIN_VIEWS);
   }
 
@@ -163,10 +156,8 @@ export function getAllowedViewsForUser(user?: User | null): Set<string> {
 
   if (teams.length === 0) {
     if (isAdmin) {
-      // Team-Scoped Admin without an assigned Store Team sees Catalog only (with Admin direct catalog controls) until assigned a team
       return allowed;
     }
-    // Staff without a team gets basic operational catalog/request access until assigned a Store Team
     allowed.add('worker-requests');
     allowed.add('audit-log');
     return allowed;
@@ -218,9 +209,13 @@ export function getAllowedViewsForUser(user?: User | null): Set<string> {
   return allowed;
 }
 
-export function canUserAccessView(user: User | null | undefined, viewId: string): boolean {
+export function canUserAccessView(
+  user: User | null | undefined,
+  viewId: string,
+  allUsers?: User[]
+): boolean {
   if (!user) return false;
-  return getAllowedViewsForUser(user).has(viewId);
+  return getAllowedViewsForUser(user, allUsers).has(viewId);
 }
 
 export function isUserMarketingMember(
@@ -242,4 +237,3 @@ export function getRoleDisplayName(role?: Role | string): string {
   if (norm === 'leader') return 'Scout Leader (Read-Only)';
   return 'Warehouse Staff';
 }
-

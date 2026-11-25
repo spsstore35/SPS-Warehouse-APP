@@ -339,24 +339,7 @@ CREATE POLICY "Allow public all access on bookings" ON public.bookings FOR ALL U
 CREATE POLICY "Allow public all access on booking_items" ON public.booking_items FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on others_folders" ON public.others_folders FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow public all access on calendar_events" ON public.calendar_events FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public all access on scout_fera2_leaders" ON public.scout_fera2_leaders FOR ALL USING (true) WITH CHECK (true);
-
--- SEED DATA (ADMIN, WORKERS, CLOTHING ITEMS & VARIANTS)
-INSERT INTO public.profiles (email, password_hash, full_name, role, status, requested_role, employee_id)
-VALUES 
-  ('admin@wearhouse.com', crypt('admin123', gen_salt('bf')), 'Admin Boss (Owner)', 'admin', 'active', 'admin', 'WH-ADM-01'),
-  ('karim@wearhouse.com', crypt('worker123', gen_salt('bf')), 'Karim (Floor Lead)', 'worker', 'active', 'worker', 'WH-FLR-08'),
-  ('amr@wearhouse.com', crypt('worker123', gen_salt('bf')), 'Amr (Inventory Specialist)', 'worker', 'active', 'worker', 'WH-FLR-14'),
-  ('tarek@wearhouse.com', crypt('pass123', gen_salt('bf')), 'Tarek Fathy', 'worker', 'pending', 'worker', 'WH-PEND-01');
-
-INSERT INTO public.products (id, sku, name, category, target_audience, description, fabric_details, price)
-VALUES
-  ('prod_hoodie_01', 'WH-HD-450', 'Heavyweight Boxy Hoodie 450 GSM', 'Hoodies & Sweatshirts', 'Unisex', '450 GSM ultra-heavy French Terry cotton with relaxed drop-shoulder cut.', '100% French Terry Cotton', 38.00),
-  ('prod_tee_02', 'WH-TS-220', 'Drop-Shoulder Vintage Washed Tee', 'T-Shirts & Tops', 'Men', '220 GSM heavyweight combed organic cotton.', '100% Organic Combed Cotton', 18.00),
-  ('prod_jeans_03', 'WH-JN-014', 'Raw Selvedge Relaxed Denim Jeans', 'Pants & Jeans', 'Men', '14oz rigid red-line selvedge denim woven on vintage shuttle looms.', '14oz 100% Cotton Raw Indigo Denim', 45.00),
-  ('prod_bomber_04', 'WH-JK-808', 'Water-Resistant Technical Bomber', 'Jackets & Outerwear', 'Unisex', 'Flight jacket cut from durable matte DWR nylon shell.', 'Matte DWR Nylon', 55.00),
-  ('prod_pants_05', 'WH-PT-380', 'Heavy French Terry Cuffed Sweatpants', 'Pants & Jeans', 'Women', '380 GSM fleece lounge sweatpants.', '380 GSM 100% Cotton French Terry', 28.00),
-  ('prod_kids_06', 'WH-KD-102', 'Kids Everyday Raglan Fleece Crew', 'Hoodies & Sweatshirts', 'Kids', '300 GSM ultra-soft brushed fleece pullover.', '80% Cotton / 20% Poly Fleece', 22.00);`;
+CREATE POLICY "Allow public all access on scout_fera2_leaders" ON public.scout_fera2_leaders FOR ALL USING (true) WITH CHECK (true);`;
 
   const sqlContent = activeTab === 'migration' ? migrationSql : fullSchemaSql;
 

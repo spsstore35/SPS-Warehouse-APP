@@ -1,5 +1,4 @@
 import { supabase } from './supabaseClient';
-import { getStoredFullAdminIds, setUserFullAdminFlag } from '../utils/storage';
 import { normalizeRole } from '../utils/security';
 import {
   Product,
@@ -199,12 +198,7 @@ export async function fetchTargetAudiencesFromDb(): Promise<{ id: string; name: 
       .order('display_order', { ascending: true });
 
     if (error || !data || data.length === 0) {
-      return [
-        { id: 'Men', name: 'Men' },
-        { id: 'Women', name: 'Women' },
-        { id: 'Kids', name: 'Kids' },
-        { id: 'Unisex', name: 'Unisex' },
-      ];
+      return [];
     }
 
     return data.map((d: any) => ({
@@ -212,12 +206,7 @@ export async function fetchTargetAudiencesFromDb(): Promise<{ id: string; name: 
       name: d.name,
     }));
   } catch {
-    return [
-      { id: 'Men', name: 'Men' },
-      { id: 'Women', name: 'Women' },
-      { id: 'Kids', name: 'Kids' },
-      { id: 'Unisex', name: 'Unisex' },
-    ];
+    return [];
   }
 }
 
@@ -739,11 +728,7 @@ export async function fetchUsersFromDb(): Promise<User[]> {
   if (!data || data.length === 0) return [];
 
   return data.map((u: any) => {
-    const parsedRole = normalizeRole(u.role || u.requested_role);
-    const normalizedRole: Role =
-      parsedRole === 'admin' && getStoredFullAdminIds().includes(u.id)
-        ? 'full_admin'
-        : parsedRole;
+    const normalizedRole: Role = normalizeRole(u.role || u.requested_role);
     const normalizedReqRole: Role = normalizeRole(u.requested_role || u.role);
 
     const parseStringArray = (val: any): string[] | undefined => {
@@ -808,7 +793,7 @@ export async function registerUserInDb(data: {
   const { hashPassword } = await import('../utils/security');
   const securePasswordHash = await hashPassword(newUser.password || 'password123');
 
-  let { error } = await supabase.from('profiles').insert({
+  const { error } = await supabase.from('profiles').insert({
     id: newUser.id,
     email: newUser.email,
     password_hash: securePasswordHash,
@@ -821,27 +806,10 @@ export async function registerUserInDb(data: {
     created_at: newUser.createdAt,
   });
 
-  if (error && newUser.role === 'full_admin' && error.message?.includes('user_role')) {
-    setUserFullAdminFlag(newUser.id, true);
-    const retry = await supabase.from('profiles').insert({
-      id: newUser.id,
-      email: newUser.email,
-      password_hash: securePasswordHash,
-      full_name: newUser.name,
-      role: 'admin',
-      status: newUser.status,
-      requested_role: 'admin',
-      employee_id: newUser.employeeId,
-      avatar_color: newUser.avatarColor,
-      created_at: newUser.createdAt,
-    });
-    error = retry.error;
-  }
-
   if (error) {
-    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"')) {
+    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"') || error.message?.includes('"full_admin"')) {
       throw new Error(
-        `Database enum "user_role" is missing 'leader'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; in Supabase SQL Editor.`
+        `Database enum "user_role" must include 'leader' and 'full_admin'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'full_admin'; in Supabase SQL Editor.`
       );
     }
     throw error;
@@ -904,8 +872,6 @@ export async function updateUserRoleInDb(
   newRole: Role,
   _adminUser?: User
 ): Promise<void> {
-  setUserFullAdminFlag(userId, newRole === 'full_admin');
-
   const avatarColor =
     newRole === 'full_admin'
       ? '#b45309'
@@ -915,7 +881,7 @@ export async function updateUserRoleInDb(
       ? '#059669'
       : '#0284c7';
 
-  let { error } = await supabase
+  const { error } = await supabase
     .from('profiles')
     .update({
       role: newRole,
@@ -924,22 +890,10 @@ export async function updateUserRoleInDb(
     })
     .eq('id', userId);
 
-  if (error && newRole === 'full_admin' && error.message?.includes('user_role')) {
-    const retry = await supabase
-      .from('profiles')
-      .update({
-        role: 'admin',
-        requested_role: 'admin',
-        avatar_color: avatarColor,
-      })
-      .eq('id', userId);
-    error = retry.error;
-  }
-
   if (error) {
-    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"')) {
+    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"') || error.message?.includes('"full_admin"')) {
       throw new Error(
-        `Database enum "user_role" is missing 'leader'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; in Supabase SQL Editor.`
+        `Database enum "user_role" must include 'leader' and 'full_admin'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'full_admin'; in Supabase SQL Editor.`
       );
     }
     throw error;
@@ -1496,21 +1450,19 @@ export async function updateBookingInDb(
       error = retry.error;
     }
     if (error) {
-      console.warn('Notice updating booking in Supabase:', error.message);
+      throw error;
     }
   } catch (err: any) {
-    console.warn('Supabase updateBooking notice:', err?.message);
+    console.warn('Supabase updateBooking error:', err?.message);
+    throw err;
   }
 }
 
 export async function deleteBookingFromDb(bookingId: string): Promise<void> {
-  try {
-    const { error } = await supabase.from('bookings').delete().eq('id', bookingId);
-    if (error) {
-      console.warn('Notice deleting booking from Supabase:', error.message);
-    }
-  } catch (err: any) {
-    console.warn('Supabase deleteBooking notice:', err?.message);
+  const { error } = await supabase.from('bookings').delete().eq('id', bookingId);
+  if (error) {
+    console.warn('Supabase deleteBooking error:', error.message);
+    throw error;
   }
 }
 
@@ -1923,112 +1875,105 @@ export async function fetchSourcingDataFromDb(): Promise<{
 }
 
 export async function upsertVendorToDb(vendor: Vendor): Promise<void> {
-  try {
-    await supabase.from('vendors').upsert({
-      id: vendor.id,
-      name: vendor.name,
-      location: vendor.location || '',
-      maps_url: vendor.mapsUrl || null,
-      contact_person: vendor.contactPerson || null,
-      phone: vendor.phone || null,
-      tags: vendor.tags || [],
-      general_notes: vendor.generalNotes || null,
-      created_at: vendor.createdAt,
-    });
-  } catch {}
+  const { error } = await supabase.from('vendors').upsert({
+    id: vendor.id,
+    name: vendor.name,
+    location: vendor.location || '',
+    maps_url: vendor.mapsUrl || null,
+    contact_person: vendor.contactPerson || null,
+    phone: vendor.phone || null,
+    tags: vendor.tags || [],
+    general_notes: vendor.generalNotes || null,
+    created_at: vendor.createdAt,
+  });
+  if (error) throw error;
 }
 
 export async function deleteVendorFromDb(vendorId: string): Promise<void> {
-  try {
-    await supabase.from('vendors').delete().eq('id', vendorId);
-  } catch {}
+  const { error } = await supabase.from('vendors').delete().eq('id', vendorId);
+  if (error) throw error;
 }
 
 export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<void> {
-  try {
-    await supabase.from('product_workflows').upsert(
-      {
-        id: wf.id,
-        product_id: wf.productId,
-        workflow_type: wf.workflowType,
-        active_stages: wf.activeStages,
-        updated_at: wf.updatedAt || new Date().toISOString(),
-      },
-      { onConflict: 'product_id' }
-    );
-  } catch {}
+  const { error } = await supabase.from('product_workflows').upsert(
+    {
+      id: wf.id,
+      product_id: wf.productId,
+      workflow_type: wf.workflowType,
+      active_stages: wf.activeStages,
+      updated_at: wf.updatedAt || new Date().toISOString(),
+    },
+    { onConflict: 'product_id' }
+  );
+  if (error) throw error;
 }
 
 export async function upsertProductStageVendorToDb(psv: ProductStageVendor): Promise<void> {
-  try {
-    await supabase.from('product_stage_vendors').upsert({
-      id: psv.id,
-      product_id: psv.productId,
-      stage_key: psv.stageKey,
-      vendor_id: psv.vendorId,
-      is_primary: Boolean(psv.isPrimary),
-      approx_order_qty: psv.approxOrderQty || '',
-      order_script_notes: psv.orderScriptNotes || '',
-    });
-  } catch {}
+  const { error } = await supabase.from('product_stage_vendors').upsert({
+    id: psv.id,
+    product_id: psv.productId,
+    stage_key: psv.stageKey,
+    vendor_id: psv.vendorId,
+    is_primary: Boolean(psv.isPrimary),
+    approx_order_qty: psv.approxOrderQty || '',
+    order_script_notes: psv.orderScriptNotes || '',
+  });
+  if (error) throw error;
 }
 
 export async function deleteProductStageVendorFromDb(psvId: string): Promise<void> {
-  try {
-    await supabase.from('product_stage_vendors').delete().eq('id', psvId);
-  } catch {}
+  const { error } = await supabase.from('product_stage_vendors').delete().eq('id', psvId);
+  if (error) throw error;
 }
 
 export async function insertVendorPriceEntryToDb(entry: VendorPriceEntry): Promise<void> {
-  try {
-    await supabase.from('vendor_price_history').upsert({
-      id: entry.id,
-      product_stage_vendor_id: entry.productStageVendorId,
-      purchase_date: entry.purchaseDate,
-      unit_price: entry.unitPrice,
-      quantity: entry.quantity || '',
-      notes: entry.notes || '',
-    });
-  } catch {}
+  const { error } = await supabase.from('vendor_price_history').upsert({
+    id: entry.id,
+    product_stage_vendor_id: entry.productStageVendorId,
+    purchase_date: entry.purchaseDate,
+    unit_price: entry.unitPrice,
+    quantity: entry.quantity || '',
+    notes: entry.notes || '',
+  });
+  if (error) throw error;
 }
 
 export async function upsertProductionBatchToDb(batch: ProductionBatch): Promise<void> {
-  try {
-    const corePayload = {
-      id: batch.id,
-      batch_code: batch.batchCode,
-      product_id: batch.productId,
-      variant_id: batch.variantId || null,
-      quantity: batch.quantity,
-      target_date: batch.targetDate || null,
-      current_stage_key: batch.currentStageKey,
-      status: batch.status,
-      stage_assignments: batch.stageAssignments || {},
-      created_at: batch.createdAt,
-      completed_at: batch.completedAt || null,
-    };
-    const { error } = await supabase.from('production_batches').upsert({
-      ...corePayload,
-      linked_booking_id: batch.linkedBookingId || null,
-      linked_booking_number: batch.linkedBookingNumber || null,
-      requested_by_team: batch.requestedByTeam || null,
-    });
-    if (
-      error &&
-      (error.message?.includes('linked_booking') ||
-        error.message?.includes('requested_by_team') ||
-        (error as any).code === 'PGRST204' ||
-        (error as any).code === '42703')
-    ) {
-      await supabase.from('production_batches').upsert(corePayload);
-    }
-  } catch {}
+  const corePayload = {
+    id: batch.id,
+    batch_code: batch.batchCode,
+    product_id: batch.productId,
+    variant_id: batch.variantId || null,
+    quantity: batch.quantity,
+    target_date: batch.targetDate || null,
+    current_stage_key: batch.currentStageKey,
+    status: batch.status,
+    stage_assignments: batch.stageAssignments || {},
+    created_at: batch.createdAt,
+    completed_at: batch.completedAt || null,
+  };
+  let { error } = await supabase.from('production_batches').upsert({
+    ...corePayload,
+    linked_booking_id: batch.linkedBookingId || null,
+    linked_booking_number: batch.linkedBookingNumber || null,
+    requested_by_team: batch.requestedByTeam || null,
+  });
+  if (
+    error &&
+    (error.message?.includes('linked_booking') ||
+      error.message?.includes('requested_by_team') ||
+      (error as any).code === 'PGRST204' ||
+      (error as any).code === '42703')
+  ) {
+    const retry = await supabase.from('production_batches').upsert(corePayload);
+    error = retry.error;
+  }
+  if (error) throw error;
 }
 
 export async function deleteProductionBatchFromDb(batchId: string): Promise<void> {
-  try {
-    await supabase.from('production_batches').delete().eq('id', batchId);
-  } catch {}
+  const { error } = await supabase.from('production_batches').delete().eq('id', batchId);
+  if (error) throw error;
 }
 
 /**
@@ -2070,31 +2015,29 @@ export async function fetchMarketingOffersFromDb(): Promise<MarketingOffer[] | n
 }
 
 export async function upsertMarketingOfferToDb(offer: MarketingOffer): Promise<void> {
-  try {
-    await supabase.from('marketing_offers').upsert({
-      id: offer.id,
-      product_id: offer.productId,
-      title: offer.title,
-      offer_type: offer.offerType,
-      discount_percent: offer.discountPercent,
-      offer_price: offer.offerPrice ?? null,
-      badge_text: offer.badgeText || 'Special Offer',
-      start_date: offer.startDate,
-      end_date: offer.endDate,
-      status: offer.status,
-      notes: offer.notes || null,
-      created_by_id: offer.createdById || null,
-      created_by_name: offer.createdByName || null,
-      created_at: offer.createdAt,
-      updated_at: offer.updatedAt,
-    });
-  } catch {}
+  const { error } = await supabase.from('marketing_offers').upsert({
+    id: offer.id,
+    product_id: offer.productId,
+    title: offer.title,
+    offer_type: offer.offerType,
+    discount_percent: offer.discountPercent,
+    offer_price: offer.offerPrice ?? null,
+    badge_text: offer.badgeText || 'Special Offer',
+    start_date: offer.startDate,
+    end_date: offer.endDate,
+    status: offer.status,
+    notes: offer.notes || null,
+    created_by_id: offer.createdById || null,
+    created_by_name: offer.createdByName || null,
+    created_at: offer.createdAt,
+    updated_at: offer.updatedAt,
+  });
+  if (error) throw error;
 }
 
 export async function deleteMarketingOfferFromDb(offerId: string): Promise<void> {
-  try {
-    await supabase.from('marketing_offers').delete().eq('id', offerId);
-  } catch {}
+  const { error } = await supabase.from('marketing_offers').delete().eq('id', offerId);
+  if (error) throw error;
 }
 
 /**
@@ -2171,51 +2114,47 @@ export async function fetchBudgetingDataFromDb(): Promise<{
 }
 
 export async function upsertProductBudgetProfileToDb(profile: ProductBudgetProfile): Promise<void> {
-  try {
-    await supabase.from('product_budget_profiles').upsert({
-      product_id: profile.productId,
-      manufacturing_cost: profile.manufacturingCost,
-      extra_prep_cost: profile.extraPrepCost,
-      target_margin_percent: profile.targetMarginPercent ?? null,
-      hardship_discount_type: profile.hardshipDiscountType ?? null,
-      hardship_discount_value: profile.hardshipDiscountValue ?? null,
-      notes: profile.notes || null,
-      updated_at: profile.updatedAt,
-    });
-  } catch {}
+  const { error } = await supabase.from('product_budget_profiles').upsert({
+    product_id: profile.productId,
+    manufacturing_cost: profile.manufacturingCost,
+    extra_prep_cost: profile.extraPrepCost,
+    target_margin_percent: profile.targetMarginPercent ?? null,
+    hardship_discount_type: profile.hardshipDiscountType ?? null,
+    hardship_discount_value: profile.hardshipDiscountValue ?? null,
+    notes: profile.notes || null,
+    updated_at: profile.updatedAt,
+  });
+  if (error) throw error;
 }
 
 export async function upsertBudgetExpenseToDb(expense: BudgetExpenseEntry): Promise<void> {
-  try {
-    await supabase.from('budget_expenses').upsert({
-      id: expense.id,
-      title: expense.title,
-      category: expense.category,
-      amount: expense.amount,
-      expense_date: expense.expenseDate,
-      linked_product_id: expense.linkedProductId || null,
-      notes: expense.notes || null,
-      created_by_name: expense.createdByName || null,
-      created_at: expense.createdAt,
-    });
-  } catch {}
+  const { error } = await supabase.from('budget_expenses').upsert({
+    id: expense.id,
+    title: expense.title,
+    category: expense.category,
+    amount: expense.amount,
+    expense_date: expense.expenseDate,
+    linked_product_id: expense.linkedProductId || null,
+    notes: expense.notes || null,
+    created_by_name: expense.createdByName || null,
+    created_at: expense.createdAt,
+  });
+  if (error) throw error;
 }
 
 export async function deleteBudgetExpenseFromDb(expenseId: string): Promise<void> {
-  try {
-    await supabase.from('budget_expenses').delete().eq('id', expenseId);
-  } catch {}
+  const { error } = await supabase.from('budget_expenses').delete().eq('id', expenseId);
+  if (error) throw error;
 }
 
 export async function upsertBudgetSettingsToDb(settings: BudgetSettings): Promise<void> {
-  try {
-    await supabase.from('budget_settings').upsert({
-      id: settings.id || 'default',
-      cash_on_hand: settings.cashOnHand ?? null,
-      reserve_buffer: settings.reserveBuffer || 0,
-      updated_at: settings.updatedAt,
-    });
-  } catch {}
+  const { error } = await supabase.from('budget_settings').upsert({
+    id: settings.id || 'default',
+    cash_on_hand: settings.cashOnHand ?? null,
+    reserve_buffer: settings.reserveBuffer || 0,
+    updated_at: settings.updatedAt,
+  });
+  if (error) throw error;
 }
 
 /**
@@ -2245,24 +2184,22 @@ export async function fetchScoutSeasonsFromDb(): Promise<ScoutSeason[] | null> {
 }
 
 export async function upsertScoutSeasonToDb(season: ScoutSeason): Promise<void> {
-  try {
-    await supabase.from('scout_seasons').upsert({
-      id: season.id,
-      name: season.name,
-      start_date: season.startDate,
-      end_date: season.endDate,
-      color_hex: season.colorHex || null,
-      notes: season.notes || null,
-      created_by_name: season.createdByName || null,
-      created_at: season.createdAt,
-      updated_at: season.updatedAt,
-    });
-  } catch {}
+  const { error } = await supabase.from('scout_seasons').upsert({
+    id: season.id,
+    name: season.name,
+    start_date: season.startDate,
+    end_date: season.endDate,
+    color_hex: season.colorHex || null,
+    notes: season.notes || null,
+    created_by_name: season.createdByName || null,
+    created_at: season.createdAt,
+    updated_at: season.updatedAt,
+  });
+  if (error) throw error;
 }
 
 export async function deleteScoutSeasonFromDb(seasonId: string): Promise<void> {
-  try {
-    await supabase.from('scout_seasons').delete().eq('id', seasonId);
-  } catch {}
+  const { error } = await supabase.from('scout_seasons').delete().eq('id', seasonId);
+  if (error) throw error;
 }
 

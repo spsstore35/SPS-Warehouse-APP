@@ -25,7 +25,7 @@ interface BottomNavProps {
   pendingAccountsCount?: number;
   pendingAuditNotificationsCount?: number;
   approvalsTab?: 'stock' | 'staff';
-  onSwitchRole?: () => void;
+  users?: User[];
   onOpenAddProduct?: () => void;
   onOpenNewBooking?: () => void;
 }
@@ -40,28 +40,29 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   pendingAccountsCount = 0,
   pendingAuditNotificationsCount = 0,
   approvalsTab = 'stock',
+  users = [],
   onOpenAddProduct,
   onOpenNewBooking,
 }) => {
   const isAdmin = isUserAdmin(currentUser);
   const isLeader = isUserLeader(currentUser);
   const userTeams = getUserAssignedTeams(currentUser);
-  const fullAccessAdmin = isFullAccessAdmin(currentUser);
+  const fullAccessAdmin = isFullAccessAdmin(currentUser, users);
   const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [showCreateChoiceSheet, setShowCreateChoiceSheet] = useState(false);
 
-  const canAnalytics = canUserAccessView(currentUser, 'analytics');
-  const canBookings = canUserAccessView(currentUser, 'bookings');
-  const canCalendar = canUserAccessView(currentUser, 'calendar');
-  const canBoard = canUserAccessView(currentUser, 'board');
-  const canSourcing = canUserAccessView(currentUser, 'sourcing');
-  const canMarketing = canUserAccessView(currentUser, 'marketing');
-  const canBudgeting = canUserAccessView(currentUser, 'budgeting');
-  const canAudit = canUserAccessView(currentUser, 'audit-log');
-  const canAddProduct = canUserAccessView(currentUser, 'add-product');
-  const canAccountApprovals = canUserAccessView(currentUser, 'account-approvals');
-  const canStockApprovals = canUserAccessView(currentUser, 'stock-approvals');
-  const canWorkerRequests = canUserAccessView(currentUser, 'worker-requests');
+  const canAnalytics = canUserAccessView(currentUser, 'analytics', users);
+  const canBookings = canUserAccessView(currentUser, 'bookings', users);
+  const canCalendar = canUserAccessView(currentUser, 'calendar', users);
+  const canBoard = canUserAccessView(currentUser, 'board', users);
+  const canSourcing = canUserAccessView(currentUser, 'sourcing', users);
+  const canMarketing = canUserAccessView(currentUser, 'marketing', users);
+  const canBudgeting = canUserAccessView(currentUser, 'budgeting', users);
+  const canAudit = canUserAccessView(currentUser, 'audit-log', users);
+  const canAddProduct = canUserAccessView(currentUser, 'add-product', users);
+  const canAccountApprovals = canUserAccessView(currentUser, 'account-approvals', users);
+  const canStockApprovals = canUserAccessView(currentUser, 'stock-approvals', users);
+  const canWorkerRequests = canUserAccessView(currentUser, 'worker-requests', users);
 
   // Primary quick tab (Tab 2)
   const primaryTab = canAnalytics
