@@ -15,12 +15,18 @@ export const SqlSchemaViewerModal: React.FC<SqlSchemaViewerModalProps> = ({ onCl
 -- Booking Assignment, and Calendar Board changes without dropping any data.
 -- ==============================================================================
 
--- 1. Ensure 'leader' and 'full_admin' roles exist on user_role enum
+-- 1. Ensure 'leader' and 'full_admin' roles exist on user_role enum & bookings role check
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
     ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'leader';
     ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'full_admin';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'bookings') THEN
+    ALTER TABLE public.bookings DROP CONSTRAINT IF EXISTS bookings_created_by_role_check;
+    ALTER TABLE public.bookings
+      ADD CONSTRAINT bookings_created_by_role_check
+      CHECK (created_by_role IN ('full_admin', 'admin', 'worker', 'leader'));
   END IF;
 END $$;
 

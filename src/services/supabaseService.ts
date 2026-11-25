@@ -471,6 +471,23 @@ export async function upsertProductToDb(product: Product): Promise<void> {
     prodError = retry.error;
   }
 
+  // If remote schema rejects created_by_role via CHECK constraint or enum ('full_admin'/'leader'), normalize to 'admin'/'worker'
+  if (
+    prodError &&
+    (prodError.code === '23514' ||
+      prodError.code === '22P02' ||
+      prodError.message?.includes('created_by_role') ||
+      prodError.message?.includes('user_role')) &&
+    productPayload.created_by_role &&
+    productPayload.created_by_role !== 'admin' &&
+    productPayload.created_by_role !== 'worker'
+  ) {
+    productPayload.created_by_role =
+      productPayload.created_by_role === 'full_admin' ? 'admin' : 'worker';
+    const retry = await supabase.from('products').upsert(productPayload);
+    prodError = retry.error;
+  }
+
   // If remote schema does not have status / created_by columns, strip and retry
   if (
     prodError &&
@@ -1130,6 +1147,21 @@ export async function insertAuditLogInDb(log: AuditLogEntry): Promise<void> {
       error = retryCore.error;
     }
 
+    // If actor_role CHECK constraint or enum rejects 'leader' / 'full_admin', fallback cleanly
+    if (
+      error &&
+      (error.code === '23514' ||
+        error.code === '22P02' ||
+        error.message?.includes('actor_role') ||
+        error.message?.includes('user_role')) &&
+      corePayload.actor_role !== 'admin' &&
+      corePayload.actor_role !== 'worker'
+    ) {
+      corePayload.actor_role = corePayload.actor_role === 'full_admin' ? 'admin' : 'worker';
+      const retryRole = await supabase.from('stock_audit_logs').insert(corePayload);
+      error = retryRole.error;
+    }
+
     // If foreign key constraint on product_id fails, retry without product_id so audit history is never lost
     if (
       error &&
@@ -1374,10 +1406,16 @@ export async function insertBookingInDb(booking: Booking): Promise<void> {
     }
 
     if (
-      (bookingErr.code === '22P02' || bookingErr.message?.includes('user_role')) &&
-      (bookingPayload.created_by_role === 'full_admin' || bookingPayload.created_by_role === 'leader')
+      (bookingErr.code === '22P02' ||
+        bookingErr.code === '23514' ||
+        bookingErr.message?.includes('user_role') ||
+        bookingErr.message?.includes('bookings_created_by_role_check') ||
+        bookingErr.message?.includes('created_by_role')) &&
+      bookingPayload.created_by_role !== 'admin' &&
+      bookingPayload.created_by_role !== 'worker'
     ) {
-      bookingPayload.created_by_role = bookingPayload.created_by_role === 'full_admin' ? 'admin' : 'worker';
+      bookingPayload.created_by_role =
+        bookingPayload.created_by_role === 'full_admin' ? 'admin' : 'worker';
       continue;
     }
     break;
