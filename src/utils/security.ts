@@ -4,6 +4,64 @@
 
 import type { Role, StoreTeamId, User } from '../types/inventory';
 
+export function normalizeUsername(raw?: string | null): string {
+  if (!raw) return '';
+  return raw
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+export function normalizePhoneNumber(raw?: string | null): string {
+  if (!raw) return '';
+  const cleaned = raw.trim().replace(/[\s\-().]/g, '');
+  if (!cleaned) return '';
+  const digits = cleaned.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('0020') && digits.length >= 13) {
+    return `0${digits.slice(4)}`;
+  }
+  if (digits.startsWith('20') && digits.length === 12) {
+    return `0${digits.slice(2)}`;
+  }
+  return cleaned.startsWith('+') ? `+${digits}` : digits;
+}
+
+export function getPhoneSearchVariants(raw?: string | null): string[] {
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  const compact = trimmed.replace(/[\s\-().]/g, '');
+  const digits = compact.replace(/\D/g, '');
+  const set = new Set<string>();
+  if (trimmed) set.add(trimmed);
+  if (compact) set.add(compact);
+  if (digits) {
+    set.add(digits);
+    set.add(`+${digits}`);
+    if (digits.startsWith('00') && digits.length > 4) {
+      set.add(digits.slice(2));
+      set.add(`+${digits.slice(2)}`);
+    }
+    if (digits.startsWith('01') && digits.length === 11) {
+      set.add(`20${digits.slice(1)}`);
+      set.add(`+20${digits.slice(1)}`);
+      set.add(`0020${digits.slice(1)}`);
+    }
+    if (digits.startsWith('201') && digits.length === 12) {
+      set.add(`0${digits.slice(2)}`);
+      set.add(`+${digits}`);
+      set.add(`00${digits}`);
+    }
+    if (digits.startsWith('00201') && digits.length === 14) {
+      set.add(`0${digits.slice(4)}`);
+      set.add(digits.slice(2));
+      set.add(`+${digits.slice(2)}`);
+    }
+  }
+  return Array.from(set).filter((v) => v.length >= 4);
+}
+
 export async function hashPassword(plainText: string): Promise<string> {
   const text = (plainText || 'password123').trim();
   const encoder = new TextEncoder();

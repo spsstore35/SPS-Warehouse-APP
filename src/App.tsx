@@ -44,6 +44,8 @@ import {
   canUserAccessView,
   normalizeRole,
   getRoleDisplayName,
+  normalizeUsername,
+  normalizePhoneNumber,
 } from './utils/security';
 import {
   checkSupabaseConnection,
@@ -75,6 +77,7 @@ import {
   upsertCalendarEventToDb,
   deleteCalendarEventFromDb,
   updateUserTeamAssignmentsInDb,
+  updateUserContactInDb,
   fetchFare2LeadersFromDb,
   upsertFare2LeaderInDb,
   fetchSourcingDataFromDb,
@@ -836,6 +839,8 @@ export default function App() {
               matched.name === prevUser.name &&
               matched.role === prevUser.role &&
               matched.status === prevUser.status &&
+              matched.username === prevUser.username &&
+              matched.phone === prevUser.phone &&
               prevTeams === nextTeams &&
               prevFare2 === nextFare2
             ) {
@@ -844,6 +849,8 @@ export default function App() {
             return {
               ...prevUser,
               name: matched.name,
+              username: matched.username,
+              phone: matched.phone,
               role: matched.role,
               status: matched.status,
               assignedTeams: matched.assignedTeams,
@@ -1720,17 +1727,27 @@ export default function App() {
   const handleCreateUserDirectly = async (data: {
     name: string;
     email: string;
+    username?: string;
+    phone?: string;
     password?: string;
     role: Role;
     assignedTeams?: StoreTeamId[];
   }): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = data.email.toLowerCase().trim();
+    const cleanUsername = normalizeUsername(data.username) || undefined;
+    const cleanPhone = normalizePhoneNumber(data.phone) || undefined;
     const initialTeams = data.role === 'leader' ? [] : data.assignedTeams || [];
 
     // 1. Check local state
     const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
     if (existing && existing.status === 'active') {
       return { success: false, error: 'An active account with this email address already exists.' };
+    }
+    if (cleanUsername && users.some((u) => normalizeUsername(u.username) === cleanUsername)) {
+      return { success: false, error: 'An account with this username already exists.' };
+    }
+    if (cleanPhone && users.some((u) => normalizePhoneNumber(u.phone) === cleanPhone)) {
+      return { success: false, error: 'An account with this phone number already exists.' };
     }
 
     try {
@@ -1751,6 +1768,8 @@ export default function App() {
       if (existingProfile) {
         const updatePayload: Record<string, any> = {
           full_name: data.name.trim(),
+          username: cleanUsername || null,
+          phone: cleanPhone || null,
           role: data.role,
           status: 'active',
           requested_role: data.role,
@@ -1762,10 +1781,20 @@ export default function App() {
           updatePayload.password_hash = securePasswordHash;
         }
 
-        const { error: updateErr } = await supabase
+        let { error: updateErr } = await supabase
           .from('profiles')
           .update(updatePayload)
           .eq('id', existingProfile.id);
+
+        if (updateErr && (updateErr.code === 'PGRST204' || updateErr.code === '42703')) {
+          delete updatePayload.username;
+          delete updatePayload.phone;
+          const retryUpd = await supabase
+            .from('profiles')
+            .update(updatePayload)
+            .eq('id', existingProfile.id);
+          updateErr = retryUpd.error;
+        }
 
         if (updateErr) throw updateErr;
 
@@ -1776,7 +1805,15 @@ export default function App() {
         setUsers((prev) =>
           prev.map((u) =>
             u.email.toLowerCase() === cleanEmail
-              ? { ...u, status: 'active', role: data.role, name: data.name.trim(), assignedTeams: initialTeams }
+              ? {
+                  ...u,
+                  status: 'active',
+                  role: data.role,
+                  name: data.name.trim(),
+                  username: cleanUsername,
+                  phone: cleanPhone,
+                  assignedTeams: initialTeams,
+                }
               : u
           )
         );
@@ -1791,6 +1828,8 @@ export default function App() {
         id: newId,
         name: data.name.trim(),
         email: cleanEmail,
+        username: cleanUsername,
+        phone: cleanPhone,
         role: data.role,
         status: 'active',
         requestedRole: data.role,
@@ -1810,6 +1849,8 @@ export default function App() {
         id: newUser.id,
         full_name: newUser.name,
         email: newUser.email,
+        username: cleanUsername || null,
+        phone: cleanPhone || null,
         password_hash: securePasswordHash,
         role: newUser.role,
         status: 'active',
@@ -1821,9 +1862,22 @@ export default function App() {
         created_at: newUser.createdAt,
       };
 
-      const { error: insertErr } = await supabase.from('profiles').insert(insertPayload);
+      let { error: insertErr } = await supabase.from('profiles').insert(insertPayload);
+
+      if (insertErr && (insertErr.code === 'PGRST204' || insertErr.code === '42703')) {
+        delete insertPayload.username;
+        delete insertPayload.phone;
+        const retryIns = await supabase.from('profiles').insert(insertPayload);
+        insertErr = retryIns.error;
+      }
 
       if (insertErr) {
+        if (insertErr.message?.includes('profiles_username_unique_idx')) {
+          return { success: false, error: 'An account with this username already exists.' };
+        }
+        if (insertErr.message?.includes('profiles_phone_unique_idx')) {
+          return { success: false, error: 'An account with this phone number already exists.' };
+        }
         // If unique constraint on email was hit, update existing row instead
         if (
           insertErr.code === '23505' ||
@@ -1862,7 +1916,7 @@ export default function App() {
         actorName: currentUser?.name || 'Admin',
         actorRole: 'admin',
         summary: `Created pre-approved account for "${newUser.name}"`,
-        details: `Account for ${newUser.email} (${getRoleDisplayName(newUser.role)}) created directly as Active without approval.`,
+        details: `Account for ${newUser.email}${cleanUsername ? ` (@${cleanUsername})` : ''}${cleanPhone ? ` • ${cleanPhone}` : ''} (${getRoleDisplayName(newUser.role)}) created directly as Active without approval.`,
       };
       setAuditLogs((prev) => [newLog, ...prev]);
       insertAuditLogInDb(newLog).catch(() => {});
@@ -1888,6 +1942,32 @@ export default function App() {
       }
       return { success: false, error: rawMsg || 'Failed to create user' };
     }
+  };
+
+  const handleUserContactChange = async (
+    userId: string,
+    username?: string,
+    phone?: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (currentUser && !isUserAdmin(currentUser)) {
+      showToast('Only Admins can update account login credentials.');
+      return { ok: false, error: 'Unauthorized' };
+    }
+    const res = await updateUserContactInDb(userId, username, phone);
+    if (!res.ok) {
+      showToast(res.error || 'Failed to update username/phone.');
+      return { ok: false, error: res.error };
+    }
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === userId ? { ...u, username: res.username, phone: res.phone } : u
+      )
+    );
+    if (currentUser && currentUser.id === userId) {
+      setCurrentUser({ ...currentUser, username: res.username, phone: res.phone });
+    }
+    showToast('Updated account login username & phone number.');
+    return { ok: true };
   };
 
   // Batch upsert helper for cross-team Calendar & Board cards
@@ -4203,6 +4283,7 @@ export default function App() {
             onDeleteUser={handleDeleteUser}
             onUpdateUserRole={handleUpdateUserRole}
             onUpdateUserTeams={handleUserTeamsChange}
+            onUpdateUserContact={handleUserContactChange}
             onCreateUserDirectly={handleCreateUserDirectly}
             onApproveProduct={handleApproveProduct}
             onRejectProduct={handleRejectProduct}
@@ -4226,6 +4307,7 @@ export default function App() {
             onDeleteUser={handleDeleteUser}
             onUpdateUserRole={handleUpdateUserRole}
             onUpdateUserTeams={handleUserTeamsChange}
+            onUpdateUserContact={handleUserContactChange}
             onCreateUserDirectly={handleCreateUserDirectly}
             onApproveProduct={handleApproveProduct}
             onRejectProduct={handleRejectProduct}

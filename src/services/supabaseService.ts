@@ -1,5 +1,10 @@
 import { supabase } from './supabaseClient';
-import { normalizeRole } from '../utils/security';
+import {
+  normalizeRole,
+  normalizeUsername,
+  normalizePhoneNumber,
+  getPhoneSearchVariants,
+} from '../utils/security';
 import {
   Product,
   ProductVariant,
@@ -757,6 +762,8 @@ export async function fetchUsersFromDb(): Promise<User[]> {
       id: u.id,
       name: u.full_name || u.name || 'User',
       email: u.email,
+      username: u.username || undefined,
+      phone: u.phone || undefined,
       password: u.password_plain || u.password_hash || undefined,
       role: normalizedRole,
       status: (u.status || 'active') as UserStatus,
@@ -772,9 +779,109 @@ export async function fetchUsersFromDb(): Promise<User[]> {
   });
 }
 
+export async function lookupProfileForLogin(identifier: string): Promise<any | null> {
+  const cleanInput = identifier.trim();
+  if (!cleanInput) return null;
+
+  // 1. Prefer database RPC (works seamlessly even under strict profiles RLS and handles phone normalization)
+  try {
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('login_lookup_profile', {
+      p_identifier: cleanInput,
+    });
+    if (!rpcErr) {
+      if (Array.isArray(rpcData)) return rpcData[0] || null;
+      return rpcData || null;
+    }
+    const msg = String(rpcErr.message || '');
+    const isMissingFn =
+      rpcErr.code === 'PGRST202' ||
+      rpcErr.code === '42883' ||
+      msg.includes('login_lookup_profile');
+    if (!isMissingFn) {
+      throw rpcErr;
+    }
+  } catch (err: any) {
+    const msg = String(err?.message || '');
+    const isMissingFn =
+      err?.code === 'PGRST202' ||
+      err?.code === '42883' ||
+      msg.includes('login_lookup_profile');
+    if (!isMissingFn) throw err;
+  }
+
+  // 2. Fallback: parameterized lookups directly on profiles table
+  if (cleanInput.includes('@')) {
+    const { data: emailMatch, error: emailErr } = await supabase
+      .from('profiles')
+      .select('*')
+      .ilike('email', cleanInput.toLowerCase())
+      .limit(1)
+      .maybeSingle();
+    if (emailErr) throw emailErr;
+    if (emailMatch) return emailMatch;
+  }
+
+  const normUser = normalizeUsername(cleanInput);
+  if (normUser) {
+    const { data: userMatch, error: userErr } = await supabase
+      .from('profiles')
+      .select('*')
+      .ilike('username', normUser)
+      .limit(1)
+      .maybeSingle();
+    if (!userErr && userMatch) return userMatch;
+    if (
+      userErr &&
+      userErr.code !== '42703' &&
+      userErr.code !== 'PGRST204' &&
+      !String(userErr.message || '').includes('username')
+    ) {
+      throw userErr;
+    }
+  }
+
+  const phoneVariants = getPhoneSearchVariants(cleanInput);
+  if (phoneVariants.length > 0) {
+    const { data: phoneMatches, error: phoneErr } = await supabase
+      .from('profiles')
+      .select('*')
+      .in('phone', phoneVariants)
+      .limit(1);
+    if (!phoneErr && phoneMatches && phoneMatches.length > 0) {
+      return phoneMatches[0];
+    }
+
+    // Handle stored phone numbers that contain spaces or dashes
+    if (!phoneErr) {
+      const { data: allWithPhones } = await supabase
+        .from('profiles')
+        .select('*')
+        .not('phone', 'is', null);
+      if (allWithPhones && allWithPhones.length > 0) {
+        const inputDigits = normalizePhoneNumber(cleanInput).replace(/\D/g, '');
+        const found = allWithPhones.find((row: any) => {
+          const rowDigits = normalizePhoneNumber(row.phone).replace(/\D/g, '');
+          return Boolean(inputDigits && rowDigits && rowDigits === inputDigits);
+        });
+        if (found) return found;
+      }
+    } else if (
+      phoneErr.code !== '42703' &&
+      phoneErr.code !== 'PGRST204' &&
+      !String(phoneErr.message || '').includes('phone')
+    ) {
+      throw phoneErr;
+    }
+  }
+
+  return null;
+}
+
 export async function registerUserInDb(data: {
   name: string;
   email: string;
+  username?: string;
+  phone?: string;
   password?: string;
   requestedRole: Role;
 }): Promise<User> {
@@ -787,10 +894,15 @@ export async function registerUserInDb(data: {
         return v.toString(16);
       });
 
+  const cleanUsername = normalizeUsername(data.username) || undefined;
+  const cleanPhone = normalizePhoneNumber(data.phone) || undefined;
+
   const newUser: User = {
     id: validUuid,
     name: data.name.trim(),
     email: data.email.trim().toLowerCase(),
+    username: cleanUsername,
+    phone: cleanPhone,
     password: data.password || 'password123',
     role: data.requestedRole,
     requestedRole: data.requestedRole,
@@ -810,9 +922,11 @@ export async function registerUserInDb(data: {
   const { hashPassword } = await import('../utils/security');
   const securePasswordHash = await hashPassword(newUser.password || 'password123');
 
-  const { error } = await supabase.from('profiles').insert({
+  const payload: Record<string, any> = {
     id: newUser.id,
     email: newUser.email,
+    username: cleanUsername || null,
+    phone: cleanPhone || null,
     password_hash: securePasswordHash,
     full_name: newUser.name,
     role: newUser.role,
@@ -821,9 +935,33 @@ export async function registerUserInDb(data: {
     employee_id: newUser.employeeId,
     avatar_color: newUser.avatarColor,
     created_at: newUser.createdAt,
-  });
+  };
+
+  let error: any = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await supabase.from('profiles').insert(payload);
+    error = res.error;
+    if (!error) break;
+    if (error.code === 'PGRST204' || error.code === '42703') {
+      const missingCol = extractMissingColumnName(error);
+      if (missingCol && missingCol in payload) {
+        delete payload[missingCol];
+        continue;
+      }
+      delete payload.username;
+      delete payload.phone;
+      continue;
+    }
+    break;
+  }
 
   if (error) {
+    if (error.message?.includes('profiles_username_unique_idx') || error.message?.includes('username')) {
+      throw new Error('An account with this username already exists.');
+    }
+    if (error.message?.includes('profiles_phone_unique_idx') || error.message?.includes('phone')) {
+      throw new Error('An account with this phone number already exists.');
+    }
     if (error.message?.includes('enum user_role') || error.message?.includes('"leader"') || error.message?.includes('"full_admin"')) {
       throw new Error(
         `Database enum "user_role" must include 'leader' and 'full_admin'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'full_admin'; in Supabase SQL Editor.`
@@ -840,7 +978,7 @@ export async function registerUserInDb(data: {
       actorName: newUser.name,
       actorRole: newUser.requestedRole === 'full_admin' ? 'admin' : newUser.requestedRole || 'worker',
       summary: `New account registration: "${newUser.name}" (${newUser.email}).`,
-      details: `New staff member "${newUser.name}" (${newUser.email}) registered and requires administrator approval.`,
+      details: `New staff member "${newUser.name}" (${newUser.email}${cleanUsername ? `, @${cleanUsername}` : ''}${cleanPhone ? `, ${cleanPhone}` : ''}) registered and requires administrator approval.`,
       reason: 'New Account Registration',
     });
   } catch {
@@ -848,6 +986,49 @@ export async function registerUserInDb(data: {
   }
 
   return newUser;
+}
+
+export async function updateUserContactInDb(
+  userId: string,
+  username?: string,
+  phone?: string
+): Promise<{ ok: boolean; error?: string; username?: string; phone?: string }> {
+  const cleanUsername = normalizeUsername(username) || null;
+  const cleanPhone = normalizePhoneNumber(phone) || null;
+
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        username: cleanUsername,
+        phone: cleanPhone,
+      })
+      .eq('id', userId);
+
+    if (error) {
+      if (error.message?.includes('profiles_username_unique_idx')) {
+        return { ok: false, error: 'This username is already assigned to another account.' };
+      }
+      if (error.message?.includes('profiles_phone_unique_idx')) {
+        return { ok: false, error: 'This phone number is already assigned to another account.' };
+      }
+      if (error.code === 'PGRST204' || error.code === '42703') {
+        return {
+          ok: false,
+          error: 'Run the SQL migration to add username & phone columns to public.profiles first.',
+        };
+      }
+      return { ok: false, error: error.message };
+    }
+
+    return {
+      ok: true,
+      username: cleanUsername || undefined,
+      phone: cleanPhone || undefined,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
+  }
 }
 
 export async function updateUserStatusInDb(

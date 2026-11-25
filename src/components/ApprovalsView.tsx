@@ -27,9 +27,11 @@ import {
   Edit3,
   ShieldAlert,
   Eye,
+  Phone,
+  AtSign,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
-import { isFullAccessAdmin, normalizeRole } from '../utils/security';
+import { isFullAccessAdmin, normalizePhoneNumber, normalizeRole, normalizeUsername } from '../utils/security';
 
 interface ApprovalsViewProps {
   mode?: 'stock' | 'accounts' | 'both';
@@ -50,9 +52,16 @@ interface ApprovalsViewProps {
     assignedTeams: StoreTeamId[],
     assignedFare2: string[]
   ) => Promise<void> | void;
+  onUpdateUserContact?: (
+    userId: string,
+    username?: string,
+    phone?: string
+  ) => Promise<{ ok: boolean; error?: string } | void> | void;
   onCreateUserDirectly?: (data: {
     name: string;
     email: string;
+    username?: string;
+    phone?: string;
     password?: string;
     role: Role;
     assignedTeams?: StoreTeamId[];
@@ -76,6 +85,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onDeleteUser,
   onUpdateUserRole,
   onUpdateUserTeams,
+  onUpdateUserContact,
   onCreateUserDirectly,
   onApproveProduct,
   onRejectProduct,
@@ -112,6 +122,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   // Direct Create Account Without Approval Modal State
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
   const [newUserName, setNewUserName] = useState('');
+  const [newUserUsername, setNewUserUsername] = useState('');
+  const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState<Role>('worker');
@@ -120,6 +132,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [isSubmittingNewUser, setIsSubmittingNewUser] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [userToEditRole, setUserToEditRole] = useState<User | null>(null);
+  const [editUsername, setEditUsername] = useState('');
+  const [editPhone, setEditPhone] = useState('');
   const [newSelectedRole, setNewSelectedRole] = useState<Role>('worker');
   const [newSelectedTeams, setNewSelectedTeams] = useState<StoreTeamId[]>([]);
   const [newSelectedFare2, setNewSelectedFare2] = useState<string[]>([]);
@@ -150,6 +164,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
     const resolvedTeams = Array.isArray(user.assignedTeams) ? user.assignedTeams : [];
     const resolvedFare2 = Array.isArray(user.assignedFare2) ? user.assignedFare2 : [];
     setUserToEditRole(user);
+    setEditUsername(user.username || '');
+    setEditPhone(user.phone || '');
     setNewSelectedRole(isFullAccessAdmin(user, users) ? 'full_admin' : normalizeRole(user.role));
     setNewSelectedTeams(resolvedTeams);
     setNewSelectedFare2(resolvedFare2);
@@ -1170,7 +1186,15 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                               : 'Staff'}
                           </span>
                         </div>
-                        <div className="text-xs text-slate-500 font-mono mt-0.5">{user.email}</div>
+                        <div className="text-xs text-slate-500 font-mono mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                          <span>{user.email}</span>
+                          {user.username && (
+                            <span className="text-slate-700 font-semibold">@{user.username}</span>
+                          )}
+                          {user.phone && (
+                            <span className="text-slate-600">{user.phone}</span>
+                          )}
+                        </div>
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           Registered: {new Date(user.createdAt || Date.now()).toLocaleDateString()}
                         </div>
@@ -1551,6 +1575,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   const res = await onCreateUserDirectly({
                     name: newUserName,
                     email: newUserEmail,
+                    username: newUserUsername || undefined,
+                    phone: newUserPhone || undefined,
                     password: newUserPassword,
                     role: newUserRole,
                     assignedTeams: newUserRole === 'leader' ? [] : newUserTeams,
@@ -1561,6 +1587,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     return;
                   }
                 }
+                setNewUserName('');
+                setNewUserUsername('');
+                setNewUserPhone('');
+                setNewUserEmail('');
+                setNewUserPassword('');
                 setIsSubmittingNewUser(false);
                 setShowCreateUserModal(false);
               }}
@@ -1582,6 +1613,44 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     placeholder="e.g. Myriam Joseph"
                     className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                    USERNAME
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <AtSign className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      value={newUserUsername}
+                      onChange={(e) => setNewUserUsername(e.target.value)}
+                      placeholder="e.g. myriam_j"
+                      className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                    PHONE NUMBER
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Phone className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="tel"
+                      value={newUserPhone}
+                      onChange={(e) => setNewUserPhone(e.target.value)}
+                      placeholder="e.g. 01012345678"
+                      className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1819,6 +1888,45 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 >
                   <X className="w-5 h-5" />
                 </button>
+              </div>
+
+              {/* Login Credentials: Username & Phone Number */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                    Username (Login ID)
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <AtSign className="w-3.5 h-3.5" />
+                    </div>
+                    <input
+                      type="text"
+                      value={editUsername}
+                      onChange={(e) => setEditUsername(e.target.value)}
+                      placeholder="e.g. tony_mohab"
+                      className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                    Phone Number (Login ID)
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <Phone className="w-3.5 h-3.5" />
+                    </div>
+                    <input
+                      type="tel"
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      placeholder="e.g. 01012345678"
+                      className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Section 1: System Role */}
@@ -2075,8 +2183,11 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                     const fare2Changed =
                       originalEditFare2.length !== finalFare2.length ||
                       originalEditFare2.some((id) => !finalFare2.includes(id));
+                    const contactChanged =
+                      normalizeUsername(editUsername) !== normalizeUsername(userToEditRole.username) ||
+                      normalizePhoneNumber(editPhone) !== normalizePhoneNumber(userToEditRole.phone);
 
-                    if (!roleChanged && !teamsChanged && !fare2Changed) {
+                    if (!roleChanged && !teamsChanged && !fare2Changed && !contactChanged) {
                       setUserToEditRole(null);
                       return;
                     }
@@ -2119,6 +2230,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         const removedFare2 = originalEditFare2.filter((id) => !finalFare2.includes(id));
         const fare2Changed = addedFare2.length > 0 || removedFare2.length > 0;
 
+        const nextCleanUsername = normalizeUsername(editUsername) || undefined;
+        const nextCleanPhone = normalizePhoneNumber(editPhone) || undefined;
+        const contactChanged =
+          (nextCleanUsername || '') !== normalizeUsername(userToEditRole.username) ||
+          (nextCleanPhone || '') !== normalizePhoneNumber(userToEditRole.phone);
+
         const getTeamObj = (id: StoreTeamId) => STORE_TEAMS.find((t) => t.id === id);
         const formatTeamLabels = (ids: StoreTeamId[]) =>
           ids
@@ -2132,10 +2249,20 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
         const handleConfirmAccountChanges = async () => {
           setIsUpdatingRole(true);
           try {
+            if (onUpdateUserContact && contactChanged) {
+              const contactRes = await onUpdateUserContact(
+                userToEditRole.id,
+                nextCleanUsername,
+                nextCleanPhone
+              );
+              if (contactRes && contactRes.ok === false) {
+                return;
+              }
+            }
             if (onUpdateUserRole && roleChanged) {
               await onUpdateUserRole(userToEditRole.id, effectiveRole);
             }
-            if (onUpdateUserTeams) {
+            if (onUpdateUserTeams && (teamsChanged || fare2Changed)) {
               await onUpdateUserTeams(userToEditRole.id, finalTeams, finalFare2);
             }
             setShowEditConfirmModal(false);
@@ -2166,6 +2293,19 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
               </div>
 
               <div className="p-5 space-y-3 max-h-[75vh] overflow-y-auto">
+                {/* 0. Login Credentials (Username / Phone) Summary */}
+                {contactChanged && (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                    <div className="font-bold text-slate-800">Update Login Credentials:</div>
+                    <div className="text-slate-600">
+                      Username: <strong>{nextCleanUsername ? `@${nextCleanUsername}` : 'Cleared'}</strong>
+                    </div>
+                    <div className="text-slate-600">
+                      Phone: <strong>{nextCleanPhone || 'Cleared'}</strong>
+                    </div>
+                  </div>
+                )}
+
                 {/* 1. System Role Change Summary */}
                 {roleChanged && (
                   <div className="space-y-2">

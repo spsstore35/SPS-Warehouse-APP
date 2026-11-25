@@ -14,6 +14,8 @@ import {
   Package,
   Eye,
   EyeOff,
+  Phone,
+  AtSign,
 } from 'lucide-react';
 
 interface AuthScreensProps {
@@ -24,7 +26,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
 
   // Login form state
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
@@ -32,6 +34,8 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
 
   // Sign up form state
   const [signUpName, setSignUpName] = useState('');
+  const [signUpUsername, setSignUpUsername] = useState('');
+  const [signUpPhone, setSignUpPhone] = useState('');
   const [signUpEmail, setSignUpEmail] = useState('');
   const [signUpPassword, setSignUpPassword] = useState('');
   const [showSignUpPassword, setShowSignUpPassword] = useState(false);
@@ -46,31 +50,20 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
     setPendingAccountInfo(null);
     setIsSubmitting(true);
 
-    if (!email.trim() || !password) {
-      setLoginError('Please enter both email and password.');
+    const cleanIdentifier = identifier.trim();
+    if (!cleanIdentifier || !password) {
+      setLoginError('Please enter your email, phone number, or username and password.');
       setIsSubmitting(false);
       return;
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-
-    // Authenticate strictly against live Supabase profiles table
+    // Authenticate strictly against live Supabase profiles table (Email, Phone, or Username)
     try {
-      const { supabase } = await import('../services/supabaseClient');
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
-
-      if (error) {
-        setLoginError(`Database authentication error: ${error.message}`);
-        setIsSubmitting(false);
-        return;
-      }
+      const { lookupProfileForLogin } = await import('../services/supabaseService');
+      const profile = await lookupProfileForLogin(cleanIdentifier);
 
       if (!profile) {
-        setLoginError('No account found with this email address.');
+        setLoginError('No account found with this email, phone number, or username.');
         setIsSubmitting(false);
         return;
       }
@@ -80,6 +73,8 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
           id: profile.id,
           name: profile.full_name,
           email: profile.email,
+          username: profile.username || undefined,
+          phone: profile.phone || undefined,
           role: profile.role,
           status: 'pending',
           requestedRole: profile.requested_role,
@@ -97,13 +92,14 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       const { verifyPassword, hashPassword, normalizeRole } = await import('../utils/security');
       const isMatch = await verifyPassword(password, profile.password_hash);
       if (!isMatch) {
-        setLoginError('Invalid email or password. Please check your credentials.');
+        setLoginError('Invalid credentials. Please check your password.');
         setIsSubmitting(false);
         return;
       }
 
       // Auto-upgrade legacy plain text or null passwords to secure SHA-256 hash in Supabase
       if (profile.password_hash === password || !profile.password_hash) {
+        const { supabase } = await import('../services/supabaseClient');
         const newSecureHash = await hashPassword(password);
         await supabase
           .from('profiles')
@@ -121,6 +117,8 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
         id: profile.id,
         name: profile.full_name || 'Staff User',
         email: profile.email,
+        username: profile.username || undefined,
+        phone: profile.phone || undefined,
         role: normalizedRole,
         status: profile.status,
         requestedRole: normalizedReqRole,
@@ -152,6 +150,14 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       setIsSubmitting(false);
       return;
     }
+    if (signUpUsername.trim()) {
+      const cleanUserCheck = signUpUsername.trim().replace(/^@+/, '');
+      if (cleanUserCheck.length < 3 || !/^[a-zA-Z0-9._-]+$/.test(cleanUserCheck)) {
+        setSignUpError('Username must be at least 3 characters (letters, numbers, ".", "_", or "-").');
+        setIsSubmitting(false);
+        return;
+      }
+    }
     if (!signUpPassword || signUpPassword.length < 4) {
       setSignUpError('Password must be at least 4 characters');
       setIsSubmitting(false);
@@ -164,12 +170,16 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       const newUser = await registerUserInDb({
         name: signUpName,
         email: signUpEmail,
+        username: signUpUsername || undefined,
+        phone: signUpPhone || undefined,
         password: signUpPassword,
         requestedRole: signUpRole,
       });
 
       setSignUpSuccess(newUser);
       setSignUpName('');
+      setSignUpUsername('');
+      setSignUpPhone('');
       setSignUpEmail('');
       setSignUpPassword('');
     } catch (err: any) {
@@ -262,18 +272,25 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                  Email Address
+                  Email, Phone Number, or Username
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Mail className="w-4 h-4" />
+                    {identifier.includes('@') ? (
+                      <Mail className="w-4 h-4" />
+                    ) : /^\+?[\d\s\-()]{4,}$/.test(identifier.trim()) ? (
+                      <Phone className="w-4 h-4" />
+                    ) : (
+                      <AtSign className="w-4 h-4" />
+                    )}
                   </div>
                   <input
-                    type="email"
+                    type="text"
+                    autoComplete="username"
                     required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="enter your email"
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    placeholder="Email, phone (010...), or username"
                     className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900 focus:ring-1 focus:ring-slate-900"
                   />
                 </div>
@@ -356,13 +373,15 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                 </p>
                 <div className="p-3 bg-white/80 rounded-xl border border-amber-200 text-left text-xs text-slate-700 space-y-1">
                   <div><strong>Email:</strong> {signUpSuccess.email}</div>
+                  {signUpSuccess.username && <div><strong>Username:</strong> @{signUpSuccess.username}</div>}
+                  {signUpSuccess.phone && <div><strong>Phone:</strong> {signUpSuccess.phone}</div>}
                   <div><strong>Status:</strong> <span className="font-bold text-amber-800">Pending Admin Approval</span></div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     setMode('login');
-                    setEmail(signUpSuccess.email);
+                    setIdentifier(signUpSuccess.username || signUpSuccess.phone || signUpSuccess.email);
                   }}
                   className="w-full py-2.5 px-4 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-sm"
                 >
@@ -387,6 +406,44 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                       placeholder="e.g. Myriam Joseph"
                       className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
                     />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                      Username
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                        <AtSign className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="text"
+                        value={signUpUsername}
+                        onChange={(e) => setSignUpUsername(e.target.value)}
+                        placeholder="e.g. myriam_j"
+                        className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
+                      Phone Number
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                        <Phone className="w-4 h-4" />
+                      </div>
+                      <input
+                        type="tel"
+                        value={signUpPhone}
+                        onChange={(e) => setSignUpPhone(e.target.value)}
+                        placeholder="e.g. 01012345678"
+                        className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
+                      />
+                    </div>
                   </div>
                 </div>
 
