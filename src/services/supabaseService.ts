@@ -907,13 +907,17 @@ export async function registerUserInDb(data: {
         return v.toString(16);
       });
 
+  const cleanPassword = (data.password || '').trim();
+  if (cleanPassword.length < 4) {
+    throw new Error('Password must be at least 4 characters.');
+  }
+
   const newUser: User = {
     id: validUuid,
     name: data.name.trim(),
     email: cleanEmail,
     username: cleanUsername,
     phone: cleanPhone,
-    password: data.password || 'password123',
     role: data.requestedRole,
     requestedRole: data.requestedRole,
     status: 'pending', // Awaiting Admin Approval
@@ -930,7 +934,7 @@ export async function registerUserInDb(data: {
   };
 
   const { hashPassword } = await import('../utils/security');
-  const securePasswordHash = await hashPassword(newUser.password || 'password123');
+  const securePasswordHash = await hashPassword(cleanPassword);
 
   const payload: Record<string, any> = {
     id: newUser.id,

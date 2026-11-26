@@ -1804,10 +1804,17 @@ export default function App() {
       return { success: false, error: 'An account with this phone number already exists.' };
     }
 
+    const plainPassword = data.password ? data.password.trim() : '';
+    if (plainPassword.length < 4) {
+      return {
+        success: false,
+        error: 'Password must be at least 4 characters.',
+      };
+    }
+
     try {
       const { supabase } = await import('./services/supabaseClient');
       const { hashPassword, getPhoneSearchVariants, buildSyntheticNoEmail } = await import('./utils/security');
-      const plainPassword = data.password && data.password.trim().length >= 4 ? data.password.trim() : '123456';
       const securePasswordHash = await hashPassword(plainPassword);
 
       // 2. Check if user already exists in remote Supabase profiles table (when matching by email/username/phone)

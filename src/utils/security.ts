@@ -99,7 +99,10 @@ export function getPhoneSearchVariants(raw?: string | null): string[] {
 }
 
 export async function hashPassword(plainText: string): Promise<string> {
-  const text = (plainText || 'password123').trim();
+  const text = (plainText || '').trim();
+  if (!text) {
+    throw new Error('Password cannot be empty.');
+  }
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -114,23 +117,28 @@ export async function verifyPassword(
   if (!storedHash) return false;
 
   const enteredText = (plainText || '').trim();
+  if (!enteredText) return false;
 
-  // 1. Direct plain text match (legacy unhashed records)
+  // 1. Bcrypt hashes ($2a$, $2b$, $2y$): real verification, fail closed.
+  if (/^\$2[aby]\$/.test(storedHash)) {
+    try {
+      const mod = await import('bcryptjs');
+      const bcrypt = mod.default ?? mod;
+      return await bcrypt.compare(enteredText, storedHash);
+    } catch {
+      return false;
+    }
+  }
+
+  // 2. Legacy unhashed records
   if (storedHash === enteredText) return true;
 
-  // 2. Compare against SHA-256 hash
+  // 3. SHA-256 hash
   const cleanStored = storedHash.startsWith('$sha256$')
     ? storedHash.slice(8)
     : storedHash;
   const computed = await hashPassword(enteredText);
-  if (computed.toLowerCase() === cleanStored.toLowerCase()) return true;
-
-  // 3. Bcrypt format ($2a$ or $2b$) compatibility for SQL-seeded hashes
-  if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$')) {
-    return enteredText.length > 0;
-  }
-
-  return false;
+  return computed.toLowerCase() === cleanStored.toLowerCase();
 }
 
 /**

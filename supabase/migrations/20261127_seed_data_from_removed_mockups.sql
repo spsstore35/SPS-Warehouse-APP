@@ -15,7 +15,7 @@ BEGIN
   END IF;
 END $$;
 
--- 1. INITIAL ADMIN ACCOUNT (Change email/password after first login!)
+-- 1. INITIAL ADMIN ACCOUNT (Replace the placeholder password below before running, and rotate after first login!)
 INSERT INTO public.profiles (
   id,
   email,
@@ -33,7 +33,7 @@ INSERT INTO public.profiles (
 VALUES (
   '00000000-0000-4000-8000-000000000001',
   'admin@wearhouse.com',
-  crypt('admin123', gen_salt('bf')),
+  crypt('CHANGE_ME_INITIAL_ADMIN_PASSWORD', gen_salt('bf')),
   'Admin Boss (Owner)',
   'full_admin',
   'active',

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Booking,
   BudgetExpenseCategory,
@@ -77,8 +77,7 @@ interface BudgetingViewProps {
 
 type BudgetingTab = 'unit_pnl' | 'liquidity' | 'seasons_fera2' | 'expenses';
 type ProductBudgetFilter = 'all' | 'has_cost' | 'missing_cost' | 'hardship';
-
-const BUDGETING_PASSCODE = '4447';
+type PasscodeStatusMode = 'loading' | 'env' | 'claimed' | 'unclaimed' | 'error';
 
 const EXPENSE_CATEGORY_META: Record<BudgetExpenseCategory, { label: string; short: string }> = {
   production_extras: { label: 'Production & Finishing Extras', short: 'Finishing' },
@@ -161,9 +160,37 @@ const classifyBuyingBucket = (name: string, category?: string): 'tshirt' | 'fola
 
 export const BudgetingView: React.FC<BudgetingViewProps> = (props) => {
   const isLeader = isUserLeader(props.currentUser);
+  const [passcodeMode, setPasscodeMode] = useState<PasscodeStatusMode>('loading');
   const [passcodeInput, setPasscodeInput] = useState('');
+  const [confirmPasscodeInput, setConfirmPasscodeInput] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
   const [showPasscode, setShowPasscode] = useState(false);
+  const [isCheckingPasscode, setIsCheckingPasscode] = useState(false);
+
+  useEffect(() => {
+    if (isLeader || props.isUnlocked) return;
+    let cancelled = false;
+    setPasscodeMode('loading');
+    fetch('/api/budgeting/status')
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Status check failed');
+        return res.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.mode === 'env' || data?.mode === 'claimed' || data?.mode === 'unclaimed') {
+          setPasscodeMode(data.mode);
+        } else {
+          setPasscodeMode('error');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPasscodeMode('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLeader, props.isUnlocked]);
 
   if (isLeader) {
     return (
@@ -180,17 +207,75 @@ export const BudgetingView: React.FC<BudgetingViewProps> = (props) => {
   }
 
   if (!props.isUnlocked) {
-    const handleUnlockSubmit = (e: React.FormEvent) => {
+    const handleUnlockSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
-      if (passcodeInput.trim() === BUDGETING_PASSCODE) {
+      const trimmed = passcodeInput.trim();
+      if (!trimmed) {
+        setPasscodeError('Please enter the budgeting passcode.');
+        return;
+      }
+
+      if (passcodeMode === 'unclaimed') {
+        if (trimmed.length < 4) {
+          setPasscodeError('Passcode must be at least 4 characters.');
+          return;
+        }
+        if (trimmed !== confirmPasscodeInput.trim()) {
+          setPasscodeError('Passcodes do not match.');
+          return;
+        }
+        setIsCheckingPasscode(true);
+        try {
+          const res = await fetch('/api/budgeting/claim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ passcode: trimmed }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.unlocked) {
+            setPasscodeError(data?.error || 'Could not configure budgeting passcode.');
+            setIsCheckingPasscode(false);
+            return;
+          }
+          setPasscodeError('');
+          setPasscodeInput('');
+          setConfirmPasscodeInput('');
+          setPasscodeMode('claimed');
+          props.onUnlock();
+          props.onShowToast?.('Budgeting passcode configured and unlocked.');
+        } catch {
+          setPasscodeError('Unable to reach server to save passcode.');
+        } finally {
+          setIsCheckingPasscode(false);
+        }
+        return;
+      }
+
+      setIsCheckingPasscode(true);
+      try {
+        const res = await fetch('/api/budgeting/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passcode: trimmed }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.unlocked) {
+          setPasscodeError(data?.error || 'Incorrect budgeting passcode. Please try again.');
+          setIsCheckingPasscode(false);
+          return;
+        }
         setPasscodeError('');
         setPasscodeInput('');
         props.onUnlock();
         props.onShowToast?.('Budgeting unlocked.');
-      } else {
-        setPasscodeError('Incorrect budgeting passcode. Please try again.');
+      } catch {
+        setPasscodeError('Unable to reach server for passcode verification.');
+      } finally {
+        setIsCheckingPasscode(false);
       }
     };
+
+    const isFirstRunSetup = passcodeMode === 'unclaimed';
 
     return (
       <div className="max-w-md mx-auto my-8 sm:my-12 bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-5">
@@ -199,59 +284,102 @@ export const BudgetingView: React.FC<BudgetingViewProps> = (props) => {
             <Lock className="w-6 h-6" />
           </div>
           <h2 className="text-lg font-bold text-slate-900 tracking-tight">
-            Budgeting Access Locked
+            {isFirstRunSetup ? 'Set Budgeting Passcode' : 'Budgeting Access Locked'}
           </h2>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Financial costs, cash liquidity, and profit margins are protected. Enter the Budgeting passcode to continue.
+            {isFirstRunSetup
+              ? 'No BUDGETING_PASSCODE is configured in the server environment yet. Set a passcode (4+ characters) to protect financial costs and cash liquidity.'
+              : 'Financial costs, cash liquidity, and profit margins are protected. Enter the Budgeting passcode to continue.'}
           </p>
         </div>
 
-        <form onSubmit={handleUnlockSubmit} className="space-y-4">
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-              Budgeting Passcode
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <KeyRound className="w-4 h-4" />
-              </div>
-              <input
-                type={showPasscode ? 'text' : 'password'}
-                inputMode="numeric"
-                autoFocus
-                value={passcodeInput}
-                onChange={(e) => {
-                  setPasscodeInput(e.target.value);
-                  if (passcodeError) setPasscodeError('');
-                }}
-                placeholder="Enter passcode..."
-                className="w-full pl-10 pr-10 py-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-sm font-mono tracking-widest text-slate-900 focus:outline-none focus:border-emerald-600"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPasscode((prev) => !prev)}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-700 cursor-pointer"
-                aria-label={showPasscode ? 'Hide passcode' : 'Show passcode'}
-              >
-                {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
+        {passcodeMode === 'loading' ? (
+          <div className="py-6 text-center text-xs font-medium text-slate-500">
+            Checking server security status...
           </div>
-
-          {passcodeError && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
-              {passcodeError}
+        ) : passcodeMode === 'error' ? (
+          <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
+            Server passcode verification is unavailable. Ensure the backend server is running or set BUDGETING_PASSCODE in server environment variables.
+          </div>
+        ) : (
+          <form onSubmit={handleUnlockSubmit} className="space-y-4">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                {isFirstRunSetup ? 'Create Budgeting Passcode' : 'Budgeting Passcode'}
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <input
+                  type={showPasscode ? 'text' : 'password'}
+                  inputMode="numeric"
+                  autoFocus
+                  value={passcodeInput}
+                  onChange={(e) => {
+                    setPasscodeInput(e.target.value);
+                    if (passcodeError) setPasscodeError('');
+                  }}
+                  placeholder={isFirstRunSetup ? 'Choose passcode (min 4 chars)...' : 'Enter passcode...'}
+                  className="w-full pl-10 pr-10 py-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-sm font-mono tracking-widest text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasscode((prev) => !prev)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-700 cursor-pointer"
+                  aria-label={showPasscode ? 'Hide passcode' : 'Show passcode'}
+                >
+                  {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
-          )}
 
-          <button
-            type="submit"
-            className="w-full py-3 px-4 min-h-[44px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
-          >
-            <Lock className="w-4 h-4 text-emerald-400" />
-            <span>Unlock Budgeting</span>
-          </button>
-        </form>
+            {isFirstRunSetup && (
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Confirm Passcode
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={showPasscode ? 'text' : 'password'}
+                    inputMode="numeric"
+                    value={confirmPasscodeInput}
+                    onChange={(e) => {
+                      setConfirmPasscodeInput(e.target.value);
+                      if (passcodeError) setPasscodeError('');
+                    }}
+                    placeholder="Re-enter passcode..."
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white text-sm font-mono tracking-widest text-slate-900 focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+              </div>
+            )}
+
+            {passcodeError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
+                {passcodeError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isCheckingPasscode}
+              className="w-full py-3 px-4 min-h-[44px] rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <Lock className="w-4 h-4 text-emerald-400" />
+              <span>
+                {isCheckingPasscode
+                  ? 'Verifying...'
+                  : isFirstRunSetup
+                  ? 'Save Passcode & Unlock'
+                  : 'Unlock Budgeting'}
+              </span>
+            </button>
+          </form>
+        )}
       </div>
     );
   }

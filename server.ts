@@ -1,3 +1,5 @@
+import 'dotenv/config';
+import crypto from 'crypto';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -5,12 +7,52 @@ import * as webpush from 'web-push';
 import { createServer as createViteServer } from 'vite';
 import { createClient } from '@supabase/supabase-js';
 
-// VAPID Credentials for Web Push Protocol
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BJMQAYWtCOp3egNjp-tbFtWvthIBCtRuDDH64erBwhqxkOecZMvkwt9ybmI2I9MXn2rnTq6ivNDd4w_bjB4338Q';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'tVKxIFHtxsxqEQpNklGXR0qluII-xzICl32jYW2E7K4';
-const VAPID_SUBJECT = 'mailto:spsstore35@gmail.com';
+// VAPID Credentials for Web Push Protocol (read strictly from environment)
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY?.trim() || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY?.trim() || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT?.trim() || 'mailto:spsstore35@gmail.com';
+const VAPID_CONFIG_ERROR =
+  'Missing required VAPID environment variables: VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set.';
+const isVapidConfigured = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 
-webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+if (isVapidConfigured) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.error(`[Web Push Disabled] ${VAPID_CONFIG_ERROR}`);
+}
+
+// Server-side Budgeting Passcode (env overrides any claimed first-run hash)
+const ENV_BUDGETING_PASSCODE = process.env.BUDGETING_PASSCODE?.trim() || '';
+let claimedBudgetingHash: string | null = null;
+
+function hashPasscodeScrypt(passcode: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16).toString('hex');
+    crypto.scrypt(passcode, salt, 64, (err, derivedKey) => {
+      if (err) return reject(err);
+      resolve(`${salt}:${derivedKey.toString('hex')}`);
+    });
+  });
+}
+
+function verifyPasscodeScrypt(passcode: string, storedHash: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const [salt, expectedHex] = storedHash.split(':');
+    if (!salt || !expectedHex) return resolve(false);
+    crypto.scrypt(passcode, salt, 64, (err, derivedKey) => {
+      if (err) return resolve(false);
+      const expectedBuf = Buffer.from(expectedHex, 'hex');
+      if (expectedBuf.length !== derivedKey.length) return resolve(false);
+      resolve(crypto.timingSafeEqual(expectedBuf, derivedKey));
+    });
+  });
+}
+
+function verifyEnvPasscode(submitted: string, configured: string): boolean {
+  const a = crypto.createHash('sha256').update(submitted).digest();
+  const b = crypto.createHash('sha256').update(configured).digest();
+  return crypto.timingSafeEqual(a, b);
+}
 
 // Supabase Configuration for Server-Side 24/7 Background Listening
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://tvlfxyfbyhotqgigurec.supabase.co';
@@ -56,6 +98,9 @@ async function broadcastPushNotification(payload: {
   badge?: string;
   data?: Record<string, unknown>;
 }) {
+  if (!isVapidConfigured) {
+    throw new Error(VAPID_CONFIG_ERROR);
+  }
   const jsonPayload = JSON.stringify({
     title: payload.title,
     body: payload.body,
@@ -128,6 +173,7 @@ let seenLogIds = new Set<string>();
 let isInitialized = false;
 
 async function setupServerBackgroundSync() {
+  if (!isVapidConfigured) return;
   try {
     // 1. Initial load of existing logs so we don't spam notifications on server start
     const { data: initialLogs } = await supabase
@@ -206,11 +252,17 @@ async function startServer() {
 
   // API 1: Public VAPID Key
   app.get('/api/push/public-key', (req, res) => {
+    if (!isVapidConfigured) {
+      return res.status(503).json({ error: VAPID_CONFIG_ERROR });
+    }
     res.json({ publicKey: VAPID_PUBLIC_KEY });
   });
 
   // API 2: Register device Push Subscription
   app.post('/api/push/subscribe', (req, res) => {
+    if (!isVapidConfigured) {
+      return res.status(503).json({ error: VAPID_CONFIG_ERROR });
+    }
     const { subscription, userEmail } = req.body;
     if (!subscription || !subscription.endpoint) {
       return res.status(400).json({ error: 'Invalid subscription object' });
@@ -231,6 +283,9 @@ async function startServer() {
 
   // API 3: Send Test Web Push to verify background notifications
   app.post('/api/push/test', async (req, res) => {
+    if (!isVapidConfigured) {
+      return res.status(503).json({ error: VAPID_CONFIG_ERROR });
+    }
     const { title, body } = req.body;
     await broadcastPushNotification({
       title: title || 'SPS Warehouse',
@@ -243,6 +298,9 @@ async function startServer() {
 
   // API 4: Trigger Web Push from application actions
   app.post('/api/push/send', async (req, res) => {
+    if (!isVapidConfigured) {
+      return res.status(503).json({ error: VAPID_CONFIG_ERROR });
+    }
     const { title, body, tag, data } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
 
@@ -263,6 +321,53 @@ async function startServer() {
       time: new Date().toISOString(),
       subscriptionsCount: subscriptions.length,
     });
+  });
+
+  // Budgeting passcode status, first-run claim, and server-side verification
+  app.get('/api/budgeting/status', (_req, res) => {
+    const mode = ENV_BUDGETING_PASSCODE
+      ? 'env'
+      : claimedBudgetingHash
+      ? 'claimed'
+      : 'unclaimed';
+    res.json({ mode });
+  });
+
+  app.post('/api/budgeting/claim', async (req, res) => {
+    if (ENV_BUDGETING_PASSCODE || claimedBudgetingHash) {
+      return res.status(409).json({ error: 'Budgeting passcode is already configured.' });
+    }
+    const raw = typeof req.body?.passcode === 'string' ? req.body.passcode.trim() : '';
+    if (raw.length < 4) {
+      return res.status(400).json({ error: 'Passcode must be at least 4 characters.' });
+    }
+    try {
+      claimedBudgetingHash = await hashPasscodeScrypt(raw);
+      return res.json({ unlocked: true });
+    } catch {
+      return res.status(500).json({ error: 'Failed to store budgeting passcode.' });
+    }
+  });
+
+  app.post('/api/budgeting/verify', async (req, res) => {
+    const raw = typeof req.body?.passcode === 'string' ? req.body.passcode.trim() : '';
+    if (!raw) {
+      return res.status(400).json({ error: 'Please enter the budgeting passcode.' });
+    }
+    if (ENV_BUDGETING_PASSCODE) {
+      if (!verifyEnvPasscode(raw, ENV_BUDGETING_PASSCODE)) {
+        return res.status(401).json({ error: 'Incorrect budgeting passcode. Please try again.' });
+      }
+      return res.json({ unlocked: true });
+    }
+    if (!claimedBudgetingHash) {
+      return res.status(409).json({ error: 'Budgeting passcode has not been set up yet.' });
+    }
+    const isMatch = await verifyPasscodeScrypt(raw, claimedBudgetingHash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Incorrect budgeting passcode. Please try again.' });
+    }
+    return res.json({ unlocked: true });
   });
 
   // Mount Vite development middlewares or production static files
