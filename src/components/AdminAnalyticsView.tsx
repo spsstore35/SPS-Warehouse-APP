@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { Booking, Product, User } from '../types/inventory';
-import { isUserAdmin } from '../utils/security';
+import { canUserAccessView } from '../utils/security';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   BarChart3,
@@ -27,6 +27,7 @@ interface AdminAnalyticsViewProps {
   bookings: Booking[];
   products: Product[];
   currentUser: User;
+  users?: User[];
   onShowToast?: (message: string) => void;
 }
 
@@ -137,9 +138,10 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
   bookings,
   products,
   currentUser,
+  users = [],
   onShowToast,
 }) => {
-  const isAdmin = isUserAdmin(currentUser);
+  const hasAnalyticsAccess = canUserAccessView(currentUser, 'analytics', users);
 
   // Global Date Range & Branch Filters
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
@@ -165,15 +167,15 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
   const [aggToDate, setAggToDate] = useState<string>('');
 
   // Strict RBAC guard
-  if (!isAdmin) {
+  if (!hasAnalyticsAccess) {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-8 max-w-lg mx-auto my-8 text-center space-y-3">
         <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
           <ShieldAlert className="w-6 h-6" />
         </div>
-        <h2 className="text-lg font-bold text-slate-900">Admin Access Required</h2>
+        <h2 className="text-lg font-bold text-slate-900">Access Restricted</h2>
         <p className="text-xs text-slate-600 leading-relaxed">
-          The Admin Analytics &amp; Production Dashboard is restricted exclusively to Administrator accounts.
+          The Analytics &amp; Production Dashboard is restricted to Budgeting &amp; Liquidity Team members and Full-Access Administrators.
         </p>
       </div>
     );

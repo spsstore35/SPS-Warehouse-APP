@@ -9,13 +9,15 @@ import {
   ProductBudgetProfile,
   ProductionBatch,
   ScoutSeason,
+  TeamChangeRequest,
   User,
   VendorPriceEntry,
   ProductStageVendor,
 } from '../types/inventory';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
 import { getEffectiveProductOffer } from '../utils/offers';
-import { isUserLeader } from '../utils/security';
+import { isUserAdmin, isUserLeader } from '../utils/security';
+import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
   Wallet,
   TrendingUp,
@@ -58,6 +60,13 @@ interface BudgetingViewProps {
   onLock: () => void;
   onOpenCalendar?: () => void;
   currentUser: User;
+  users?: User[];
+  teamRequests?: TeamChangeRequest[];
+  onSubmitTeamRequest?: (
+    req: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>
+  ) => void;
+  onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
+  onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onSaveBudgetProfile: (profile: ProductBudgetProfile) => void;
   onAddExpense: (expense: BudgetExpenseEntry) => void;
   onDeleteExpense: (expenseId: string) => void;
@@ -264,6 +273,11 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
   onLock,
   onOpenCalendar,
   currentUser,
+  users = [],
+  teamRequests = [],
+  onSubmitTeamRequest,
+  onApproveTeamRequest,
+  onRejectTeamRequest,
   onSaveBudgetProfile,
   onAddExpense,
   onDeleteExpense,
@@ -271,11 +285,13 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
   onUpdateProductPrice,
   onShowToast,
 }) => {
+  const isAdmin = isUserAdmin(currentUser);
   const [activeTab, setActiveTab] = useState<BudgetingTab>('unit_pnl');
   const [searchQuery, setSearchQuery] = useState('');
   const [productFilter, setProductFilter] = useState<ProductBudgetFilter>('all');
   const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
   const [selectedScoutSeasonId, setSelectedScoutSeasonId] = useState<string>('all');
+  const [draftProfiles, setDraftProfiles] = useState<Record<string, ProductBudgetProfile>>({});
 
   // Inline Liquidity & Bolt Cost controls
   const [editingCashValue, setEditingCashValue] = useState<string>(
@@ -382,7 +398,7 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
     });
 
     const rows = activeProducts.map((product) => {
-      const profile = budgetProfiles[product.id];
+      const profile = draftProfiles[product.id] ?? budgetProfiles[product.id];
       const sourcingCost = sourcingSuggestedCostByProduct.get(product.id) || 0;
       const mfgCost = profile ? Number(profile.manufacturingCost || 0) : sourcingCost;
       const extraPrepCost = profile ? Number(profile.extraPrepCost || 0) : 0;
@@ -480,6 +496,7 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
     activeProducts,
     bookings,
     budgetProfiles,
+    draftProfiles,
     budgetExpenses,
     offers,
     sourcingSuggestedCostByProduct,
@@ -876,7 +893,7 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
     productId: string,
     patch: Partial<ProductBudgetProfile>
   ) => {
-    const existing = budgetProfiles[productId];
+    const existing = draftProfiles[productId] ?? budgetProfiles[productId];
     const row = productMetrics.rows.find((r) => r.product.id === productId);
     const next: ProductBudgetProfile = {
       productId,
@@ -889,6 +906,10 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
       ...patch,
       updatedAt: new Date().toISOString(),
     };
+    if (!isAdmin && onSubmitTeamRequest) {
+      setDraftProfiles((prev) => ({ ...prev, [productId]: next }));
+      return;
+    }
     onSaveBudgetProfile(next);
   };
 
@@ -896,12 +917,25 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
     e.preventDefault();
     const parsedCash = editingCashValue.trim() === '' ? undefined : Math.max(0, Number(editingCashValue) || 0);
     const parsedReserve = Math.max(0, Number(editingReserveValue) || 0);
-    onSaveSettings({
+    const nextSettings: BudgetSettings = {
       id: 'default',
       cashOnHand: parsedCash,
       reserveBuffer: parsedReserve,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'budgeting',
+        entityType: 'budget_settings',
+        actionType: 'update',
+        targetId: 'default',
+        title: 'Update Cash Liquidity & Reserve Buffer',
+        summary: `Cash Override: ${parsedCash !== undefined ? `${parsedCash} EGP` : 'Auto'} · Reserve: ${parsedReserve} EGP`,
+        payload: { settings: nextSettings },
+      });
+      return;
+    }
+    onSaveSettings(nextSettings);
     onShowToast?.('Store cash liquidity & safety buffer saved.');
   };
 
@@ -923,6 +957,22 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
       createdByName: currentUser.name,
       createdAt: new Date().toISOString(),
     };
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'budgeting',
+        entityType: 'budget_expense',
+        actionType: 'create',
+        targetId: entry.id,
+        title: `Add Expense: ${entry.title}`,
+        summary: `${entry.amount} EGP (${EXPENSE_CATEGORY_META[entry.category]?.short || entry.category}) on ${entry.expenseDate}`,
+        payload: { expense: entry },
+      });
+      setExpenseTitle('');
+      setExpenseAmount('');
+      setExpenseLinkedProductId('');
+      setExpenseNotes('');
+      return;
+    }
     onAddExpense(entry);
     setExpenseTitle('');
     setExpenseAmount('');
@@ -980,6 +1030,17 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
           </button>
         </div>
       </div>
+
+      {onApproveTeamRequest && onRejectTeamRequest && (
+        <TeamRequestsPanel
+          currentUser={currentUser}
+          users={users}
+          teamScopes={['budgeting']}
+          requests={teamRequests}
+          onApproveRequest={onApproveTeamRequest}
+          onRejectRequest={onRejectTeamRequest}
+        />
+      )}
 
       {/* Persistent Top Financial KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -1349,17 +1410,29 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
                           {row.suggestedSellPrice !== undefined && (
                             <button
                               type="button"
-                              onClick={() =>
-                                onUpdateProductPrice(
-                                  row.product.id,
-                                  Math.round(row.suggestedSellPrice!)
-                                )
-                              }
+                              onClick={() => {
+                                const newPrice = Math.round(row.suggestedSellPrice!);
+                                if (!isAdmin && onSubmitTeamRequest) {
+                                  onSubmitTeamRequest({
+                                    teamScope: 'budgeting',
+                                    entityType: 'budget_price',
+                                    actionType: 'update',
+                                    targetId: row.product.id,
+                                    title: `Update Catalog Price: ${row.product.name}`,
+                                    summary: `Change sell price from ${row.sellPrice} EGP to ${newPrice} EGP.`,
+                                    payload: { productId: row.product.id, newPrice },
+                                  });
+                                  return;
+                                }
+                                onUpdateProductPrice(row.product.id, newPrice);
+                              }}
                               className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-1.5"
                             >
                               <Check className="w-3.5 h-3.5" />
                               <span>
-                                Apply {Math.round(row.suggestedSellPrice)} EGP to Catalog Price
+                                {isAdmin
+                                  ? `Apply ${Math.round(row.suggestedSellPrice)} EGP to Catalog Price`
+                                  : `Request Catalog Price ${Math.round(row.suggestedSellPrice)} EGP`}
                               </span>
                             </button>
                           )}
@@ -1448,7 +1521,7 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
                               type="button"
                               onClick={() => {
                                 const subsidy = Math.abs(Math.round(row.hardshipNetPerUnit * 100) / 100);
-                                onAddExpense({
+                                const entry: BudgetExpenseEntry = {
                                   id: `exp_hardship_${Date.now()}`,
                                   title: `Hardship Subsidy — ${row.product.name}`,
                                   category: 'hardship_subsidy',
@@ -1458,14 +1531,70 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
                                   notes: `Hardship discount price ${row.hardshipPrice} EGP vs unit cost ${row.unitCost} EGP`,
                                   createdByName: currentUser.name,
                                   createdAt: new Date().toISOString(),
-                                });
+                                };
+                                if (!isAdmin && onSubmitTeamRequest) {
+                                  onSubmitTeamRequest({
+                                    teamScope: 'budgeting',
+                                    entityType: 'budget_expense',
+                                    actionType: 'create',
+                                    targetId: entry.id,
+                                    title: `Log Hardship Subsidy: ${row.product.name}`,
+                                    summary: `${subsidy} EGP expense on ${entry.expenseDate}`,
+                                    payload: { expense: entry },
+                                  });
+                                  return;
+                                }
+                                onAddExpense(entry);
                               }}
                               className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold"
                             >
-                              Log 1x Subsidy ({formatEgp(Math.abs(row.hardshipNetPerUnit))} EGP) to Expenses
+                              {isAdmin
+                                ? `Log 1x Subsidy (${formatEgp(Math.abs(row.hardshipNetPerUnit))} EGP) to Expenses`
+                                : `Request 1x Subsidy Expense (${formatEgp(Math.abs(row.hardshipNetPerUnit))} EGP)`}
                             </button>
                           )}
                         </div>
+                        {!isAdmin && onSubmitTeamRequest && draftProfiles[row.product.id] && (
+                          <div className="lg:col-span-3 flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraftProfiles((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[row.product.id];
+                                  return copy;
+                                })
+                              }
+                              className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-100 text-xs font-bold text-slate-700"
+                            >
+                              Discard Draft
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const draft = draftProfiles[row.product.id];
+                                if (!draft) return;
+                                onSubmitTeamRequest({
+                                  teamScope: 'budgeting',
+                                  entityType: 'budget_profile',
+                                  actionType: 'update',
+                                  targetId: row.product.id,
+                                  title: `Update Cost / Margin / Hardship: ${row.product.name}`,
+                                  summary: `Mfg: ${draft.manufacturingCost} EGP · Prep: ${draft.extraPrepCost} EGP${draft.targetMarginPercent !== undefined ? ` · Margin: ${draft.targetMarginPercent}%` : ''}`,
+                                  payload: { profile: draft },
+                                });
+                                setDraftProfiles((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[row.product.id];
+                                  return copy;
+                                });
+                              }}
+                              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
+                            >
+                              Submit Cost / Margin / Hardship Request
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1496,12 +1625,25 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
                   type="button"
                   onClick={() => {
                     setEditingCashValue('');
-                    onSaveSettings({
+                    const autoSettings: BudgetSettings = {
                       id: 'default',
                       cashOnHand: undefined,
                       reserveBuffer: Number(editingReserveValue) || 0,
                       updatedAt: new Date().toISOString(),
-                    });
+                    };
+                    if (!isAdmin && onSubmitTeamRequest) {
+                      onSubmitTeamRequest({
+                        teamScope: 'budgeting',
+                        entityType: 'budget_settings',
+                        actionType: 'update',
+                        targetId: 'default',
+                        title: 'Reset Cash Liquidity Override to Auto',
+                        summary: `Auto cash mode · Reserve: ${autoSettings.reserveBuffer} EGP`,
+                        payload: { settings: autoSettings },
+                      });
+                      return;
+                    }
+                    onSaveSettings(autoSettings);
                     onShowToast?.('Liquidity synced to live Collected Cash minus Expenses.');
                   }}
                   className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1"
@@ -2217,9 +2359,23 @@ const BudgetingDashboardInner: React.FC<BudgetingViewProps> = ({
                         </span>
                         <button
                           type="button"
-                          onClick={() => onDeleteExpense(exp.id)}
+                          onClick={() => {
+                            if (!isAdmin && onSubmitTeamRequest) {
+                              onSubmitTeamRequest({
+                                teamScope: 'budgeting',
+                                entityType: 'budget_expense',
+                                actionType: 'delete',
+                                targetId: exp.id,
+                                title: `Delete Expense: ${exp.title}`,
+                                summary: `${formatEgp(exp.amount)} EGP (${exp.expenseDate})`,
+                                payload: { expenseId: exp.id },
+                              });
+                              return;
+                            }
+                            onDeleteExpense(exp.id);
+                          }}
                           className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                          title="Delete expense"
+                          title={isAdmin ? 'Delete expense' : 'Request expense deletion'}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

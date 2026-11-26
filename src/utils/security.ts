@@ -2,7 +2,16 @@
  * Security, Role & Permission Utilities (Strict DB-backed State)
  */
 
-import type { Role, StoreTeamId, User } from '../types/inventory';
+import type { CalendarItem, Role, StoreTeamId, User } from '../types/inventory';
+
+export const VALID_STORE_TEAM_IDS: StoreTeamId[] = [
+  'purchases',
+  'troops',
+  'inventory',
+  'calendar',
+  'marketing',
+  'budgeting',
+];
 
 const SYNTHETIC_EMAIL_SUFFIX = '@noemail.sps.local';
 
@@ -240,20 +249,18 @@ export function getAllowedViewsForUser(user?: User | null, allUsers?: User[]): S
   const allowed = new Set<string>(['inventory']);
 
   if (teams.length === 0) {
-    if (isAdmin) {
-      return allowed;
+    if (!isAdmin) {
+      allowed.add('worker-requests');
     }
-    allowed.add('worker-requests');
-    allowed.add('audit-log');
     return allowed;
   }
 
   teams.forEach((team) => {
     switch (team) {
       case 'purchases':
-        allowed.add('sourcing');
         allowed.add('calendar');
         allowed.add('board');
+        allowed.add('sourcing');
         break;
       case 'troops':
         allowed.add('bookings');
@@ -261,30 +268,26 @@ export function getAllowedViewsForUser(user?: User | null, allUsers?: User[]): S
         allowed.add('board');
         break;
       case 'inventory':
-        allowed.add('inventory');
-        allowed.add('add-product');
-        allowed.add('audit-log');
         allowed.add('calendar');
         allowed.add('board');
-        allowed.add(isAdmin ? 'stock-approvals' : 'worker-requests');
+        allowed.add('stock-approvals');
+        allowed.add('add-product');
         break;
       case 'calendar':
         allowed.add('calendar');
         allowed.add('board');
         break;
       case 'marketing':
-        allowed.add('marketing');
-        allowed.add('add-product');
         allowed.add('calendar');
         allowed.add('board');
+        allowed.add('marketing');
         break;
       case 'budgeting':
-        allowed.add('budgeting');
+        allowed.add('bookings');
         allowed.add('calendar');
         allowed.add('board');
-        if (isAdmin) {
-          allowed.add('analytics');
-        }
+        allowed.add('analytics');
+        allowed.add('budgeting');
         break;
       default:
         break;
@@ -313,6 +316,69 @@ export function isUserMarketingMember(
 export function canEditProductMediaAndColors(user?: User | null): boolean {
   if (!user || isUserLeader(user)) return false;
   return isUserAdmin(user) || isUserMarketingMember(user);
+}
+
+export function getCalendarItemTeams(
+  item?: Pick<CalendarItem, 'team' | 'teams' | 'isAllTeams'> | null
+): { isAllTeams: boolean; teams: StoreTeamId[] } {
+  if (!item) return { isAllTeams: false, teams: [] };
+  if (item.isAllTeams || (item.team as unknown as string) === 'all') {
+    return { isAllTeams: true, teams: [] };
+  }
+  const list: StoreTeamId[] = [];
+  if (Array.isArray(item.teams)) {
+    item.teams.forEach((t) => {
+      if (VALID_STORE_TEAM_IDS.includes(t) && !list.includes(t)) {
+        list.push(t);
+      }
+    });
+  }
+  if (item.team && VALID_STORE_TEAM_IDS.includes(item.team) && !list.includes(item.team)) {
+    list.push(item.team);
+  }
+  return { isAllTeams: false, teams: list };
+}
+
+export function canUserSeeCalendarItem(
+  user: User | null | undefined,
+  item: Pick<CalendarItem, 'team' | 'teams' | 'isAllTeams' | 'createdById' | 'assignedToId'>,
+  allUsers?: User[]
+): boolean {
+  if (!user) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+
+  const { isAllTeams, teams } = getCalendarItemTeams(item);
+  if (isAllTeams) return true;
+
+  const myTeams = getUserAssignedTeams(user);
+  if (teams.length === 0) {
+    return (
+      myTeams.includes('calendar') ||
+      item.createdById === user.id ||
+      item.assignedToId === user.id
+    );
+  }
+
+  return teams.some((t) => myTeams.includes(t));
+}
+
+export function canUserEditBookings(
+  user?: User | null,
+  allUsers?: User[]
+): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  return getUserAssignedTeams(user).includes('budgeting');
+}
+
+export function canUserManageTeamScope(
+  user: User | null | undefined,
+  teamScope: StoreTeamId,
+  allUsers?: User[]
+): boolean {
+  if (!user || !isUserAdmin(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  return getUserAssignedTeams(user).includes(teamScope);
 }
 
 export function getRoleDisplayName(role?: Role | string): string {

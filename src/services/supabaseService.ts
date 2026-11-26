@@ -6,6 +6,7 @@ import {
   getPhoneSearchVariants,
   getPublicUserEmail,
   buildSyntheticNoEmail,
+  VALID_STORE_TEAM_IDS,
 } from '../utils/security';
 import {
   Product,
@@ -39,6 +40,7 @@ import {
   BudgetExpenseCategory,
   BudgetSettings,
   ScoutSeason,
+  TeamChangeRequest,
 } from '../types/inventory';
 
 export interface DbConnectionStatus {
@@ -1155,7 +1157,9 @@ export async function fetchAuditLogsFromDb(): Promise<AuditLogEntry[]> {
   if (error) throw error;
   if (!data || data.length === 0) return [];
 
-  return data.map(mapAuditLogRow);
+  return data
+    .filter((l: any) => String(l.action || '') !== 'team_change_request')
+    .map(mapAuditLogRow);
 }
 
 /**
@@ -1204,7 +1208,12 @@ export async function fetchActivitySnapshot(lookbackMinutes = 30): Promise<Activ
   ]);
 
   return {
-    recentLogs: logsRes.error || !logsRes.data ? [] : logsRes.data.map(mapAuditLogRow),
+    recentLogs:
+      logsRes.error || !logsRes.data
+        ? []
+        : logsRes.data
+            .filter((l: any) => String(l.action || '') !== 'team_change_request')
+            .map(mapAuditLogRow),
     pendingRequests,
     pendingAccounts,
     pendingBookingRequests,
@@ -1884,48 +1893,78 @@ export async function fetchCalendarEventsFromDb(): Promise<CalendarItem[] | null
     }
 
     if (!data) return [];
-    return data.map((row: any) => ({
-      id: String(row.id),
-      title: String(row.title || ''),
-      itemType: row.item_type === 'task' ? 'task' : 'event',
-      startDate: String(row.start_date),
-      endDate: String(row.end_date || row.start_date),
-      startTime: row.start_time || undefined,
-      endTime: row.end_time || undefined,
-      allDay: Boolean(row.all_day),
-      completed: Boolean(row.completed),
-      boardStatus:
-        row.board_status === 'upcoming' ||
-        row.board_status === 'in_progress' ||
-        row.board_status === 'done'
-          ? row.board_status
-          : row.completed
-          ? 'done'
-          : undefined,
-      team: row.team || undefined,
-      assignedToId: row.assigned_to_id || undefined,
-      assignedToName: row.assigned_to_name || undefined,
-      troopGroup: row.troop_group || undefined,
-      location: row.location || undefined,
-      notes: row.notes || undefined,
-      linkedBookingId: row.linked_booking_id || undefined,
-      linkedBatchId: row.linked_batch_id || undefined,
-      linkedOfferId: row.linked_offer_id || undefined,
-      workflowStage: row.workflow_stage || undefined,
-      createdById: String(row.created_by_id || ''),
-      createdByName: String(row.created_by_name || 'Staff'),
-      createdAt: String(row.created_at || new Date().toISOString()),
-      updatedAt: String(row.updated_at || new Date().toISOString()),
-    }));
+    return data.map((row: any) => {
+      const rawTeam = String(row.team || '').trim().toLowerCase();
+      const isAllTeams = rawTeam === 'all';
+      const parsedTeams: StoreTeamId[] = isAllTeams
+        ? []
+        : rawTeam
+            .split(',')
+            .map((s) => s.trim() as StoreTeamId)
+            .filter((s) => VALID_STORE_TEAM_IDS.includes(s));
+
+      return {
+        id: String(row.id),
+        title: String(row.title || ''),
+        itemType: row.item_type === 'task' ? 'task' : 'event',
+        startDate: String(row.start_date),
+        endDate: String(row.end_date || row.start_date),
+        startTime: row.start_time || undefined,
+        endTime: row.end_time || undefined,
+        allDay: Boolean(row.all_day),
+        completed: Boolean(row.completed),
+        boardStatus:
+          row.board_status === 'upcoming' ||
+          row.board_status === 'in_progress' ||
+          row.board_status === 'done'
+            ? row.board_status
+            : row.completed
+            ? 'done'
+            : undefined,
+        team: parsedTeams[0] || undefined,
+        teams: parsedTeams.length > 0 ? parsedTeams : undefined,
+        isAllTeams,
+        assignedToId: row.assigned_to_id || undefined,
+        assignedToName: row.assigned_to_name || undefined,
+        troopGroup: row.troop_group || undefined,
+        location: row.location || undefined,
+        notes: row.notes || undefined,
+        linkedBookingId: row.linked_booking_id || undefined,
+        linkedBatchId: row.linked_batch_id || undefined,
+        linkedOfferId: row.linked_offer_id || undefined,
+        workflowStage: row.workflow_stage || undefined,
+        createdById: String(row.created_by_id || ''),
+        createdByName: String(row.created_by_name || 'Staff'),
+        createdAt: String(row.created_at || new Date().toISOString()),
+        updatedAt: String(row.updated_at || new Date().toISOString()),
+      };
+    });
   } catch {
     return null;
   }
+}
+
+function serializeCalendarTeamColumn(item: CalendarItem): string | null {
+  if (item.isAllTeams || (item.team as unknown as string) === 'all') {
+    return 'all';
+  }
+  const clean = Array.isArray(item.teams)
+    ? item.teams.filter((t) => VALID_STORE_TEAM_IDS.includes(t))
+    : [];
+  if (clean.length > 0) {
+    return Array.from(new Set(clean)).join(',');
+  }
+  if (item.team && VALID_STORE_TEAM_IDS.includes(item.team)) {
+    return item.team;
+  }
+  return null;
 }
 
 export async function upsertCalendarEventToDb(
   item: CalendarItem
 ): Promise<{ ok: boolean; error?: string }> {
   try {
+    const serializedTeam = serializeCalendarTeamColumn(item);
     const basePayload = {
       id: item.id,
       title: item.title,
@@ -1947,7 +1986,7 @@ export async function upsertCalendarEventToDb(
 
     const withTeamPayload = {
       ...basePayload,
-      team: item.team || null,
+      team: serializedTeam,
       assigned_to_id: item.assignedToId || null,
       assigned_to_name: item.assignedToName || null,
     };
@@ -2502,5 +2541,146 @@ export async function upsertScoutSeasonToDb(season: ScoutSeason): Promise<void> 
 export async function deleteScoutSeasonFromDb(seasonId: string): Promise<void> {
   const { error } = await supabase.from('scout_seasons').delete().eq('id', seasonId);
   if (error) throw error;
+}
+
+/**
+ * TEAM CHANGE REQUESTS (Staff request -> Team Admin / Full Admin Approval)
+ * Uses public.team_change_requests when available, and gracefully falls back
+ * to public.stock_audit_logs (action = 'team_change_request') if migration
+ * hasn't been executed yet so requests persist immediately across sessions.
+ */
+function isMissingTableError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('team_change_requests') ||
+    msg.includes('could not find the table') ||
+    msg.includes('does not exist')
+  );
+}
+
+function mapTeamRequestRow(r: any): TeamChangeRequest {
+  return {
+    id: String(r.id),
+    teamScope: (r.team_scope || 'calendar') as StoreTeamId,
+    entityType: r.entity_type,
+    actionType: r.action_type || 'update',
+    title: String(r.title || ''),
+    summary: String(r.summary || ''),
+    payload: r.payload ?? {},
+    targetId: r.target_id || undefined,
+    status: (r.status || 'pending') as TeamChangeRequest['status'],
+    requestedById: String(r.requested_by_id || ''),
+    requestedByName: String(r.requested_by_name || 'Staff'),
+    requestedAt: String(r.requested_at || new Date().toISOString()),
+    reviewedById: r.reviewed_by_id || undefined,
+    reviewedByName: r.reviewed_by_name || undefined,
+    reviewedAt: r.reviewed_at || undefined,
+    adminNote: r.admin_note || undefined,
+  };
+}
+
+export async function fetchTeamRequestsFromDb(): Promise<TeamChangeRequest[]> {
+  try {
+    const { data, error } = await fetchAllRows('team_change_requests', {
+      orderColumn: 'requested_at',
+      ascending: false,
+    });
+    if (!error && Array.isArray(data)) {
+      return data.map(mapTeamRequestRow);
+    }
+    if (error && !isMissingTableError(error)) {
+      console.warn('team_change_requests fetch notice:', error.message);
+    }
+  } catch {
+    // Fall through to stock_audit_logs fallback
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('stock_audit_logs')
+      .select('*')
+      .eq('action', 'team_change_request')
+      .order('timestamp', { ascending: false })
+      .limit(500);
+    if (error || !data) return [];
+    const parsed: TeamChangeRequest[] = [];
+    data.forEach((row: any) => {
+      try {
+        const obj = typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
+        if (obj && obj.id && obj.entityType) {
+          parsed.push(obj as TeamChangeRequest);
+        }
+      } catch {
+        // Ignore malformed rows
+      }
+    });
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+export async function upsertTeamRequestToDb(
+  req: TeamChangeRequest
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { error } = await supabase.from('team_change_requests').upsert({
+      id: req.id,
+      team_scope: req.teamScope,
+      entity_type: req.entityType,
+      action_type: req.actionType,
+      title: req.title,
+      summary: req.summary,
+      payload: req.payload ?? {},
+      target_id: req.targetId || null,
+      status: req.status,
+      requested_by_id: req.requestedById,
+      requested_by_name: req.requestedByName,
+      requested_at: req.requestedAt,
+      reviewed_by_id: req.reviewedById || null,
+      reviewed_by_name: req.reviewedByName || null,
+      reviewed_at: req.reviewedAt || null,
+      admin_note: req.adminNote || null,
+    });
+
+    if (!error) return { ok: true };
+    if (!isMissingTableError(error)) {
+      return { ok: false, error: error.message };
+    }
+  } catch {
+    // Fall back to stock_audit_logs
+  }
+
+  try {
+    const { error: fallbackErr } = await supabase.from('stock_audit_logs').upsert({
+      id: req.id,
+      timestamp: req.requestedAt,
+      action: 'team_change_request',
+      actor_name: req.requestedByName,
+      actor_role: 'worker',
+      summary: req.summary,
+      details: JSON.stringify(req),
+    });
+    if (fallbackErr) {
+      return { ok: false, error: fallbackErr.message };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
+  }
+}
+
+export async function deleteTeamRequestFromDb(id: string): Promise<void> {
+  try {
+    const { error } = await supabase.from('team_change_requests').delete().eq('id', id);
+    if (!error) return;
+  } catch {
+    // Fallback
+  }
+  await supabase.from('stock_audit_logs').delete().eq('id', id).eq('action', 'team_change_request');
 }
 

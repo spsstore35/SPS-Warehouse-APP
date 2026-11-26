@@ -3,6 +3,7 @@ import { Category, User } from '../types/inventory';
 import { X, Plus, Trash2, FolderPlus, Layers, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { isUserAdmin } from '../utils/security';
 
 interface ManageCategoriesModalProps {
   categories: Category[];
@@ -19,6 +20,7 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
   onAddCategory,
   onDeleteCategory,
 }) => {
+  const isAdmin = isUserAdmin(currentUser);
   const [newCatName, setNewCatName] = useState('');
   const [newCatDescription, setNewCatDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -132,7 +134,7 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
               className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>{isSubmitting ? 'Adding...' : 'Create Category'}</span>
+              <span>{isSubmitting ? 'Submitting...' : isAdmin ? 'Create Category' : 'Request New Category'}</span>
             </button>
           </div>
         </form>
@@ -188,11 +190,15 @@ export const ManageCategoriesModal: React.FC<ManageCategoriesModalProps> = ({
       {/* Confirmation Modal with Red Yes button & No button */}
       <ConfirmDeleteModal
         isOpen={!!categoryToDelete}
-        title="Delete Category"
+        title={isAdmin ? 'Delete Category' : 'Request Category Deletion'}
         itemTitle={categoryToDelete?.name}
-        message={`Are you sure you want to delete category "${categoryToDelete?.name}"?`}
+        message={
+          isAdmin
+            ? `Are you sure you want to delete category "${categoryToDelete?.name}"?`
+            : `Submit a request to Admins to delete category "${categoryToDelete?.name}"?`
+        }
         details="All existing products currently linked to this category will automatically become 'Unassigned'. They will not be deleted."
-        confirmLabel="Yes, Delete"
+        confirmLabel={isAdmin ? 'Yes, Delete' : 'Submit Delete Request'}
         cancelLabel="No, Cancel"
         isDeleting={isDeletingCategory}
         onConfirm={handleConfirmDelete}

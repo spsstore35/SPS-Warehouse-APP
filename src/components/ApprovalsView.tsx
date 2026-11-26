@@ -32,7 +32,7 @@ import {
   Search,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
-import { isFullAccessAdmin, normalizePhoneNumber, normalizeRole, normalizeUsername } from '../utils/security';
+import { isFullAccessAdmin, isUserAdmin, normalizePhoneNumber, normalizeRole, normalizeUsername } from '../utils/security';
 
 interface ApprovalsViewProps {
   mode?: 'stock' | 'accounts' | 'both';
@@ -91,6 +91,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   onApproveProduct,
   onRejectProduct,
 }) => {
+  const isAdmin = isUserAdmin(currentUser);
   const effectiveInitialTab =
     mode === 'stock'
       ? initialTab === 'staff'
@@ -637,7 +638,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                         {isPending && (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-xs font-bold">
                             <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Awaiting Your Approval</span>
+                            <span>{isAdmin ? 'Awaiting Your Approval' : 'Awaiting Admin Approval'}</span>
                           </span>
                         )}
                         {isApproved && (
@@ -729,7 +730,7 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                           </div>
                         )}
 
-                        {isPending && (
+                        {isPending && isAdmin ? (
                           <div className="flex items-center gap-2">
                             {rejectingId === req.id ? (
                               <div className="w-full space-y-2">
@@ -775,7 +776,12 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                               </>
                             )}
                           </div>
-                        )}
+                        ) : isPending ? (
+                          <div className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Pending Team Admin / Full Admin Review</span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -1495,30 +1501,37 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex items-center gap-2 sm:self-center shrink-0">
-                      {onRejectProduct && (
-                        <button
-                          type="button"
-                          onClick={() => onRejectProduct(prod.id)}
-                          className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-700 font-bold text-xs border border-slate-200 hover:border-rose-300 transition-colors flex items-center justify-center gap-1.5 min-h-[40px]"
-                        >
-                          <X className="w-4 h-4 text-rose-600" />
-                          <span>Decline</span>
-                        </button>
-                      )}
+                    {/* Action Buttons (Admins approve/decline; Staff view pending status) */}
+                    {isAdmin ? (
+                      <div className="flex items-center gap-2 sm:self-center shrink-0">
+                        {onRejectProduct && (
+                          <button
+                            type="button"
+                            onClick={() => onRejectProduct(prod.id)}
+                            className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-700 font-bold text-xs border border-slate-200 hover:border-rose-300 transition-colors flex items-center justify-center gap-1.5 min-h-[40px]"
+                          >
+                            <X className="w-4 h-4 text-rose-600" />
+                            <span>Decline</span>
+                          </button>
+                        )}
 
-                      {onApproveProduct && (
-                        <button
-                          type="button"
-                          onClick={() => onApproveProduct(prod.id)}
-                          className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-sm transition-all flex items-center justify-center gap-1.5 min-h-[40px]"
-                        >
-                          <Check className="w-4 h-4 stroke-[3]" />
-                          <span>Approve & Publish to Catalog</span>
-                        </button>
-                      )}
-                    </div>
+                        {onApproveProduct && (
+                          <button
+                            type="button"
+                            onClick={() => onApproveProduct(prod.id)}
+                            className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-sm transition-all flex items-center justify-center gap-1.5 min-h-[40px]"
+                          >
+                            <Check className="w-4 h-4 stroke-[3]" />
+                            <span>Approve & Publish to Catalog</span>
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center gap-1.5 sm:self-center shrink-0">
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Submitted for Admin Approval</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Variant Stock Matrix Preview */}

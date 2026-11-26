@@ -4,9 +4,12 @@ import {
   MarketingOfferStatus,
   MarketingOfferType,
   Product,
+  TeamChangeRequest,
   User,
 } from '../types/inventory';
 import { getEffectiveProductOffer } from '../utils/offers';
+import { isUserAdmin } from '../utils/security';
+import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
   CalendarDays,
   Check,
@@ -26,7 +29,14 @@ interface MarketingOffersViewProps {
   products: Product[];
   offers: MarketingOffer[];
   currentUser: User;
+  users?: User[];
   canEditMedia?: boolean;
+  teamRequests?: TeamChangeRequest[];
+  onSubmitTeamRequest?: (
+    req: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>
+  ) => void;
+  onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
+  onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onSaveOffer: (offer: MarketingOffer, syncToCalendar: boolean) => void;
   onDeleteOffer: (offerId: string) => void;
   onEditProductMedia?: (product: Product) => void;
@@ -41,13 +51,19 @@ export const MarketingOffersView: React.FC<MarketingOffersViewProps> = ({
   products,
   offers,
   currentUser,
+  users = [],
   canEditMedia = true,
+  teamRequests = [],
+  onSubmitTeamRequest,
+  onApproveTeamRequest,
+  onRejectTeamRequest,
   onSaveOffer,
   onDeleteOffer,
   onEditProductMedia,
   onOpenCalendar,
   onShowToast,
 }) => {
+  const isAdmin = isUserAdmin(currentUser);
   const [activeTab, setActiveTab] = useState<MarketingTab>('products');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<OfferFilter>('all');
@@ -207,20 +223,44 @@ export const MarketingOffersView: React.FC<MarketingOffersViewProps> = ({
       updatedAt: nowIso,
     };
 
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'marketing',
+        entityType: 'marketing_offer',
+        actionType: editingOffer ? 'update' : 'create',
+        targetId: saved.id,
+        title: `${editingOffer ? 'Edit' : 'Launch'} Offer: ${saved.title}`,
+        summary: `${targetProduct.name} · ${saved.badgeText} (${saved.startDate} → ${saved.endDate})`,
+        payload: { offer: saved, syncToCalendar },
+      });
+      setIsModalOpen(false);
+      return;
+    }
+
     onSaveOffer(saved, syncToCalendar);
     setIsModalOpen(false);
   };
 
   const handleToggleOfferStatus = (offer: MarketingOffer) => {
     const nextStatus: MarketingOfferStatus = offer.status === 'active' ? 'paused' : 'active';
-    onSaveOffer(
-      {
-        ...offer,
-        status: nextStatus,
-        updatedAt: new Date().toISOString(),
-      },
-      true
-    );
+    const updatedOffer: MarketingOffer = {
+      ...offer,
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+    };
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'marketing',
+        entityType: 'marketing_offer',
+        actionType: 'update',
+        targetId: offer.id,
+        title: `${nextStatus === 'active' ? 'Activate' : 'Pause'} Offer: ${offer.title}`,
+        summary: `Request to change offer status to ${nextStatus.toUpperCase()}.`,
+        payload: { offer: updatedOffer, syncToCalendar: true },
+      });
+      return;
+    }
+    onSaveOffer(updatedOffer, true);
   };
 
   const previewBasePrice = targetProduct?.price || 0;
@@ -282,6 +322,17 @@ export const MarketingOffersView: React.FC<MarketingOffersViewProps> = ({
           )}
         </div>
       </div>
+
+      {onApproveTeamRequest && onRejectTeamRequest && (
+        <TeamRequestsPanel
+          currentUser={currentUser}
+          users={users}
+          teamScopes={['marketing']}
+          requests={teamRequests}
+          onApproveRequest={onApproveTeamRequest}
+          onRejectRequest={onRejectTeamRequest}
+        />
+      )}
 
       {/* KPI Filter Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -644,9 +695,23 @@ export const MarketingOffersView: React.FC<MarketingOffersViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onDeleteOffer(offer.id)}
+                        onClick={() => {
+                          if (!isAdmin && onSubmitTeamRequest) {
+                            onSubmitTeamRequest({
+                              teamScope: 'marketing',
+                              entityType: 'marketing_offer',
+                              actionType: 'delete',
+                              targetId: offer.id,
+                              title: `Delete Offer: ${offer.title}`,
+                              summary: `${prod?.name || offer.productId} (${offer.badgeText})`,
+                              payload: { offerId: offer.id },
+                            });
+                            return;
+                          }
+                          onDeleteOffer(offer.id);
+                        }}
                         className="p-2 min-h-[36px] rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
-                        title="Delete offer"
+                        title={isAdmin ? 'Delete offer' : 'Request offer deletion'}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -876,7 +941,15 @@ export const MarketingOffersView: React.FC<MarketingOffersViewProps> = ({
                   className="px-5 py-2.5 min-h-[42px] rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
-                  <span>{editingOffer ? 'Save Offer' : 'Launch Offer'}</span>
+                  <span>
+                    {isAdmin
+                      ? editingOffer
+                        ? 'Save Offer'
+                        : 'Launch Offer'
+                      : editingOffer
+                      ? 'Request Offer Update'
+                      : 'Submit Offer Request'}
+                  </span>
                 </button>
               </div>
             </form>

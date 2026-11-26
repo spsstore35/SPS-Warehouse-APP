@@ -5,6 +5,8 @@ import {
   ProductStageVendor,
   ProductWorkflow,
   ProductionBatch,
+  TeamChangeRequest,
+  User,
   Vendor,
   VendorBehaviorTag,
   VendorPriceEntry,
@@ -19,6 +21,8 @@ import {
   getVendorTagInfo,
   inferDefaultWorkflowType,
 } from '../utils/sourcing';
+import { isUserAdmin } from '../utils/security';
+import { TeamRequestsPanel } from './TeamRequestsPanel';
 import { GlobalVendorModal, StartBatchModal, CompleteStockInModal } from './SourcingModals';
 import {
   ArrowLeft,
@@ -51,6 +55,14 @@ interface SourcingOperationsViewProps {
   stageVendors: ProductStageVendor[];
   priceHistory: VendorPriceEntry[];
   batches: ProductionBatch[];
+  currentUser: User;
+  users?: User[];
+  teamRequests?: TeamChangeRequest[];
+  onSubmitTeamRequest?: (
+    req: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>
+  ) => void;
+  onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
+  onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onSaveVendor: (vendor: Vendor) => void;
   onDeleteVendor: (vendorId: string) => void;
   onSaveWorkflow: (workflow: ProductWorkflow) => void;
@@ -77,6 +89,12 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   stageVendors,
   priceHistory,
   batches,
+  currentUser,
+  users = [],
+  teamRequests = [],
+  onSubmitTeamRequest,
+  onApproveTeamRequest,
+  onRejectTeamRequest,
   onSaveVendor,
   onDeleteVendor,
   onSaveWorkflow,
@@ -88,8 +106,10 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onCompleteBatchStockIn,
   onShowToast,
 }) => {
+  const isAdmin = isUserAdmin(currentUser);
   const [topTab, setTopTab] = useState<TopTab>('catalog');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [stageDrafts, setStageDrafts] = useState<Record<string, { approxOrderQty: string; orderScriptNotes: string }>>({});
 
   // Catalog Grid Filters
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -209,6 +229,18 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       activeStages: [...DEFAULT_STAGE_KEYS[nextType]],
       updatedAt: new Date().toISOString(),
     };
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'purchases',
+        entityType: 'sourcing_workflow',
+        actionType: 'update',
+        targetId: updated.id,
+        title: `Switch Workflow: ${product.name}`,
+        summary: `Change pipeline to ${nextType === 'manufactured' ? 'Manufactured' : 'Ready-Made'}.`,
+        payload: { workflow: updated },
+      });
+      return;
+    }
     onSaveWorkflow(updated);
     onShowToast?.(
       `Switched "${product.name}" to ${nextType === 'manufactured' ? 'Manufactured' : 'Ready-Made'} pipeline.`
@@ -232,11 +264,24 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         (a, b) => orderRef.indexOf(a) - orderRef.indexOf(b)
       );
     }
-    onSaveWorkflow({
+    const updatedWf: ProductWorkflow = {
       ...wf,
       activeStages: nextStages,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'purchases',
+        entityType: 'sourcing_workflow',
+        actionType: 'update',
+        targetId: updatedWf.id,
+        title: `Customize Pipeline Stages: ${product.name}`,
+        summary: `${exists ? 'Remove' : 'Add'} stage "${getStageMeta(stageKey).shortLabel}".`,
+        payload: { workflow: updatedWf },
+      });
+      return;
+    }
+    onSaveWorkflow(updatedWf);
   };
 
   const handleLinkVendorToStage = (
@@ -261,12 +306,41 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       approxOrderQty: '',
       orderScriptNotes: '',
     };
+    if (!isAdmin && onSubmitTeamRequest) {
+      const prodName = products.find((p) => p.id === productId)?.name || productId;
+      const vendorName = vendors.find((v) => v.id === vendorId)?.name || vendorId;
+      onSubmitTeamRequest({
+        teamScope: 'purchases',
+        entityType: 'sourcing_stage_vendor',
+        actionType: 'create',
+        targetId: newLink.id,
+        title: `Link Vendor: ${vendorName}`,
+        summary: `Link ${vendorName} to ${getStageMeta(stageKey).shortLabel} for "${prodName}".`,
+        payload: { link: newLink },
+      });
+      setLinkVendorId('');
+      return;
+    }
     onSaveStageVendor(newLink);
     setLinkVendorId('');
     onShowToast?.('Vendor linked to stage.');
   };
 
   const handleSetPrimaryStageVendor = (targetLink: ProductStageVendor) => {
+    if (!isAdmin && onSubmitTeamRequest) {
+      const prodName = products.find((p) => p.id === targetLink.productId)?.name || targetLink.productId;
+      const vendorName = vendors.find((v) => v.id === targetLink.vendorId)?.name || targetLink.vendorId;
+      onSubmitTeamRequest({
+        teamScope: 'purchases',
+        entityType: 'sourcing_stage_vendor',
+        actionType: 'update',
+        targetId: targetLink.id,
+        title: `Set Primary Vendor: ${vendorName}`,
+        summary: `Make ${vendorName} primary on ${getStageMeta(targetLink.stageKey).shortLabel} for "${prodName}".`,
+        payload: { link: { ...targetLink, isPrimary: true }, setPrimary: true },
+      });
+      return;
+    }
     const siblings = stageVendors.filter(
       (psv) =>
         psv.productId === targetLink.productId && psv.stageKey === targetLink.stageKey
@@ -284,10 +358,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     if (currentIndex === -1 || currentIndex >= activeStages.length - 1) return;
     const nextStageKey = activeStages[currentIndex + 1];
     const nextStageMeta = getStageMeta(nextStageKey);
-    onSaveBatch({
+    const updatedBatch: ProductionBatch = {
       ...batch,
       currentStageKey: nextStageKey,
-    });
+    };
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'purchases',
+        entityType: 'sourcing_batch',
+        actionType: 'update',
+        targetId: batch.id,
+        title: `Advance Batch ${batch.batchCode}`,
+        summary: `Move ${batch.batchCode} (${batch.quantity} pcs) to ${nextStageMeta.shortLabel}.`,
+        payload: { batch: updatedBatch },
+      });
+      return;
+    }
+    onSaveBatch(updatedBatch);
     onShowToast?.(`${batch.batchCode} moved to ${nextStageMeta.shortLabel}.`);
   };
 
@@ -334,6 +421,17 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {onApproveTeamRequest && onRejectTeamRequest && (
+        <TeamRequestsPanel
+          currentUser={currentUser}
+          users={users}
+          teamScopes={['purchases']}
+          requests={teamRequests}
+          onApproveRequest={onApproveTeamRequest}
+          onRejectRequest={onRejectTeamRequest}
+        />
+      )}
 
       {/* VIEW 1: CATALOG OPERATIONS */}
       {topTab === 'catalog' && !selectedProduct && (
@@ -934,9 +1032,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               )}
                               <button
                                 type="button"
-                                onClick={() => onDeleteBatch(batch.id)}
+                                onClick={() => {
+                                  if (!isAdmin && onSubmitTeamRequest) {
+                                    onSubmitTeamRequest({
+                                      teamScope: 'purchases',
+                                      entityType: 'sourcing_batch',
+                                      actionType: 'delete',
+                                      targetId: batch.id,
+                                      title: `Delete Batch ${batch.batchCode}`,
+                                      summary: `${selectedProduct.name} · ${batch.quantity} pcs`,
+                                      payload: { batchId: batch.id },
+                                    });
+                                    return;
+                                  }
+                                  onDeleteBatch(batch.id);
+                                }}
                                 className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                                title="Delete batch"
+                                title={isAdmin ? 'Delete batch' : 'Request batch deletion'}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1222,9 +1334,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => onDeleteStageVendor(psv.id)}
+                                          onClick={() => {
+                                            if (!isAdmin && onSubmitTeamRequest) {
+                                              onSubmitTeamRequest({
+                                                teamScope: 'purchases',
+                                                entityType: 'sourcing_stage_vendor',
+                                                actionType: 'delete',
+                                                targetId: psv.id,
+                                                title: `Unlink Vendor: ${vendor.name}`,
+                                                summary: `Remove ${vendor.name} from ${stageMeta.shortLabel} (${selectedProduct.name}).`,
+                                                payload: { linkId: psv.id },
+                                              });
+                                              return;
+                                            }
+                                            onDeleteStageVendor(psv.id);
+                                          }}
                                           className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                                          title="Unlink vendor from stage"
+                                          title={isAdmin ? 'Unlink vendor from stage' : 'Request unlink vendor'}
                                         >
                                           <Trash2 className="w-3.5 h-3.5" />
                                         </button>
@@ -1249,42 +1375,105 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                     )}
 
                                     {/* Stage-Specific Approx Qty & Ordering Script */}
-                                    <div className="grid grid-cols-1 gap-2.5 pt-2 border-t border-slate-100">
-                                      <div>
-                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                                          Approx. Order Quantity
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={psv.approxOrderQty}
-                                          onChange={(e) =>
-                                            onSaveStageVendor({
-                                              ...psv,
-                                              approxOrderQty: e.target.value,
-                                            })
-                                          }
-                                          placeholder='e.g. "50 meters" or "30 pieces"'
-                                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900"
-                                        />
-                                      </div>
-                                      <div>
-                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                                          Ordering Script / Instructions (&ldquo;What I tell him when ordering&rdquo;)
-                                        </label>
-                                        <textarea
-                                          rows={2}
-                                          value={psv.orderScriptNotes}
-                                          onChange={(e) =>
-                                            onSaveStageVendor({
-                                              ...psv,
-                                              orderScriptNotes: e.target.value,
-                                            })
-                                          }
-                                          placeholder="Exact GSM, colors, stitching pattern, collar specs..."
-                                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900 resize-none"
-                                        />
-                                      </div>
-                                    </div>
+                                    {(() => {
+                                      const draft = stageDrafts[psv.id];
+                                      const qtyVal = draft ? draft.approxOrderQty : psv.approxOrderQty;
+                                      const scriptVal = draft ? draft.orderScriptNotes : psv.orderScriptNotes;
+                                      const hasDraftChanges =
+                                        Boolean(draft) &&
+                                        (draft.approxOrderQty !== psv.approxOrderQty ||
+                                          draft.orderScriptNotes !== psv.orderScriptNotes);
+                                      return (
+                                        <div className="grid grid-cols-1 gap-2.5 pt-2 border-t border-slate-100">
+                                          <div>
+                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                              Approx. Order Quantity
+                                            </label>
+                                            <input
+                                              type="text"
+                                              value={qtyVal}
+                                              onChange={(e) => {
+                                                const nextVal = e.target.value;
+                                                if (!isAdmin && onSubmitTeamRequest) {
+                                                  setStageDrafts((prev) => ({
+                                                    ...prev,
+                                                    [psv.id]: {
+                                                      approxOrderQty: nextVal,
+                                                      orderScriptNotes: scriptVal,
+                                                    },
+                                                  }));
+                                                  return;
+                                                }
+                                                onSaveStageVendor({
+                                                  ...psv,
+                                                  approxOrderQty: nextVal,
+                                                });
+                                              }}
+                                              placeholder='e.g. "50 meters" or "30 pieces"'
+                                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                              Ordering Script / Instructions (&ldquo;What I tell him when ordering&rdquo;)
+                                            </label>
+                                            <textarea
+                                              rows={2}
+                                              value={scriptVal}
+                                              onChange={(e) => {
+                                                const nextVal = e.target.value;
+                                                if (!isAdmin && onSubmitTeamRequest) {
+                                                  setStageDrafts((prev) => ({
+                                                    ...prev,
+                                                    [psv.id]: {
+                                                      approxOrderQty: qtyVal,
+                                                      orderScriptNotes: nextVal,
+                                                    },
+                                                  }));
+                                                  return;
+                                                }
+                                                onSaveStageVendor({
+                                                  ...psv,
+                                                  orderScriptNotes: nextVal,
+                                                });
+                                              }}
+                                              placeholder="Exact GSM, colors, stitching pattern, collar specs..."
+                                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900 resize-none"
+                                            />
+                                          </div>
+                                          {!isAdmin && onSubmitTeamRequest && hasDraftChanges && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                onSubmitTeamRequest({
+                                                  teamScope: 'purchases',
+                                                  entityType: 'sourcing_stage_vendor',
+                                                  actionType: 'update',
+                                                  targetId: psv.id,
+                                                  title: `Update Ordering Script: ${vendor.name}`,
+                                                  summary: `${selectedProduct.name} (${stageMeta.shortLabel}) · Qty: "${qtyVal || '—'}"`,
+                                                  payload: {
+                                                    link: {
+                                                      ...psv,
+                                                      approxOrderQty: qtyVal,
+                                                      orderScriptNotes: scriptVal,
+                                                    },
+                                                  },
+                                                });
+                                                setStageDrafts((prev) => {
+                                                  const copy = { ...prev };
+                                                  delete copy[psv.id];
+                                                  return copy;
+                                                });
+                                              }}
+                                              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold self-start"
+                                            >
+                                              Submit Qty / Script Update Request
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
 
                                     {/* Price History Mini-Ledger */}
                                     <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
@@ -1407,7 +1596,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                                   onShowToast?.('Enter a valid unit price.');
                                                   return;
                                                 }
-                                                onAddPriceEntry({
+                                                const priceEntry: VendorPriceEntry = {
                                                   id: `ph_${Date.now()}_${Math.random()
                                                     .toString(36)
                                                     .slice(2, 6)}`,
@@ -1418,7 +1607,21 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                                   unitPrice: num,
                                                   quantity: priceFormQty.trim() || '—',
                                                   notes: priceFormNotes.trim(),
-                                                });
+                                                };
+                                                if (!isAdmin && onSubmitTeamRequest) {
+                                                  onSubmitTeamRequest({
+                                                    teamScope: 'purchases',
+                                                    entityType: 'sourcing_price',
+                                                    actionType: 'create',
+                                                    targetId: priceEntry.id,
+                                                    title: `Log Vendor Price: ${vendor.name}`,
+                                                    summary: `${num} EGP/${stageMeta.defaultUnit} for ${selectedProduct.name} (${priceEntry.quantity})`,
+                                                    payload: { entry: priceEntry },
+                                                  });
+                                                  setAddingPriceForPsvId(null);
+                                                  return;
+                                                }
+                                                onAddPriceEntry(priceEntry);
                                                 setAddingPriceForPsvId(null);
                                                 setExpandedLedgers((prev) => ({
                                                   ...prev,
@@ -1498,9 +1701,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 setEditingBatch(null);
               }}
               onCreateBatch={(batch) => {
+                const wasEdit = Boolean(editingBatch);
+                if (!isAdmin && onSubmitTeamRequest) {
+                  onSubmitTeamRequest({
+                    teamScope: 'purchases',
+                    entityType: 'sourcing_batch',
+                    actionType: wasEdit ? 'update' : 'create',
+                    targetId: batch.id,
+                    title: `${wasEdit ? 'Update' : 'Start'} Batch ${batch.batchCode}`,
+                    summary: `${selectedProduct.name} · ${batch.quantity} pcs @ ${getStageMeta(batch.currentStageKey).shortLabel}`,
+                    payload: { batch },
+                  });
+                  setIsStartBatchOpen(false);
+                  setEditingBatch(null);
+                  return;
+                }
                 onSaveBatch(batch);
                 setIsStartBatchOpen(false);
-                const wasEdit = Boolean(editingBatch);
                 setEditingBatch(null);
                 setBatchTab('active');
                 onShowToast?.(
@@ -1518,6 +1735,20 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               vendors={vendors}
               onClose={() => setStockInBatch(null)}
               onConfirm={(payload) => {
+                if (!isAdmin && onSubmitTeamRequest) {
+                  const targetBatch = batches.find((b) => b.id === payload.batchId);
+                  onSubmitTeamRequest({
+                    teamScope: 'purchases',
+                    entityType: 'sourcing_stock_in',
+                    actionType: 'update',
+                    targetId: payload.batchId,
+                    title: `Complete & Stock In: ${targetBatch?.batchCode || payload.batchId}`,
+                    summary: `${selectedProduct.name} · Final Gard Qty: ${payload.finalQuantity} pcs`,
+                    payload,
+                  });
+                  setStockInBatch(null);
+                  return;
+                }
                 onCompleteBatchStockIn(payload);
                 setStockInBatch(null);
               }}
@@ -1682,9 +1913,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => onDeleteVendor(vendor.id)}
+                            onClick={() => {
+                              if (!isAdmin && onSubmitTeamRequest) {
+                                onSubmitTeamRequest({
+                                  teamScope: 'purchases',
+                                  entityType: 'sourcing_vendor',
+                                  actionType: 'delete',
+                                  targetId: vendor.id,
+                                  title: `Delete Vendor: ${vendor.name}`,
+                                  summary: `Remove "${vendor.name}" from Master Vendor Directory.`,
+                                  payload: { vendorId: vendor.id },
+                                });
+                                return;
+                              }
+                              onDeleteVendor(vendor.id);
+                            }}
                             className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                            title="Delete vendor"
+                            title={isAdmin ? 'Delete vendor' : 'Request vendor deletion'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1772,6 +2017,25 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
           setLinkAfterCreateTarget(null);
         }}
         onSave={(savedVendor) => {
+          const isEdit = Boolean(editingVendor);
+          if (!isAdmin && onSubmitTeamRequest) {
+            onSubmitTeamRequest({
+              teamScope: 'purchases',
+              entityType: 'sourcing_vendor',
+              actionType: isEdit ? 'update' : 'create',
+              targetId: savedVendor.id,
+              title: `${isEdit ? 'Edit' : 'Add'} Vendor: ${savedVendor.name}`,
+              summary: `${savedVendor.contactPerson || 'Vendor'}${savedVendor.location ? ` · ${savedVendor.location}` : ''}`,
+              payload: { vendor: savedVendor },
+            });
+            if (linkAfterCreateTarget) {
+              onShowToast?.('Vendor creation requested — link to stage once Admin approves.');
+            }
+            setIsVendorModalOpen(false);
+            setEditingVendor(null);
+            setLinkAfterCreateTarget(null);
+            return;
+          }
           onSaveVendor(savedVendor);
           if (linkAfterCreateTarget) {
             handleLinkVendorToStage(

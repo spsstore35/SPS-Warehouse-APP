@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   BoardColumnStatus,
   Booking,
@@ -6,11 +6,21 @@ import {
   CalendarItemType,
   Fare2LeaderAssignment,
   StoreTeamId,
+  TeamChangeRequest,
   User,
 } from '../types/inventory';
 import { STORE_TEAMS, StoreTeamMeta } from './CalendarView';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
-import { isFullAccessAdmin, isUserAdmin, normalizeRole } from '../utils/security';
+import {
+  canUserSeeCalendarItem,
+  getCalendarItemTeams,
+  getUserAssignedTeams,
+  isFullAccessAdmin,
+  isUserAdmin,
+  normalizeRole,
+  VALID_STORE_TEAM_IDS,
+} from '../utils/security';
+import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
   Kanban,
   Users,
@@ -35,6 +45,9 @@ import {
   Factory,
   Megaphone,
   CheckCircle2,
+  Crown,
+  Layers,
+  Check,
 } from 'lucide-react';
 
 interface TeamBoardViewProps {
@@ -43,6 +56,7 @@ interface TeamBoardViewProps {
   bookings?: Booking[];
   fare2Leaders?: Record<string, Fare2LeaderAssignment>;
   currentUser: User;
+  teamRequests?: TeamChangeRequest[];
   onSaveItem: (item: CalendarItem) => void;
   onDeleteItem: (id: string) => void;
   onMoveItemStatus: (id: string, nextStatus: BoardColumnStatus) => void;
@@ -51,6 +65,11 @@ interface TeamBoardViewProps {
   onOpenBooking?: (bookingId: string) => void;
   onOpenSourcing?: () => void;
   onOpenMarketing?: () => void;
+  onSubmitTeamRequest?: (
+    req: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>
+  ) => void;
+  onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
+  onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -131,6 +150,19 @@ const formatDisplayTime = (timeStr?: string): string => {
 const getTeamMeta = (teamId?: StoreTeamId): StoreTeamMeta | null =>
   STORE_TEAMS.find((t) => t.id === teamId) || null;
 
+const getItemTeamsDisplay = (item: CalendarItem) => {
+  const { isAllTeams, teams } = getCalendarItemTeams(item);
+  const teamMetas = teams
+    .map((id) => getTeamMeta(id))
+    .filter((t): t is StoreTeamMeta => Boolean(t));
+  return {
+    isAllTeams,
+    teams,
+    teamMetas,
+    primaryMeta: teamMetas[0] || null,
+  };
+};
+
 const getInitials = (name?: string): string => {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -160,10 +192,11 @@ const getAvatarColor = (seed: string, explicitColor?: string): string => {
 
 const buildIcsContent = (item: CalendarItem): string => {
   const uid = `${item.id}@sps-warehouse`;
-  const teamMeta = getTeamMeta(item.team);
+  const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
+  const teamsLabel = isAllTeams ? 'All Teams' : teamMetas.map((t) => t.label).join(', ');
   const descriptionLines = [
     item.itemType === 'task' ? 'Store Task' : 'Store Event',
-    teamMeta ? `Team: ${teamMeta.label}` : '',
+    teamsLabel ? `Team(s): ${teamsLabel}` : '',
     item.assignedToName ? `Assigned To: ${item.assignedToName}` : '',
     item.troopGroup ? `Scout Branch: ${item.troopGroup}` : '',
     item.notes || '',
@@ -240,6 +273,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   bookings = [],
   fare2Leaders = {},
   currentUser,
+  teamRequests = [],
   onSaveItem,
   onDeleteItem,
   onMoveItemStatus,
@@ -248,10 +282,25 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   onOpenBooking,
   onOpenSourcing,
   onOpenMarketing,
+  onSubmitTeamRequest,
+  onApproveTeamRequest,
+  onRejectTeamRequest,
   onShowToast,
 }) => {
   const todayKey = useMemo(() => toDateKey(new Date()), []);
   const isAdmin = isUserAdmin(currentUser);
+  const fullAccessAdmin = isFullAccessAdmin(currentUser, users);
+  const myTeams = useMemo(() => getUserAssignedTeams(currentUser), [currentUser]);
+
+  const scopedItems = useMemo(
+    () => items.filter((it) => canUserSeeCalendarItem(currentUser, it, users)),
+    [items, currentUser, users]
+  );
+
+  const visibleStoreTeams = useMemo(
+    () => (fullAccessAdmin ? STORE_TEAMS : STORE_TEAMS.filter((t) => myTeams.includes(t.id))),
+    [fullAccessAdmin, myTeams]
+  );
 
   // Top Workspace Tabs: 'board' vs 'people'
   const [activeTab, setActiveTab] = useState<'board' | 'people'>('board');
@@ -337,7 +386,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   const [formAllDay, setFormAllDay] = useState(false);
   const [formStartTime, setFormStartTime] = useState('10:00');
   const [formEndTime, setFormEndTime] = useState('12:00');
-  const [formTeam, setFormTeam] = useState<StoreTeamId | ''>('purchases');
+  const [formTeams, setFormTeams] = useState<StoreTeamId[]>(['purchases']);
+  const [formIsAllTeams, setFormIsAllTeams] = useState(false);
   const [formAssignedToId, setFormAssignedToId] = useState('');
   const [formAssignedToName, setFormAssignedToName] = useState('');
   const [formTroop, setFormTroop] = useState('');
@@ -365,12 +415,15 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     return 'upcoming';
   };
 
-  // Filtered board items
+  // Filtered board items (from team-scoped items)
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return items
+    return scopedItems
       .filter((item) => {
-        if (filterTeam !== 'all' && item.team !== filterTeam) return false;
+        if (filterTeam !== 'all') {
+          const { isAllTeams, teams } = getCalendarItemTeams(item);
+          if (!isAllTeams && !teams.includes(filterTeam)) return false;
+        }
         if (filterFare2 !== 'all') {
           if ((item.troopGroup || '').trim().toLowerCase() !== filterFare2.toLowerCase()) {
             return false;
@@ -382,7 +435,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
           if (itemAssignee !== filterMemberName.toLowerCase()) return false;
         }
         if (q) {
-          const teamMeta = getTeamMeta(item.team);
+          const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
           const fare2Meta = getScoutFare2Meta(item.troopGroup);
           const matchedAssignee = activeMembers.find(
             (u) =>
@@ -390,13 +443,16 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               (item.assignedToName &&
                 u.name.trim().toLowerCase() === item.assignedToName.trim().toLowerCase())
           );
-          const hay = `${item.title} ${item.itemType} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fare2Meta?.audience || ''} ${teamMeta?.label || ''} ${item.assignedToName || ''} ${matchedAssignee?.name || ''} ${matchedAssignee?.email || ''}`.toLowerCase();
+          const teamsText = isAllTeams
+            ? 'all teams'
+            : teamMetas.map((tm) => `${tm.label} ${tm.shortLabel}`).join(' ');
+          const hay = `${item.title} ${item.itemType} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fare2Meta?.audience || ''} ${teamsText} ${item.assignedToName || ''} ${matchedAssignee?.name || ''} ${matchedAssignee?.email || ''}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
       })
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
-  }, [items, filterTeam, filterFare2, filterType, filterMemberName, searchQuery, activeMembers]);
+  }, [scopedItems, filterTeam, filterFare2, filterType, filterMemberName, searchQuery, activeMembers]);
 
   const itemsByColumn = useMemo(() => {
     const grouped: Record<BoardColumnStatus, CalendarItem[]> = {
@@ -411,8 +467,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   }, [filteredItems, todayKey]);
 
   const detailItem = useMemo(
-    () => items.find((i) => i.id === detailItemId) || null,
-    [items, detailItemId]
+    () => scopedItems.find((i) => i.id === detailItemId) || null,
+    [scopedItems, detailItemId]
   );
 
   // Build effective teams per user (saved in Supabase profile OR inferred from assigned items/fare2 leaders)
@@ -428,7 +484,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       }
     });
     items.forEach((it) => {
-      if (!it.team) return;
+      const { teams } = getCalendarItemTeams(it);
+      if (teams.length === 0) return;
       const matched = activeMembers.find(
         (u) =>
           (it.assignedToId && u.id === it.assignedToId) ||
@@ -436,11 +493,36 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             u.name.trim().toLowerCase() === it.assignedToName.trim().toLowerCase())
       );
       if (matched) {
-        map.get(matched.id)?.add(it.team);
+        teams.forEach((tid) => map.get(matched.id)?.add(tid));
       }
     });
     return map;
   }, [activeMembers, fare2Leaders, items]);
+
+  // Visible people: Full-Access Admin sees everyone; Team-scoped users ONLY see members sharing >= 1 of their own teams
+  const visibleMembers = useMemo(() => {
+    if (fullAccessAdmin) return activeMembers;
+    if (myTeams.length === 0) return activeMembers.filter((u) => u.id === currentUser.id);
+    const mySet = new Set(myTeams);
+    return activeMembers.filter((u) => {
+      if (u.id === currentUser.id) return true;
+      const uTeams = effectiveUserTeams.get(u.id);
+      if (!uTeams || uTeams.size === 0) return false;
+      return Array.from(uTeams).some((tid) => mySet.has(tid));
+    });
+  }, [fullAccessAdmin, activeMembers, myTeams, currentUser.id, effectiveUserTeams]);
+
+  // Pin Team Admins first (golden cards), then alphabetical
+  const sortPinnedAdminsFirst = (list: User[]): User[] =>
+    [...list].sort((a, b) => {
+      const aAdmin = isUserAdmin(a) ? 1 : 0;
+      const bAdmin = isUserAdmin(b) ? 1 : 0;
+      if (aAdmin !== bAdmin) return bAdmin - aAdmin;
+      const aFull = isFullAccessAdmin(a, users) ? 1 : 0;
+      const bFull = isFullAccessAdmin(b, users) ? 1 : 0;
+      if (aFull !== bFull) return bFull - aFull;
+      return a.name.localeCompare(b.name);
+    });
 
   // Build effective Scout Fare2 assignments per user (saved in Supabase profile OR leader assignment)
   const effectiveUserFare2 = useMemo(() => {
@@ -627,6 +709,10 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     presetTeam?: StoreTeamId,
     presetAssignee?: User
   ) => {
+    const defaultTeam =
+      presetTeam ||
+      (filterTeam !== 'all' ? filterTeam : undefined) ||
+      (!fullAccessAdmin && myTeams.length > 0 ? myTeams[0] : 'purchases');
     setEditingItem(null);
     setFormTitle('');
     setFormType('task');
@@ -636,7 +722,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     setFormAllDay(false);
     setFormStartTime('10:00');
     setFormEndTime('12:00');
-    setFormTeam(presetTeam || (filterTeam !== 'all' ? filterTeam : 'purchases'));
+    setFormTeams([defaultTeam]);
+    setFormIsAllTeams(false);
     setFormAssignedToId(presetAssignee?.id || '');
     setFormAssignedToName(presetAssignee?.name || '');
     setFormTroop('');
@@ -664,6 +751,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
   const openEditCardModal = (item: CalendarItem) => {
     if (getItemColumn(item) === 'done') return;
+    const { isAllTeams, teams } = getCalendarItemTeams(item);
     setEditingItem(item);
     setFormTitle(item.title);
     setFormType(item.itemType);
@@ -673,7 +761,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     setFormAllDay(item.allDay);
     setFormStartTime(item.startTime || '10:00');
     setFormEndTime(item.endTime || '12:00');
-    setFormTeam(item.team || '');
+    setFormTeams(teams);
+    setFormIsAllTeams(isAllTeams);
     setFormAssignedToId(item.assignedToId || '');
     setFormAssignedToName(item.assignedToName || '');
     setFormTroop(item.troopGroup || '');
@@ -706,6 +795,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
           u.name.trim().toLowerCase() === formAssignedToName.trim().toLowerCase())
     );
 
+    const effectiveTeams = formIsAllTeams ? [] : Array.from(new Set(formTeams));
     const saved: CalendarItem = {
       id: editingItem ? editingItem.id : `cal_${Date.now()}`,
       title: formTitle.trim(),
@@ -717,7 +807,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       allDay: formAllDay,
       completed: formBoardStatus === 'done',
       boardStatus: formBoardStatus,
-      team: formTeam || undefined,
+      team: formIsAllTeams ? undefined : effectiveTeams[0] || undefined,
+      teams: formIsAllTeams ? undefined : effectiveTeams.length > 0 ? effectiveTeams : undefined,
+      isAllTeams: formIsAllTeams,
       assignedToId: matchedUser?.id || formAssignedToId || undefined,
       assignedToName: matchedUser?.name || formAssignedToName.trim() || undefined,
       troopGroup: formTroop || undefined,
@@ -728,6 +820,24 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       createdAt: editingItem ? editingItem.createdAt : nowIso,
       updatedAt: nowIso,
     };
+
+    if (!isAdmin && onSubmitTeamRequest) {
+      const teamLabel = formIsAllTeams
+        ? 'All Teams'
+        : effectiveTeams.map((id) => getTeamMeta(id)?.shortLabel || id).join(', ') || 'General';
+      onSubmitTeamRequest({
+        teamScope: effectiveTeams[0] || myTeams[0] || 'calendar',
+        entityType: 'calendar_item',
+        actionType: editingItem ? 'update' : 'create',
+        title: `${editingItem ? 'Edit' : 'Add'} Board Card: ${saved.title}`,
+        summary: `Column: ${saved.boardStatus} · Teams: ${teamLabel}${saved.assignedToName ? ` · Assigned: ${saved.assignedToName}` : ''}`,
+        payload: { item: saved },
+        targetId: saved.id,
+      });
+      setIsFormOpen(false);
+      onShowToast?.('Board card request submitted to Team Admin for approval.');
+      return;
+    }
 
     onSaveItem(saved);
     setIsFormOpen(false);
@@ -757,21 +867,21 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   const handleDropOnColumn = (targetCol: BoardColumnStatus) => {
     setDragOverCol(null);
     if (!draggedItemId) return;
-    const item = items.find((i) => i.id === draggedItemId);
+    const item = scopedItems.find((i) => i.id === draggedItemId);
     setDraggedItemId(null);
     if (!item) return;
     requestStageMove(item, targetCol);
   };
 
   const selectedMember = useMemo(
-    () => activeMembers.find((m) => m.id === selectedMemberId) || null,
-    [activeMembers, selectedMemberId]
+    () => visibleMembers.find((m) => m.id === selectedMemberId) || null,
+    [visibleMembers, selectedMemberId]
   );
 
   const selectedMemberEvents = useMemo(() => {
     if (!selectedMember) return { current: [] as CalendarItem[], past: [] as CalendarItem[] };
     const nameLower = selectedMember.name.trim().toLowerCase();
-    const assigned = items
+    const assigned = scopedItems
       .filter(
         (it) =>
           (it.assignedToId && it.assignedToId === selectedMember.id) ||
@@ -791,7 +901,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       }
     });
     return { current, past };
-  }, [selectedMember, items, todayKey]);
+  }, [selectedMember, scopedItems, todayKey]);
 
   // Helper to get per-user stats across events, tasks, and assigned bookings
   const getUserBookings = (user: User) => {
@@ -805,8 +915,11 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
   const getUserStats = (user: User, teamFilter?: StoreTeamId) => {
     const nameLower = user.name.trim().toLowerCase();
-    const userItems = items.filter((it) => {
-      if (teamFilter && it.team !== teamFilter) return false;
+    const userItems = scopedItems.filter((it) => {
+      if (teamFilter) {
+        const { isAllTeams, teams } = getCalendarItemTeams(it);
+        if (!isAllTeams && !teams.includes(teamFilter)) return false;
+      }
       return (
         (it.assignedToId && it.assignedToId === user.id) ||
         (it.assignedToName && it.assignedToName.trim().toLowerCase() === nameLower)
@@ -837,24 +950,24 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
   const unassignedAccounts = useMemo(
     () =>
-      activeMembers.filter(
+      visibleMembers.filter(
         (u) => !isFullAccessAdmin(u, users) && (effectiveUserTeams.get(u.id)?.size || 0) === 0
       ),
-    [activeMembers, effectiveUserTeams, users]
+    [visibleMembers, effectiveUserTeams, users]
   );
 
   const multiTeamAccounts = useMemo(
-    () => activeMembers.filter((u) => (effectiveUserTeams.get(u.id)?.size || 0) >= 2),
-    [activeMembers, effectiveUserTeams]
+    () => visibleMembers.filter((u) => (effectiveUserTeams.get(u.id)?.size || 0) >= 2),
+    [visibleMembers, effectiveUserTeams]
   );
 
   const idleAccounts = useMemo(
     () =>
-      activeMembers.filter((u) => {
+      visibleMembers.filter((u) => {
         const st = getUserStats(u);
         return st.activeCount === 0 && st.activeBookingsCount === 0;
       }),
-    [activeMembers, items, bookings, todayKey]
+    [visibleMembers, scopedItems, bookings, todayKey]
   );
 
   const doesMemberMatchPeopleFilter = (member: User): boolean => {
@@ -872,9 +985,10 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   };
 
   const doesItemMatchQuery = (item: CalendarItem, qLower: string): boolean => {
-    const tm = getTeamMeta(item.team);
+    const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
     const fm = getScoutFare2Meta(item.troopGroup);
-    const hay = `${item.title} ${item.itemType} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fm?.audience || ''} ${tm?.label || ''} ${item.assignedToName || ''}`.toLowerCase();
+    const teamsText = isAllTeams ? 'all teams' : teamMetas.map((tm) => `${tm.label} ${tm.shortLabel}`).join(' ');
+    const hay = `${item.title} ${item.itemType} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fm?.audience || ''} ${teamsText} ${item.assignedToName || ''}`.toLowerCase();
     return hay.includes(qLower);
   };
 
@@ -909,7 +1023,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       return true;
     }
     const memberNameLower = member.name.trim().toLowerCase();
-    return items.some((it) => {
+    return scopedItems.some((it) => {
       const isAssigned =
         (it.assignedToId && it.assignedToId === member.id) ||
         (it.assignedToName && it.assignedToName.trim().toLowerCase() === memberNameLower);
@@ -919,12 +1033,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
   const filteredPeople = useMemo(() => {
     const q = peopleSearch.trim().toLowerCase();
-    return activeMembers.filter((u) => {
+    const list = visibleMembers.filter((u) => {
       if (!doesMemberMatchPeopleFilter(u)) return false;
       if (!q) return true;
       return doesMemberMatchQuery(u, q);
     });
-  }, [activeMembers, peopleSearch, peopleFilter, effectiveUserTeams, effectiveUserFare2, items, bookings, todayKey]);
+    return sortPinnedAdminsFirst(list);
+  }, [visibleMembers, peopleSearch, peopleFilter, effectiveUserTeams, effectiveUserFare2, scopedItems, bookings, todayKey]);
 
   return (
     <div className="space-y-5">
@@ -940,7 +1055,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 Team Board &amp; People
               </h1>
               <p className="text-xs text-slate-500">
-                Synced directly with Calendar Events &amp; Tasks across all 6 Store Teams
+                {fullAccessAdmin
+                  ? 'Synced directly with Calendar Events & Tasks across all 6 Store Teams'
+                  : 'Scoped to your Store Team(s) and All-Teams shared tasks & events'}
               </p>
             </div>
 
@@ -958,7 +1075,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 <Kanban className="w-3.5 h-3.5 text-blue-600" />
                 <span>Board</span>
                 <span className="font-mono tabular-nums text-[11px] text-slate-500">
-                  ({items.length})
+                  ({scopedItems.length})
                 </span>
               </button>
               <button
@@ -973,7 +1090,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 <Users className="w-3.5 h-3.5 text-emerald-600" />
                 <span>People &amp; Teams</span>
                 <span className="font-mono tabular-nums text-[11px] text-slate-500">
-                  ({activeMembers.length})
+                  ({visibleMembers.length})
                 </span>
               </button>
             </div>
@@ -981,10 +1098,10 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
 
           {/* Right side: Member Avatar Stack + Add Card CTA */}
           <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3">
-            {activeTab === 'board' && activeMembers.length > 0 && (
+            {activeTab === 'board' && visibleMembers.length > 0 && (
               <div className="flex items-center gap-1.5">
                 <div className="flex items-center -space-x-2">
-                  {activeMembers.slice(0, 7).map((member) => {
+                  {sortPinnedAdminsFirst(visibleMembers).slice(0, 7).map((member) => {
                     const isSelected =
                       filterMemberName.toLowerCase() === member.name.trim().toLowerCase();
                     return (
@@ -998,6 +1115,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         className={`w-8 h-8 rounded-full text-white text-[11px] font-black flex items-center justify-center border-2 transition-transform hover:scale-110 hover:z-10 ${
                           isSelected
                             ? 'border-slate-900 ring-2 ring-blue-500 z-10 scale-110'
+                            : isUserAdmin(member)
+                            ? 'border-amber-400 ring-1 ring-amber-300'
                             : 'border-white'
                         }`}
                         style={{
@@ -1028,7 +1147,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               className="px-4 py-2.5 min-h-[42px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-colors"
             >
               <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>Add Card</span>
+              <span>{isAdmin ? 'Add Card' : 'Request Card'}</span>
             </button>
           </div>
         </div>
@@ -1097,7 +1216,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               </div>
             </div>
 
-            {/* 6 Color-Coded Team Filter Strip */}
+            {/* Team-Scoped Filter Strip */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
               <button
                 type="button"
@@ -1111,9 +1230,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                 }`}
               >
-                All Teams
+                {fullAccessAdmin ? 'All Teams' : 'My Team Board'}
               </button>
-              {STORE_TEAMS.map((team) => {
+              {visibleStoreTeams.map((team) => {
                 const isSelected = filterTeam === team.id;
                 const isScoutFera2Team = team.id === 'troops';
                 return (
@@ -1193,6 +1312,19 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
         )}
       </div>
 
+      {/* Staff Requests / Admin Approval Queue */}
+      {onApproveTeamRequest && onRejectTeamRequest && (
+        <TeamRequestsPanel
+          currentUser={currentUser}
+          users={users}
+          teamScopes={fullAccessAdmin ? VALID_STORE_TEAM_IDS : myTeams.length > 0 ? myTeams : ['calendar']}
+          requests={teamRequests}
+          onApproveRequest={onApproveTeamRequest}
+          onRejectRequest={onRejectTeamRequest}
+          title="Team Board Change Requests"
+        />
+      )}
+
       {/* ================================================================
           TAB 1: TRELLO / KANBAN BOARD (Upcoming | In Progress | Done)
       ================================================================ */}
@@ -1250,7 +1382,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     </div>
                   ) : (
                     colItems.map((item) => {
-                      const teamMeta = getTeamMeta(item.team);
+                      const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
                       const isOverdue = col.id !== 'done' && (item.endDate || item.startDate) < todayKey;
                       const matchedUser = activeMembers.find(
                         (u) =>
@@ -1281,12 +1413,20 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         >
                           {/* Top Colored Labels Row */}
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {teamMeta && (
-                              <span
-                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[teamMeta.id]}`}
-                              >
-                                {teamMeta.shortLabel}
+                            {isAllTeams ? (
+                              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-900 text-white inline-flex items-center gap-1">
+                                <Layers className="w-3 h-3" />
+                                <span>All Teams</span>
                               </span>
+                            ) : (
+                              teamMetas.map((tm) => (
+                                <span
+                                  key={tm.id}
+                                  className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${TEAM_SOLID_BADGE[tm.id]}`}
+                                >
+                                  {tm.shortLabel}
+                                </span>
+                              ))
                             )}
                             <span
                               className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${
@@ -1449,7 +1589,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    By Store Team (6 Teams)
+                    {fullAccessAdmin ? 'By Store Team (6 Teams)' : `My Store Team (${visibleStoreTeams.length})`}
                   </button>
                   <button
                     type="button"
@@ -1460,7 +1600,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    All People ({activeMembers.length})
+                    {fullAccessAdmin ? `All People (${visibleMembers.length})` : `Team Members (${visibleMembers.length})`}
                   </button>
                 </div>
               </div>
@@ -1487,7 +1627,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               </div>
             </div>
 
-            {/* Member Oversight Filter Pills: Multi-Team, Holding Nothing, No Team Assigned */}
+            {/* Member Oversight Filter Pills */}
             <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
@@ -1498,7 +1638,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                 }`}
               >
-                All Accounts ({activeMembers.length})
+                All Visible ({visibleMembers.length})
               </button>
               <button
                 type="button"
@@ -1587,21 +1727,24 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             </div>
           )}
 
-          {/* Sub-view A: Grouped by the 6 Store Teams */}
+          {/* Sub-view A: Grouped by Store Team (Scoped for non-Full Admin) */}
           {peopleSubView === 'by-team' && (() => {
             const q = peopleSearch.trim().toLowerCase();
-            const matchingTeams = STORE_TEAMS.filter((team) => {
+            const matchingTeams = visibleStoreTeams.filter((team) => {
               if (!q) return true;
               const teamMatches =
                 team.label.toLowerCase().includes(q) ||
                 team.shortLabel.toLowerCase().includes(q);
-              const membersInTeam = activeMembers.filter(
+              const membersInTeam = visibleMembers.filter(
                 (u) => effectiveUserTeams.get(u.id)?.has(team.id) && doesMemberMatchPeopleFilter(u)
               );
               const hasMatchingMember = membersInTeam.some((m) =>
                 doesMemberMatchQuery(m, q)
               );
-              const teamCards = items.filter((it) => it.team === team.id);
+              const teamCards = scopedItems.filter((it) => {
+                const { isAllTeams, teams } = getCalendarItemTeams(it);
+                return isAllTeams || teams.includes(team.id);
+              });
               const hasMatchingCard = teamCards.some((it) => doesItemMatchQuery(it, q));
               const hasMatchingFare2 =
                 team.id === 'troops' &&
@@ -1618,7 +1761,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             if (matchingTeams.length === 0) {
               return (
                 <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-sm text-slate-500">
-                  No teams, accounts, tasks, or events match "{peopleSearch}".
+                  {visibleStoreTeams.length === 0
+                    ? 'Your account is not assigned to a Store Team yet.'
+                    : `No teams, accounts, tasks, or events match "${peopleSearch}".`}
                 </div>
               );
             }
@@ -1626,22 +1771,27 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             return (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {matchingTeams.map((team) => {
-                  const allMembersInTeam = activeMembers.filter((u) =>
+                  const allMembersInTeam = visibleMembers.filter((u) =>
                     effectiveUserTeams.get(u.id)?.has(team.id)
                   );
                   const teamMatchesDirectly =
                     !q ||
                     team.label.toLowerCase().includes(q) ||
                     team.shortLabel.toLowerCase().includes(q);
-                  const membersInTeam = allMembersInTeam.filter((m) => {
-                    if (!doesMemberMatchPeopleFilter(m)) return false;
-                    if (q && !teamMatchesDirectly) return doesMemberMatchQuery(m, q);
-                    return true;
-                  });
-                  const unassignedToThisTeam = activeMembers.filter(
-                    (u) => !effectiveUserTeams.get(u.id)?.has(team.id)
+                  const membersInTeam = sortPinnedAdminsFirst(
+                    allMembersInTeam.filter((m) => {
+                      if (!doesMemberMatchPeopleFilter(m)) return false;
+                      if (q && !teamMatchesDirectly) return doesMemberMatchQuery(m, q);
+                      return true;
+                    })
                   );
-                  const teamCards = items.filter((it) => it.team === team.id);
+                  const unassignedToThisTeam = fullAccessAdmin
+                    ? activeMembers.filter((u) => !effectiveUserTeams.get(u.id)?.has(team.id))
+                    : [];
+                  const teamCards = scopedItems.filter((it) => {
+                    const { isAllTeams, teams } = getCalendarItemTeams(it);
+                    return isAllTeams || teams.includes(team.id);
+                  });
                   const matchingCards = q
                     ? teamCards.filter((it) => doesItemMatchQuery(it, q))
                     : [];
@@ -1711,7 +1861,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                           </div>
                         )}
 
-                        {/* Members List inside this Team */}
+                        {/* Members List inside this Team (Admin Pinned First with Golden Card) */}
                         {membersInTeam.length === 0 ? (
                           <div className="py-5 px-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 text-center text-xs text-slate-500">
                             {q || peopleFilter !== 'all'
@@ -1721,20 +1871,26 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         ) : (
                           <div className="space-y-2">
                             {membersInTeam.map((member) => {
+                              const isMemberAdmin = isUserAdmin(member);
+                              const isMemberFullAdmin = isFullAccessAdmin(member, users);
                               const stats = getUserStats(member, team.id);
                               const globalStats = getUserStats(member);
                               const isHoldingNothing =
                                 globalStats.activeCount === 0 && globalStats.activeBookingsCount === 0;
-                              const otherTeams = Array.from(
+                              const visibleOtherTeams = Array.from(
                                 effectiveUserTeams.get(member.id) || new Set<StoreTeamId>()
-                              ).filter((tid) => tid !== team.id);
+                              ).filter((tid) => tid !== team.id && (fullAccessAdmin || myTeams.includes(tid)));
                               const memberFare2List = Array.from(
                                 effectiveUserFare2.get(member.id) || new Set<string>()
                               );
                               return (
                                 <div
                                   key={member.id}
-                                  className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-blue-300 space-y-2 transition-colors"
+                                  className={
+                                    isMemberAdmin
+                                      ? 'p-2.5 rounded-xl bg-gradient-to-br from-amber-50 via-yellow-50/90 to-amber-100/80 border-2 border-amber-400 shadow-xs space-y-2 transition-colors'
+                                      : 'p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 hover:border-blue-300 space-y-2 transition-colors'
+                                  }
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <button
@@ -1744,12 +1900,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                       title={`Click to view ${member.name}'s teams, events, tasks & assigned orders`}
                                     >
                                       <span
-                                        className="w-8 h-8 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0"
+                                        className={`w-8 h-8 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0 ${
+                                          isMemberAdmin ? 'ring-2 ring-amber-400 shadow-xs' : ''
+                                        }`}
                                         style={{
-                                          backgroundColor: getAvatarColor(
-                                            member.name,
-                                            member.avatarColor
-                                          ),
+                                          backgroundColor: isMemberAdmin
+                                            ? '#b45309'
+                                            : getAvatarColor(member.name, member.avatarColor),
                                         }}
                                       >
                                         {getInitials(member.name)}
@@ -1759,13 +1916,19 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                           <span className="text-xs sm:text-sm font-bold text-slate-900 group-hover:text-blue-700 truncate transition-colors">
                                             {member.name}
                                           </span>
+                                          {isMemberAdmin && (
+                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-400 text-amber-950 text-[9px] font-black uppercase tracking-wide shadow-2xs">
+                                              <Crown className="w-2.5 h-2.5" />
+                                              {isMemberFullAdmin ? 'Full Admin' : 'Team Admin'}
+                                            </span>
+                                          )}
                                           {isHoldingNothing && (
                                             <span className="px-1.5 py-0.5 rounded bg-slate-200/80 text-slate-700 text-[9px] font-bold">
                                               0 Active
                                             </span>
                                           )}
                                         </div>
-                                        <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                        <div className="text-[11px] text-slate-600 font-mono tabular-nums">
                                           {stats.upcoming} upcoming · {stats.inProgress} active · {stats.done} done
                                         </div>
                                       </div>
@@ -1795,12 +1958,12 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                     </div>
                                   </div>
 
-                                  {otherTeams.length > 0 && (
+                                  {visibleOtherTeams.length > 0 && (
                                     <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-slate-200/60">
                                       <span className="text-[10px] font-bold text-slate-400">
                                         Also in:
                                       </span>
-                                      {otherTeams.map((otid) => {
+                                      {visibleOtherTeams.map((otid) => {
                                         const otm = getTeamMeta(otid);
                                         if (!otm) return null;
                                         return (
@@ -1966,7 +2129,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             );
           })()}
 
-          {/* Sub-view B: All People across Teams */}
+          {/* Sub-view B: People Directory (Scoped by Team, Admin Pinned First with Golden Card) */}
           {peopleSubView === 'all-people' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredPeople.length === 0 ? (
@@ -1975,7 +2138,12 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 </div>
               ) : (
                 filteredPeople.map((member) => {
-                  const userTeams = effectiveUserTeams.get(member.id) || new Set<StoreTeamId>();
+                  const isMemberAdmin = isUserAdmin(member);
+                  const isMemberFullAdmin = isFullAccessAdmin(member, users);
+                  const rawUserTeams = effectiveUserTeams.get(member.id) || new Set<StoreTeamId>();
+                  const userTeams = fullAccessAdmin
+                    ? rawUserTeams
+                    : new Set(Array.from(rawUserTeams).filter((tid) => myTeams.includes(tid)));
                   const userFare2List = effectiveUserFare2.get(member.id) || new Set<string>();
                   const stats = getUserStats(member);
                   const q = peopleSearch.trim().toLowerCase();
@@ -1986,7 +2154,11 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                   return (
                     <div
                       key={member.id}
-                      className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col justify-between gap-4"
+                      className={
+                        isMemberAdmin
+                          ? 'bg-gradient-to-br from-amber-50 via-yellow-50/90 to-amber-100/80 border-2 border-amber-400 rounded-2xl p-4 shadow-sm flex flex-col justify-between gap-4'
+                          : 'bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col justify-between gap-4'
+                      }
                     >
                       <div className="space-y-3">
                         <button
@@ -1997,12 +2169,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <span
-                              className="w-11 h-11 rounded-full text-white text-sm font-black flex items-center justify-center shrink-0"
+                              className={`w-11 h-11 rounded-full text-white text-sm font-black flex items-center justify-center shrink-0 ${
+                                isMemberAdmin ? 'ring-2 ring-amber-400 shadow-xs' : ''
+                              }`}
                               style={{
-                                backgroundColor: getAvatarColor(
-                                  member.name,
-                                  member.avatarColor
-                                ),
+                                backgroundColor: isMemberAdmin
+                                  ? '#b45309'
+                                  : getAvatarColor(member.name, member.avatarColor),
                               }}
                             >
                               {getInitials(member.name)}
@@ -2017,17 +2190,19 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
-                            {isFullAccessAdmin(member, users) ? (
-                              <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
-                                Full-Access Admin (All Pages)
+                            {isMemberFullAdmin ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-amber-950 text-[10px] font-black shadow-2xs">
+                                <Crown className="w-3 h-3" />
+                                Pinned · Full Admin
                               </span>
                             ) : normalizeRole(member.role) === 'admin' ? (
-                              <span className="px-2 py-0.5 rounded-md bg-orange-50 border border-orange-300 text-orange-900 text-[10px] font-bold">
-                                Admin (Team-Scoped)
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-amber-950 text-[10px] font-black shadow-2xs">
+                                <Crown className="w-3 h-3" />
+                                Pinned · Team Admin
                               </span>
                             ) : null}
                             {userTeams.size === 0 ? (
-                              !isFullAccessAdmin(member, users) && (
+                              !isMemberFullAdmin && (
                                 <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold">
                                   No Team Assigned
                                 </span>
@@ -2104,15 +2279,15 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                           </div>
                         )}
 
-                        {/* Assign / Toggle Team Membership (6 Teams) */}
+                        {/* Assign / Toggle Team Membership */}
                         <div className="space-y-1.5">
                           <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                            {isAdmin
+                            {fullAccessAdmin
                               ? 'Assigned Team from 6 Teams (tap to toggle)'
-                              : 'Assigned Store Teams (6 Teams)'}
+                              : 'Assigned Store Teams'}
                           </div>
                           <div className="flex flex-wrap gap-1.5">
-                            {isAdmin ? (
+                            {fullAccessAdmin ? (
                               STORE_TEAMS.map((team) => {
                                 const active = userTeams.has(team.id);
                                 return (
@@ -2146,15 +2321,17 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                                 No Store Teams assigned
                               </span>
                             ) : (
-                              STORE_TEAMS.filter((t) => userTeams.has(t.id)).map((team) => (
-                                <span
-                                  key={team.id}
-                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 ${team.chipClass}`}
-                                >
-                                  <span className={`w-2 h-2 rounded-full ${team.dotClass}`} />
-                                  <span>{team.shortLabel}</span>
-                                </span>
-                              ))
+                              visibleStoreTeams
+                                .filter((t) => userTeams.has(t.id))
+                                .map((team) => (
+                                  <span
+                                    key={team.id}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 ${team.chipClass}`}
+                                  >
+                                    <span className={`w-2 h-2 rounded-full ${team.dotClass}`} />
+                                    <span>{team.shortLabel}</span>
+                                  </span>
+                                ))
                             )}
                           </div>
                         </div>
@@ -2338,29 +2515,58 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 </div>
               </div>
 
-              {/* Store Team Selection */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Store Team
+              {/* Multi-Team & All Teams Selection */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700">
+                  Store Team(s) — select 1, multiple, or All Teams
                 </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFormIsAllTeams((prev) => {
+                      const next = !prev;
+                      if (next) setFormTeams([]);
+                      return next;
+                    });
+                  }}
+                  className={`w-full px-3 py-2 rounded-xl border text-xs font-black flex items-center justify-center gap-2 transition-colors ${
+                    formIsAllTeams
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>All Store Teams</span>
+                  {formIsAllTeams && <Check className="w-3.5 h-3.5" />}
+                </button>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {STORE_TEAMS.map((team) => {
-                    const active = formTeam === team.id;
+                    const active = !formIsAllTeams && formTeams.includes(team.id);
                     return (
                       <button
                         key={team.id}
                         type="button"
-                        onClick={() => setFormTeam(team.id)}
-                        className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors ${
+                        onClick={() => {
+                          setFormIsAllTeams(false);
+                          setFormTeams((prev) =>
+                            prev.includes(team.id)
+                              ? prev.filter((id) => id !== team.id)
+                              : [...prev, team.id]
+                          );
+                        }}
+                        className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-between gap-1.5 transition-colors ${
                           active ? team.activeButtonClass : team.chipClass
                         }`}
                       >
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${
-                            active ? 'bg-white' : team.dotClass
-                          }`}
-                        />
-                        <span className="truncate">{team.shortLabel}</span>
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              active ? 'bg-white' : team.dotClass
+                            }`}
+                          />
+                          <span className="truncate">{team.shortLabel}</span>
+                        </span>
+                        {active && <Check className="w-3.5 h-3.5 shrink-0" />}
                       </button>
                     );
                   })}
@@ -2378,13 +2584,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     onChange={(e) => {
                       const uid = e.target.value;
                       setFormAssignedToId(uid);
-                      const m = activeMembers.find((u) => u.id === uid);
+                      const m = visibleMembers.find((u) => u.id === uid);
                       if (m) setFormAssignedToName(m.name);
                     }}
                     className="w-full px-3 py-2.5 min-h-[44px] rounded-xl border border-slate-300 bg-white text-sm text-slate-900 focus:outline-none focus:border-blue-500"
                   >
                     <option value="">Select Member...</option>
-                    {activeMembers.map((u) => (
+                    {visibleMembers.map((u) => (
                       <option key={u.id} value={u.id}>
                         {u.name}
                       </option>
@@ -2539,7 +2745,13 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                   type="submit"
                   className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-bold"
                 >
-                  {editingItem ? 'Save Changes' : 'Add Card'}
+                  {isAdmin
+                    ? editingItem
+                      ? 'Save Changes'
+                      : 'Add Card'
+                    : editingItem
+                    ? 'Request Edit'
+                    : 'Request Card'}
                 </button>
               </div>
             </form>
@@ -2550,7 +2762,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
       {/* ================================================================
           MODAL: CARD DETAILS + STAGE SWITCH + MOBILE CALENDAR EXPORT
       ================================================================ */}
-      {detailItem && (
+      {detailItem && (() => {
+        const { isAllTeams: detailIsAll, teamMetas: detailTeams } = getItemTeamsDisplay(detailItem);
+        return (
         <div
           onClick={() => setDetailItemId(null)}
           className="fixed inset-0 z-50 bg-slate-950/65 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -2562,14 +2776,20 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-3">
               <div className="space-y-2 min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {getTeamMeta(detailItem.team) && (
-                    <span
-                      className={`px-2.5 py-0.5 rounded-md text-xs font-bold ${
-                        TEAM_SOLID_BADGE[getTeamMeta(detailItem.team)!.id]
-                      }`}
-                    >
-                      {getTeamMeta(detailItem.team)!.label}
+                  {detailIsAll ? (
+                    <span className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-slate-900 text-white inline-flex items-center gap-1">
+                      <Layers className="w-3 h-3" />
+                      <span>All Teams</span>
                     </span>
+                  ) : (
+                    detailTeams.map((tm) => (
+                      <span
+                        key={tm.id}
+                        className={`px-2.5 py-0.5 rounded-md text-xs font-bold ${TEAM_SOLID_BADGE[tm.id]}`}
+                      >
+                        {tm.label}
+                      </span>
+                    ))
                   )}
                   <span className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
                     {detailItem.itemType === 'task' ? 'Task' : 'Event'}
@@ -2808,7 +3028,8 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
             })()}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ================================================================
           MODAL: CONFIRM EDIT CARD
@@ -2885,6 +3106,22 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  if (!isAdmin && onSubmitTeamRequest) {
+                    const { teams } = getCalendarItemTeams(pendingDeleteItem);
+                    onSubmitTeamRequest({
+                      teamScope: teams[0] || myTeams[0] || 'calendar',
+                      entityType: 'calendar_item',
+                      actionType: 'delete',
+                      title: `Delete Board Card: ${pendingDeleteItem.title}`,
+                      summary: `Remove "${pendingDeleteItem.title}" (${pendingDeleteItem.startDate}) from Team Board & Calendar`,
+                      payload: { id: pendingDeleteItem.id, title: pendingDeleteItem.title },
+                      targetId: pendingDeleteItem.id,
+                    });
+                    setPendingDeleteItem(null);
+                    setDetailItemId(null);
+                    onShowToast?.('Delete card request submitted to Team Admin for approval.');
+                    return;
+                  }
                   const id = pendingDeleteItem.id;
                   setPendingDeleteItem(null);
                   setDetailItemId(null);
@@ -2892,7 +3129,7 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 }}
                 className="px-4 py-2.5 min-h-[42px] rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs sm:text-sm font-bold"
               >
-                Yes, Delete
+                {!isAdmin && onSubmitTeamRequest ? 'Request Delete' : 'Yes, Delete'}
               </button>
             </div>
           </div>
@@ -2953,6 +3190,27 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    if (!isAdmin && onSubmitTeamRequest) {
+                      const { teams } = getCalendarItemTeams(pendingStageMove.item);
+                      const updatedItem: CalendarItem = {
+                        ...pendingStageMove.item,
+                        boardStatus: pendingStageMove.nextStatus,
+                        completed: pendingStageMove.nextStatus === 'done',
+                        updatedAt: new Date().toISOString(),
+                      };
+                      onSubmitTeamRequest({
+                        teamScope: teams[0] || myTeams[0] || 'calendar',
+                        entityType: 'calendar_item',
+                        actionType: 'update',
+                        title: `Move Board Card to ${targetLabel}: ${pendingStageMove.item.title}`,
+                        summary: `Stage: ${currentLabel} → ${targetLabel}`,
+                        payload: { item: updatedItem },
+                        targetId: pendingStageMove.item.id,
+                      });
+                      setPendingStageMove(null);
+                      onShowToast?.('Stage move request submitted to Team Admin for approval.');
+                      return;
+                    }
                     onMoveItemStatus(pendingStageMove.item.id, pendingStageMove.nextStatus);
                     setPendingStageMove(null);
                   }}
@@ -2964,7 +3222,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                       : 'bg-slate-900 hover:bg-slate-800'
                   }`}
                 >
-                  Yes, Move to {targetLabel}
+                  {!isAdmin && onSubmitTeamRequest
+                    ? `Request Move to ${targetLabel}`
+                    : `Yes, Move to ${targetLabel}`}
                 </button>
               </div>
             </div>
@@ -3080,17 +3340,17 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                   </div>
                 )}
 
-                {/* Team Membership Quick Switcher (Admin Only to edit; Read-Only for Staff) */}
+                {/* Team Membership Quick Switcher (Full Admin edits all 6; others read-only) */}
                 <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] font-black uppercase tracking-wider text-slate-600">
-                      {isAdmin
+                      {fullAccessAdmin
                         ? `Assigned Store Teams (${memberTeams.length} of 6 — tap to add/remove)`
-                        : `Assigned Store Teams (${memberTeams.length} of 6)`}
+                        : `Assigned Store Teams`}
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    {isAdmin ? (
+                    {fullAccessAdmin ? (
                       STORE_TEAMS.map((team) => {
                         const active = memberTeamsSet.has(team.id);
                         return (
@@ -3120,15 +3380,17 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     ) : memberTeams.length === 0 ? (
                       <span className="text-xs text-slate-500 italic">No Store Teams assigned</span>
                     ) : (
-                      STORE_TEAMS.filter((t) => memberTeamsSet.has(t.id)).map((team) => (
-                        <span
-                          key={team.id}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 ${team.chipClass}`}
-                        >
-                          <span className={`w-2 h-2 rounded-full ${team.dotClass}`} />
-                          <span>{team.shortLabel}</span>
-                        </span>
-                      ))
+                      visibleStoreTeams
+                        .filter((t) => memberTeamsSet.has(t.id))
+                        .map((team) => (
+                          <span
+                            key={team.id}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border flex items-center gap-1.5 ${team.chipClass}`}
+                          >
+                            <span className={`w-2 h-2 rounded-full ${team.dotClass}`} />
+                            <span>{team.shortLabel}</span>
+                          </span>
+                        ))
                     )}
                   </div>
                 </div>

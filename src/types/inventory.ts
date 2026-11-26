@@ -140,7 +140,8 @@ export interface AuditLogEntry {
     | 'booking_deleted'
     | 'booking_status_changed'
     | 'booking_deposit_paid'
-    | 'booking_payment_verification_requested';
+    | 'booking_payment_verification_requested'
+    | 'team_change_request';
   actorName: string;
   actorRole: Role;
   summary: string;
@@ -252,6 +253,8 @@ export interface CalendarItem {
   completed: boolean;
   boardStatus?: BoardColumnStatus;
   team?: StoreTeamId;
+  teams?: StoreTeamId[];
+  isAllTeams?: boolean;
   assignedToId?: string;
   assignedToName?: string;
   troopGroup?: string;
@@ -434,3 +437,41 @@ export interface ShortageBatchConfig {
   targetDate?: string;
 }
 
+export type TeamRequestEntityType =
+  | 'calendar_item'
+  | 'scout_season'
+  | 'booking_create'
+  | 'booking_edit'
+  | 'booking_delete'
+  | 'booking_status'
+  | 'sourcing_vendor'
+  | 'sourcing_workflow'
+  | 'sourcing_stage_vendor'
+  | 'sourcing_price'
+  | 'sourcing_batch'
+  | 'sourcing_stock_in'
+  | 'marketing_offer'
+  | 'budget_profile'
+  | 'budget_expense'
+  | 'budget_settings'
+  | 'budget_price'
+  | 'category';
+
+export interface TeamChangeRequest {
+  id: string;
+  teamScope: StoreTeamId;
+  entityType: TeamRequestEntityType;
+  actionType: 'create' | 'update' | 'delete';
+  title: string;
+  summary: string;
+  payload: any;
+  targetId?: string;
+  status: ApprovalStatus;
+  requestedById: string;
+  requestedByName: string;
+  requestedAt: string;
+  reviewedById?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  adminNote?: string;
+}

@@ -1,6 +1,15 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { CalendarItem, CalendarItemType, ScoutSeason, StoreTeamId, User } from '../types/inventory';
+import { CalendarItem, CalendarItemType, ScoutSeason, StoreTeamId, TeamChangeRequest, User } from '../types/inventory';
 import { SCOUT_FERA2_LIST, getScoutFare2Meta } from '../utils/scoutFera2';
+import {
+  canUserSeeCalendarItem,
+  getCalendarItemTeams,
+  getUserAssignedTeams,
+  isFullAccessAdmin,
+  isUserAdmin,
+  VALID_STORE_TEAM_IDS,
+} from '../utils/security';
+import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
   Calendar as CalendarIcon,
   CalendarRange,
@@ -23,6 +32,7 @@ import {
   CalendarPlus,
   UserCheck,
   Lock,
+  Layers,
 } from 'lucide-react';
 
 interface CalendarViewProps {
@@ -30,11 +40,17 @@ interface CalendarViewProps {
   users?: User[];
   currentUser: User;
   scoutSeasons?: ScoutSeason[];
+  teamRequests?: TeamChangeRequest[];
   onSaveItem: (item: CalendarItem) => void;
   onDeleteItem: (id: string) => void;
   onToggleTaskComplete: (id: string) => void;
   onSaveScoutSeason?: (season: ScoutSeason) => void;
   onDeleteScoutSeason?: (id: string) => void;
+  onSubmitTeamRequest?: (
+    req: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>
+  ) => void;
+  onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
+  onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -121,6 +137,19 @@ export const STORE_TEAMS: StoreTeamMeta[] = [
 
 const getTeamMeta = (teamId?: StoreTeamId): StoreTeamMeta | null =>
   STORE_TEAMS.find((t) => t.id === teamId) || null;
+
+const getItemTeamsDisplay = (item: CalendarItem) => {
+  const { isAllTeams, teams } = getCalendarItemTeams(item);
+  const teamMetas = teams
+    .map((id) => getTeamMeta(id))
+    .filter((t): t is StoreTeamMeta => Boolean(t));
+  return {
+    isAllTeams,
+    teams,
+    teamMetas,
+    primaryMeta: teamMetas[0] || null,
+  };
+};
 
 const TROOP_OPTIONS = [
   'Ashbal',
@@ -215,14 +244,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   users = [],
   currentUser,
   scoutSeasons = [],
+  teamRequests = [],
   onSaveItem,
   onDeleteItem,
   onToggleTaskComplete,
   onSaveScoutSeason,
   onDeleteScoutSeason,
+  onSubmitTeamRequest,
+  onApproveTeamRequest,
+  onRejectTeamRequest,
   onShowToast,
 }) => {
   const todayKey = toDateKey(new Date());
+  const isAdmin = isUserAdmin(currentUser);
+  const fullAccessAdmin = isFullAccessAdmin(currentUser, users);
+  const myTeams = useMemo(() => getUserAssignedTeams(currentUser), [currentUser]);
+
+  const scopedItems = useMemo(
+    () => items.filter((it) => canUserSeeCalendarItem(currentUser, it, users)),
+    [items, currentUser, users]
+  );
+
+  const visibleFilterTeams = useMemo(
+    () =>
+      fullAccessAdmin
+        ? STORE_TEAMS
+        : STORE_TEAMS.filter((t) => myTeams.includes(t.id)),
+    [fullAccessAdmin, myTeams]
+  );
 
   const [calendarMode, setCalendarMode] = useState<'month' | 'week' | 'day'>('month');
   const [cursorMonth, setCursorMonth] = useState<Date>(() => {
@@ -265,7 +314,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const [formAllDay, setFormAllDay] = useState<boolean>(false);
   const [formStartTime, setFormStartTime] = useState<string>('10:00');
   const [formEndTime, setFormEndTime] = useState<string>('12:00');
-  const [formTeam, setFormTeam] = useState<StoreTeamId | ''>('');
+  const [formTeams, setFormTeams] = useState<StoreTeamId[]>([]);
+  const [formIsAllTeams, setFormIsAllTeams] = useState<boolean>(false);
   const [formAssignedToId, setFormAssignedToId] = useState<string>('');
   const [formAssignedToName, setFormAssignedToName] = useState<string>('');
   const [formTroop, setFormTroop] = useState<string>('');
@@ -335,7 +385,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       createdAt: editingSeason?.createdAt || nowIso,
       updatedAt: nowIso,
     };
-    onSaveScoutSeason?.(payload);
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: myTeams[0] || 'calendar',
+        entityType: 'scout_season',
+        actionType: editingSeason ? 'update' : 'create',
+        title: `${editingSeason ? 'Edit' : 'Add'} Scout Season: ${payload.name}`,
+        summary: `${payload.startDate} → ${payload.endDate}`,
+        payload: { season: payload },
+        targetId: payload.id,
+      });
+      onShowToast?.('Scout Season change request sent to Team Admin for approval.');
+    } else {
+      onSaveScoutSeason?.(payload);
+    }
     openSeasonForm();
   };
 
@@ -378,40 +441,52 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   };
 
   const detailItem = useMemo(
-    () => items.find((i) => i.id === detailItemId) || null,
-    [items, detailItemId]
+    () => scopedItems.find((i) => i.id === detailItemId) || null,
+    [scopedItems, detailItemId]
   );
 
-  // Active staff & admin accounts eligible for assignment
+  // Active staff & admin accounts eligible for assignment (scoped for team members)
   const activeAccounts = useMemo(
     () =>
       users
-        .filter((u) => u.status === 'active' && u.role !== 'leader')
+        .filter((u) => {
+          if (u.status !== 'active' || u.role === 'leader') return false;
+          if (fullAccessAdmin || formIsAllTeams) return true;
+          if (myTeams.length === 0) return u.id === currentUser.id;
+          const uTeams = getUserAssignedTeams(u);
+          return u.id === currentUser.id || uTeams.some((t) => myTeams.includes(t));
+        })
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [users]
+    [users, fullAccessAdmin, formIsAllTeams, myTeams, currentUser.id]
   );
 
   // Previously used assignees for quick selection (filtered by selected team if set)
   const previousTeamAssignees = useMemo(() => {
     const names = new Set<string>();
-    items.forEach((it) => {
+    scopedItems.forEach((it) => {
       if (!it.assignedToName) return;
-      if (formTeam && it.team !== formTeam) return;
+      if (!formIsAllTeams && formTeams.length > 0) {
+        const { isAllTeams, teams } = getCalendarItemTeams(it);
+        if (!isAllTeams && !teams.some((t) => formTeams.includes(t))) return;
+      }
       names.add(it.assignedToName.trim());
     });
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [items, formTeam]);
+  }, [scopedItems, formTeams, formIsAllTeams]);
 
   // Filter & Search items
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const myNameLower = (currentUser.name || '').trim().toLowerCase();
     const fare2Set = new Set(selectedFare2.map((f) => f.toLowerCase()));
-    return items
+    return scopedItems
       .filter((item) => {
         if (filterType !== 'all' && item.itemType !== filterType) return false;
-        if (selectedTeams.length > 0 && (!item.team || !selectedTeams.includes(item.team))) {
-          return false;
+        if (selectedTeams.length > 0) {
+          const { isAllTeams, teams } = getCalendarItemTeams(item);
+          if (!isAllTeams && !teams.some((t) => selectedTeams.includes(t))) {
+            return false;
+          }
         }
         if (fare2Set.size > 0) {
           const itemTroop = (item.troopGroup || '').trim().toLowerCase();
@@ -424,9 +499,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           if (!matchesId && !matchesName) return false;
         }
         if (q) {
-          const teamMeta = getTeamMeta(item.team);
+          const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
           const fare2Meta = getScoutFare2Meta(item.troopGroup);
-          const hay = `${item.title} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fare2Meta?.audience || ''} ${teamMeta?.label || ''} ${item.assignedToName || ''}`.toLowerCase();
+          const teamsText = isAllTeams
+            ? 'all teams'
+            : teamMetas.map((tm) => `${tm.label} ${tm.shortLabel}`).join(' ');
+          const hay = `${item.title} ${item.notes || ''} ${item.location || ''} ${item.troopGroup || ''} ${fare2Meta?.audience || ''} ${teamsText} ${item.assignedToName || ''}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
@@ -436,16 +514,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
         return (a.startTime || '').localeCompare(b.startTime || '');
       });
-  }, [items, filterType, selectedTeams, selectedFare2, onlyAssignedToMe, searchQuery, currentUser]);
+  }, [scopedItems, filterType, selectedTeams, selectedFare2, onlyAssignedToMe, searchQuery, currentUser]);
 
   // Metrics
   const stats = useMemo(() => {
-    const total = items.length;
-    const events = items.filter((i) => i.itemType === 'event').length;
-    const openTasks = items.filter((i) => i.itemType === 'task' && !i.completed).length;
-    const completedTasks = items.filter((i) => i.itemType === 'task' && i.completed).length;
+    const total = scopedItems.length;
+    const events = scopedItems.filter((i) => i.itemType === 'event').length;
+    const openTasks = scopedItems.filter((i) => i.itemType === 'task' && !i.completed).length;
+    const completedTasks = scopedItems.filter((i) => i.itemType === 'task' && i.completed).length;
     return { total, events, openTasks, completedTasks };
-  }, [items]);
+  }, [scopedItems]);
 
   // Team item counts
   const teamCounts = useMemo(() => {
@@ -457,25 +535,32 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       marketing: 0,
       budgeting: 0,
     };
-    items.forEach((it) => {
-      if (it.team && counts[it.team] !== undefined) {
-        counts[it.team] += 1;
+    scopedItems.forEach((it) => {
+      const { isAllTeams, teams } = getCalendarItemTeams(it);
+      if (isAllTeams) {
+        VALID_STORE_TEAM_IDS.forEach((tid) => {
+          counts[tid] += 1;
+        });
+      } else {
+        teams.forEach((tid) => {
+          if (counts[tid] !== undefined) counts[tid] += 1;
+        });
       }
     });
     return counts;
-  }, [items]);
+  }, [scopedItems]);
 
   // Scout Fera2 item counts
   const fare2Counts = useMemo(() => {
     const counts: Record<string, number> = {};
-    items.forEach((it) => {
+    scopedItems.forEach((it) => {
       const grp = (it.troopGroup || '').trim().toLowerCase();
       if (grp) {
         counts[grp] = (counts[grp] || 0) + 1;
       }
     });
     return counts;
-  }, [items]);
+  }, [scopedItems]);
 
   // Toggle multi-select Store Team filter
   const toggleTeamFilter = (teamId: StoreTeamId) => {
@@ -549,6 +634,49 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const displayedAgendaItems =
     agendaMode === 'selected_day' ? selectedDayItems : upcomingItems;
 
+  const triggerToggleTaskComplete = (item: CalendarItem) => {
+    if (!isAdmin && onSubmitTeamRequest) {
+      const { teams } = getCalendarItemTeams(item);
+      const nextCompleted = !item.completed;
+      const updated: CalendarItem = {
+        ...item,
+        completed: nextCompleted,
+        boardStatus: nextCompleted ? 'done' : 'in_progress',
+        updatedAt: new Date().toISOString(),
+      };
+      onSubmitTeamRequest({
+        teamScope: teams[0] || myTeams[0] || 'calendar',
+        entityType: 'calendar_item',
+        actionType: 'update',
+        title: `${nextCompleted ? 'Mark Task Done' : 'Reopen Task'}: ${item.title}`,
+        summary: `Request to mark "${item.title}" as ${nextCompleted ? 'Completed' : 'Open'}.`,
+        payload: { item: updated },
+        targetId: item.id,
+      });
+      onShowToast?.('Task status change request sent to Team Admin.');
+      return;
+    }
+    onToggleTaskComplete(item.id);
+  };
+
+  const triggerDeleteCalendarItem = (item: CalendarItem) => {
+    if (!isAdmin && onSubmitTeamRequest) {
+      const { teams } = getCalendarItemTeams(item);
+      onSubmitTeamRequest({
+        teamScope: teams[0] || myTeams[0] || 'calendar',
+        entityType: 'calendar_item',
+        actionType: 'delete',
+        title: `Delete ${item.itemType === 'task' ? 'Task' : 'Event'}: ${item.title}`,
+        summary: `Request to delete "${item.title}" (${item.startDate}).`,
+        payload: { id: item.id, title: item.title },
+        targetId: item.id,
+      });
+      onShowToast?.('Delete request sent to Team Admin for approval.');
+      return;
+    }
+    onDeleteItem(item.id);
+  };
+
   const openCreateModal = (presetDate?: string, presetType: CalendarItemType = 'event') => {
     const baseDate = presetDate || selectedDate || todayKey;
     setEditingItem(null);
@@ -559,7 +687,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setFormAllDay(false);
     setFormStartTime('10:00');
     setFormEndTime('12:00');
-    setFormTeam(selectedTeams.length === 1 ? selectedTeams[0] : '');
+    if (selectedTeams.length > 0) {
+      setFormTeams([...selectedTeams]);
+    } else if (!fullAccessAdmin && myTeams.length > 0) {
+      setFormTeams([myTeams[0]]);
+    } else {
+      setFormTeams([]);
+    }
+    setFormIsAllTeams(false);
     setFormAssignedToId('');
     setFormAssignedToName('');
     setFormTroop(selectedFare2.length === 1 ? selectedFare2[0] : '');
@@ -571,6 +706,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   const openEditModal = (item: CalendarItem) => {
     if (getItemStage(item) === 'done') return;
+    const { isAllTeams, teams } = getCalendarItemTeams(item);
     setEditingItem(item);
     setFormTitle(item.title);
     setFormType(item.itemType);
@@ -579,7 +715,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setFormAllDay(Boolean(item.allDay));
     setFormStartTime(item.startTime || '10:00');
     setFormEndTime(item.endTime || '12:00');
-    setFormTeam(item.team || '');
+    setFormTeams(teams);
+    setFormIsAllTeams(isAllTeams);
     setFormAssignedToId(item.assignedToId || '');
     setFormAssignedToName(item.assignedToName || '');
     setFormTroop(item.troopGroup || '');
@@ -617,11 +754,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     }
 
     const trimmedAssignee = formAssignedToName.trim();
-    if (trimmedAssignee && !formTeam) {
-      setFormError('Please select a Store Team when assigning a team member.');
+    if (trimmedAssignee && !formIsAllTeams && formTeams.length === 0) {
+      setFormError('Please select at least one Store Team or All Teams when assigning a team member.');
       return;
     }
 
+    const effectiveTeams = formIsAllTeams ? [] : Array.from(new Set(formTeams));
     const now = new Date().toISOString();
     const nextItem: CalendarItem = {
       id: editingItem ? editingItem.id : `cal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -636,7 +774,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       boardStatus: editingItem
         ? editingItem.boardStatus || (editingItem.completed ? 'done' : 'upcoming')
         : 'upcoming',
-      team: formTeam || undefined,
+      team: formIsAllTeams ? undefined : effectiveTeams[0] || undefined,
+      teams: formIsAllTeams ? undefined : effectiveTeams.length > 0 ? effectiveTeams : undefined,
+      isAllTeams: formIsAllTeams,
       assignedToId: formAssignedToId || undefined,
       assignedToName: trimmedAssignee || undefined,
       troopGroup: formTroop || undefined,
@@ -648,6 +788,24 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       updatedAt: now,
     };
 
+    if (!isAdmin && onSubmitTeamRequest) {
+      const teamLabel = formIsAllTeams
+        ? 'All Teams'
+        : effectiveTeams.map((id) => getTeamMeta(id)?.shortLabel || id).join(', ') || 'General';
+      onSubmitTeamRequest({
+        teamScope: effectiveTeams[0] || myTeams[0] || 'calendar',
+        entityType: 'calendar_item',
+        actionType: editingItem ? 'update' : 'create',
+        title: `${editingItem ? 'Edit' : 'Add'} ${nextItem.itemType === 'task' ? 'Task' : 'Event'}: ${nextItem.title}`,
+        summary: `${nextItem.startDate} · Teams: ${teamLabel}${nextItem.assignedToName ? ` · Assigned: ${nextItem.assignedToName}` : ''}`,
+        payload: { item: nextItem },
+        targetId: nextItem.id,
+      });
+      setIsFormOpen(false);
+      onShowToast?.('Request submitted — pending Team Admin approval.');
+      return;
+    }
+
     onSaveItem(nextItem);
     setSelectedDate(nextItem.startDate);
     setIsFormOpen(false);
@@ -658,7 +816,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     const uid = `${item.id}@sps-warehouse.local`;
     const dtStamp = toIcsUtcStamp(item.updatedAt);
     const safeEndDate = item.endDate && item.endDate >= item.startDate ? item.endDate : item.startDate;
-    const teamMeta = getTeamMeta(item.team);
+    const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
+    const teamsLabel = isAllTeams
+      ? 'All Teams'
+      : teamMetas.map((t) => t.label).join(', ');
+    const teamsShort = isAllTeams
+      ? 'All Teams'
+      : teamMetas.map((t) => t.shortLabel).join(', ');
 
     const descriptionLines: string[] = [];
     if (item.itemType === 'task') {
@@ -666,7 +830,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     } else {
       descriptionLines.push('Type: Scout Store Event');
     }
-    if (teamMeta) descriptionLines.push(`Assigned Team: ${teamMeta.label}`);
+    if (teamsLabel) descriptionLines.push(`Assigned Team(s): ${teamsLabel}`);
     if (item.assignedToName) descriptionLines.push(`Assigned Member: ${item.assignedToName}`);
     if (item.troopGroup) descriptionLines.push(`Scout Branch: ${item.troopGroup}`);
     if (item.notes) descriptionLines.push(`Notes: ${item.notes}`);
@@ -683,7 +847,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         ];
 
     const summaryPrefix = item.itemType === 'task' ? '[Task] ' : '';
-    const teamSuffix = teamMeta ? ` (${teamMeta.shortLabel})` : '';
+    const teamSuffix = teamsShort ? ` (${teamsShort})` : '';
 
     const icsLines = [
       'BEGIN:VCALENDAR',
@@ -732,14 +896,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   const getGoogleCalendarUrl = (item: CalendarItem): string => {
     const safeEndDate = item.endDate && item.endDate >= item.startDate ? item.endDate : item.startDate;
-    const teamMeta = getTeamMeta(item.team);
+    const { isAllTeams, teamMetas } = getItemTeamsDisplay(item);
+    const teamsLabel = isAllTeams
+      ? 'All Teams'
+      : teamMetas.map((t) => t.label).join(', ');
     const datesParam = item.allDay
       ? `${toIcsDateCompact(item.startDate)}/${toIcsDateCompact(addDaysToDateKey(safeEndDate, 1))}`
       : `${toIcsDateTimeLocal(item.startDate, item.startTime || '09:00')}/${toIcsDateTimeLocal(safeEndDate, item.endTime || '10:00')}`;
 
     const details = [
       item.itemType === 'task' ? 'Task from SPS Warehouse' : 'Event from SPS Warehouse',
-      teamMeta ? `Team: ${teamMeta.label}` : '',
+      teamsLabel ? `Team(s): ${teamsLabel}` : '',
       item.assignedToName ? `Assigned Member: ${item.assignedToName}` : '',
       item.troopGroup ? `Branch: ${item.troopGroup}` : '',
       item.notes || '',
@@ -847,7 +1014,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             className="px-3.5 py-2.5 min-h-[44px] rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-950 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
           >
             <ListTodo className="w-4 h-4 text-amber-700" />
-            <span>New Task</span>
+            <span>{isAdmin ? 'New Task' : 'Request Task'}</span>
           </button>
           <button
             type="button"
@@ -855,10 +1022,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs whitespace-nowrap"
           >
             <CalendarPlus className="w-4 h-4" />
-            <span>New Event</span>
+            <span>{isAdmin ? 'New Event' : 'Request Event'}</span>
           </button>
         </div>
       </div>
+
+      {/* Staff Requests / Admin Approval Queue */}
+      {onApproveTeamRequest && onRejectTeamRequest && (
+        <TeamRequestsPanel
+          currentUser={currentUser}
+          users={users}
+          teamScopes={fullAccessAdmin ? VALID_STORE_TEAM_IDS : myTeams.length > 0 ? myTeams : ['calendar']}
+          requests={teamRequests}
+          onApproveRequest={onApproveTeamRequest}
+          onRejectRequest={onRejectTeamRequest}
+          title="Calendar & Tasks Change Requests"
+        />
+      )}
 
       {/* KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -943,7 +1123,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         </div>
 
-        {/* 6 Store Teams Color Filter Bar (Default: All Teams · Multi-select supported) */}
+        {/* Team-Scoped Filter Bar */}
         <div className="pt-2.5 border-t border-slate-100 flex items-center gap-2 overflow-x-auto scrollbar-none pb-0.5">
           <span className="text-xs font-bold text-slate-500 shrink-0 mr-1">Teams:</span>
 
@@ -959,11 +1139,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
             }`}
           >
-            <span>All Teams</span>
-            <span className="font-mono tabular-nums opacity-80">{items.length}</span>
+            <span>{fullAccessAdmin ? 'All Teams' : 'My Visible Schedule'}</span>
+            <span className="font-mono tabular-nums opacity-80">{scopedItems.length}</span>
           </button>
 
-          {STORE_TEAMS.map((team) => {
+          {visibleFilterTeams.map((team) => {
             const isActive = selectedTeams.includes(team.id);
             const isScoutFera2Team = team.id === 'troops';
             const showFera2Bar =
@@ -1281,14 +1461,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                       {/* Desktop/tablet color-coded event & task chips */}
                       <div className="hidden sm:flex flex-col gap-1 overflow-hidden">
                         {dayItems.slice(0, 2).map((it) => {
-                          const teamMeta = getTeamMeta(it.team);
-                          const chipStyle = teamMeta
+                          const { isAllTeams, primaryMeta: teamMeta, teamMetas } = getItemTeamsDisplay(it);
+                          const chipStyle = isAllTeams
+                            ? 'bg-slate-900/5 text-slate-900 border-slate-300 hover:bg-slate-100'
+                            : teamMeta
                             ? teamMeta.chipClass
                             : it.itemType === 'task'
                             ? it.completed
                               ? 'bg-slate-100 text-slate-600 border-slate-200'
                               : 'bg-slate-100 text-slate-900 border-slate-300 hover:bg-slate-200'
                             : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100';
+
+                          const teamsDesc = isAllTeams
+                            ? 'All Teams'
+                            : teamMetas.map((t) => t.shortLabel).join(' + ');
 
                           return (
                             <button
@@ -1301,11 +1487,15 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                               className={`w-full text-left px-1.5 py-0.5 rounded-md border text-[10px] font-bold truncate transition-colors cursor-pointer flex items-center gap-1 ${chipStyle} ${
                                 it.itemType === 'task' && it.completed ? 'line-through opacity-70' : ''
                               }`}
-                              title={`${it.title}${teamMeta ? ` · ${teamMeta.label}` : ''}${it.assignedToName ? ` · Assigned: ${it.assignedToName}` : ''}`}
+                              title={`${it.title}${teamsDesc ? ` · ${teamsDesc}` : ''}${it.assignedToName ? ` · Assigned: ${it.assignedToName}` : ''}`}
                             >
                               <span
                                 className={`w-2 h-2 rounded-sm shrink-0 ${
-                                  teamMeta ? teamMeta.dotClass : 'bg-slate-500'
+                                  isAllTeams
+                                    ? 'bg-slate-900'
+                                    : teamMeta
+                                    ? teamMeta.dotClass
+                                    : 'bg-slate-500'
                                 }`}
                                 aria-hidden="true"
                               />
@@ -1410,7 +1600,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onToggleTaskComplete(it.id);
+                                      triggerToggleTaskComplete(it);
                                     }}
                                     className="mt-0.5 shrink-0"
                                   >
@@ -1506,7 +1696,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               ) : (
                 <div className="space-y-2.5">
                   {selectedDayItems.map((item) => {
-                    const teamMeta = getTeamMeta(item.team);
+                    const { isAllTeams, primaryMeta: teamMeta, teamMetas } = getItemTeamsDisplay(item);
                     const fm = getScoutFare2Meta(item.troopGroup);
                     const { dateLabel, timeLabel } = formatRangeLabel(item);
                     const isTask = item.itemType === 'task';
@@ -1526,7 +1716,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onToggleTaskComplete(item.id);
+                                triggerToggleTaskComplete(item);
                               }}
                               className="mt-0.5 shrink-0 cursor-pointer"
                             >
@@ -1539,15 +1729,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                           )}
                           <div className="min-w-0 space-y-1">
                             <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                              {teamMeta && (
-                                <span
-                                  className={`font-bold flex items-center gap-1.5 ${teamMeta.textClass}`}
-                                >
-                                  <span
-                                    className={`w-2.5 h-2.5 rounded-sm shrink-0 ${teamMeta.dotClass}`}
-                                  />
-                                  <span>{teamMeta.label}</span>
+                              {isAllTeams ? (
+                                <span className="px-2 py-0.5 rounded bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1">
+                                  <Layers className="w-3 h-3" />
+                                  <span>All Teams</span>
                                 </span>
+                              ) : (
+                                teamMetas.map((tm) => (
+                                  <span
+                                    key={tm.id}
+                                    className={`font-bold flex items-center gap-1.5 ${tm.textClass}`}
+                                  >
+                                    <span
+                                      className={`w-2.5 h-2.5 rounded-sm shrink-0 ${tm.dotClass}`}
+                                    />
+                                    <span>{tm.shortLabel}</span>
+                                  </span>
+                                ))
                               )}
                               {fm && (
                                 <span
@@ -1693,7 +1891,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               displayedAgendaItems.map((item) => {
                 const { dateLabel, timeLabel } = formatRangeLabel(item);
                 const isTask = item.itemType === 'task';
-                const teamMeta = getTeamMeta(item.team);
+                const { isAllTeams, primaryMeta: teamMeta, teamMetas } = getItemTeamsDisplay(item);
 
                 return (
                   <div
@@ -1712,7 +1910,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onToggleTaskComplete(item.id);
+                              triggerToggleTaskComplete(item);
                             }}
                             className="mt-0.5 text-slate-700 hover:text-emerald-700 shrink-0 cursor-pointer"
                             title={item.completed ? 'Mark task open' : 'Mark task complete'}
@@ -1728,16 +1926,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                         <div className="min-w-0">
                           {/* Clean Unboxed Metadata Line */}
                           <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 mb-0.5">
-                            {teamMeta && (
-                              <span className={`font-bold flex items-center gap-1.5 ${teamMeta.textClass}`}>
-                                <span
-                                  className={`w-2.5 h-2.5 rounded-sm shrink-0 ${teamMeta.dotClass}`}
-                                  aria-hidden="true"
-                                />
-                                <span>{teamMeta.shortLabel}</span>
+                            {isAllTeams ? (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[10px] font-bold flex items-center gap-1">
+                                <Layers className="w-2.5 h-2.5" />
+                                <span>All Teams</span>
                               </span>
+                            ) : (
+                              teamMetas.map((tm) => (
+                                <span
+                                  key={tm.id}
+                                  className={`font-bold flex items-center gap-1 ${tm.textClass}`}
+                                >
+                                  <span
+                                    className={`w-2 h-2 rounded-sm shrink-0 ${tm.dotClass}`}
+                                    aria-hidden="true"
+                                  />
+                                  <span>{tm.shortLabel}</span>
+                                </span>
+                              ))
                             )}
-                            {teamMeta && <span aria-hidden="true">·</span>}
+                            {(isAllTeams || teamMetas.length > 0) && <span aria-hidden="true">·</span>}
                             <span className="font-semibold text-slate-700">
                               {isTask ? (item.completed ? 'Task Done' : 'Task') : 'Event'}
                             </span>
@@ -1899,46 +2107,77 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 />
               </div>
 
-              {/* 6 Store Teams Selector with Color Codes */}
+              {/* Multi-Team & All Teams Selector */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <label className="block text-xs font-bold text-slate-700">
-                    Assigned Store Team
+                    Assigned Store Team(s) — select 1, multiple, or All Teams
                   </label>
-                  {formTeam && (
+                  {(formIsAllTeams || formTeams.length > 0) && (
                     <button
                       type="button"
                       onClick={() => {
-                        setFormTeam('');
+                        setFormTeams([]);
+                        setFormIsAllTeams(false);
                         setFormAssignedToId('');
                         setFormAssignedToName('');
                       }}
                       className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
                     >
-                      Clear team
+                      Clear
                     </button>
                   )}
                 </div>
 
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFormIsAllTeams((prev) => {
+                      const next = !prev;
+                      if (next) setFormTeams([]);
+                      return next;
+                    });
+                  }}
+                  className={`w-full p-2.5 min-h-[42px] rounded-xl border text-xs font-black flex items-center justify-center gap-2 transition-colors cursor-pointer ${
+                    formIsAllTeams
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  <Layers className="w-4 h-4" />
+                  <span>All Store Teams (Visible to Everyone)</span>
+                  {formIsAllTeams && <Check className="w-4 h-4" />}
+                </button>
+
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {STORE_TEAMS.map((team) => {
-                    const isSelected = formTeam === team.id;
+                    const isSelected = !formIsAllTeams && formTeams.includes(team.id);
                     return (
                       <button
                         key={team.id}
                         type="button"
-                        onClick={() => setFormTeam(isSelected ? '' : team.id)}
-                        className={`p-2.5 min-h-[44px] rounded-xl border text-left text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+                        onClick={() => {
+                          setFormIsAllTeams(false);
+                          setFormTeams((prev) =>
+                            prev.includes(team.id)
+                              ? prev.filter((id) => id !== team.id)
+                              : [...prev, team.id]
+                          );
+                        }}
+                        className={`p-2.5 min-h-[44px] rounded-xl border text-left text-xs font-bold flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                           isSelected ? team.activeButtonClass : team.chipClass
                         }`}
                       >
-                        <span
-                          className={`w-3 h-3 rounded-sm shrink-0 ${
-                            isSelected ? 'bg-white' : team.dotClass
-                          }`}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{team.shortLabel}</span>
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span
+                            className={`w-3 h-3 rounded-sm shrink-0 ${
+                              isSelected ? 'bg-white' : team.dotClass
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <span className="truncate">{team.shortLabel}</span>
+                        </span>
+                        {isSelected && <Check className="w-3.5 h-3.5 shrink-0" />}
                       </button>
                     );
                   })}
@@ -2155,7 +2394,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   type="submit"
                   className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
                 >
-                  {editingItem ? 'Save Changes' : 'Save to Calendar'}
+                  {isAdmin
+                    ? editingItem
+                      ? 'Save Changes'
+                      : 'Save to Calendar'
+                    : editingItem
+                    ? 'Request Edit Approval'
+                    : 'Submit Request to Admin'}
                 </button>
               </div>
             </form>
@@ -2165,7 +2410,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
       {/* Detail & Mobile Calendar Export Modal */}
       {detailItem && (() => {
-        const detailTeam = getTeamMeta(detailItem.team);
+        const { isAllTeams, primaryMeta: detailTeam, teamMetas: detailTeamsList } = getItemTeamsDisplay(detailItem);
         return (
           <div
             onClick={() => {
@@ -2182,16 +2427,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 mb-1">
-                    {detailTeam && (
-                      <span className={`font-bold flex items-center gap-1.5 ${detailTeam.textClass}`}>
-                        <span
-                          className={`w-2.5 h-2.5 rounded-sm shrink-0 ${detailTeam.dotClass}`}
-                          aria-hidden="true"
-                        />
-                        <span>{detailTeam.label}</span>
+                    {isAllTeams ? (
+                      <span className="px-2 py-0.5 rounded bg-slate-900 text-white text-[11px] font-bold inline-flex items-center gap-1">
+                        <Layers className="w-3 h-3" />
+                        <span>All Teams</span>
                       </span>
+                    ) : (
+                      detailTeamsList.map((tm) => (
+                        <span key={tm.id} className={`font-bold flex items-center gap-1.5 ${tm.textClass}`}>
+                          <span
+                            className={`w-2.5 h-2.5 rounded-sm shrink-0 ${tm.dotClass}`}
+                            aria-hidden="true"
+                          />
+                          <span>{tm.shortLabel}</span>
+                        </span>
+                      ))
                     )}
-                    {detailTeam && <span aria-hidden="true">·</span>}
+                    {(isAllTeams || detailTeamsList.length > 0) && <span aria-hidden="true">·</span>}
                     <span className="font-bold text-slate-800">
                       {detailItem.itemType === 'task'
                         ? detailItem.completed
@@ -2239,19 +2491,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               </div>
 
               {/* Team & Assigned Member Breakdown */}
-              {(detailTeam || detailItem.assignedToName) && (
+              {(isAllTeams || detailTeamsList.length > 0 || detailItem.assignedToName) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                    <div className="text-xs font-semibold text-slate-500">Store Team</div>
-                    <div className="text-xs sm:text-sm font-bold text-slate-900 mt-1 flex items-center gap-2">
-                      {detailTeam ? (
-                        <>
+                    <div className="text-xs font-semibold text-slate-500">Store Team(s)</div>
+                    <div className="text-xs sm:text-sm font-bold text-slate-900 mt-1 flex flex-wrap items-center gap-1.5">
+                      {isAllTeams ? (
+                        <span className="px-2 py-0.5 rounded bg-slate-900 text-white text-xs font-bold inline-flex items-center gap-1">
+                          <Layers className="w-3 h-3" />
+                          <span>All Store Teams</span>
+                        </span>
+                      ) : detailTeamsList.length > 0 ? (
+                        detailTeamsList.map((tm) => (
                           <span
-                            className={`w-3 h-3 rounded-sm shrink-0 ${detailTeam.dotClass}`}
-                            aria-hidden="true"
-                          />
-                          <span className={detailTeam.textClass}>{detailTeam.label}</span>
-                        </>
+                            key={tm.id}
+                            className={`px-2 py-0.5 rounded-md text-xs font-bold border inline-flex items-center gap-1.5 ${tm.chipClass}`}
+                          >
+                            <span className={`w-2 h-2 rounded-sm ${tm.dotClass}`} />
+                            <span>{tm.shortLabel}</span>
+                          </span>
+                        ))
                       ) : (
                         <span>General Store</span>
                       )}
@@ -2394,14 +2653,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            const id = detailItem.id;
+                            const target = detailItem;
                             setConfirmDeleteId(null);
                             setDetailItemId(null);
-                            onDeleteItem(id);
+                            triggerDeleteCalendarItem(target);
                           }}
                           className="px-3 py-1.5 min-h-[38px] rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer"
                         >
-                          Yes, Delete
+                          {isAdmin ? 'Yes, Delete' : 'Send Delete Request'}
                         </button>
                       </div>
                     </div>
@@ -2412,7 +2671,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   return (
                     <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-bold text-amber-950">
-                        Are you sure you want to edit &quot;{detailItem.title}&quot;?
+                        {isAdmin
+                          ? `Are you sure you want to edit "${detailItem.title}"?`
+                          : `Submit an edit request for "${detailItem.title}"?`}
                       </span>
                       <div className="flex items-center gap-2">
                         <button
@@ -2431,7 +2692,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                           }}
                           className="px-3 py-1.5 min-h-[38px] rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold cursor-pointer"
                         >
-                          Yes, Edit
+                          {isAdmin ? 'Yes, Edit' : 'Continue to Request'}
                         </button>
                       </div>
                     </div>
@@ -2443,7 +2704,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                     {detailItem.itemType === 'task' ? (
                       <button
                         type="button"
-                        onClick={() => onToggleTaskComplete(detailItem.id)}
+                        onClick={() => triggerToggleTaskComplete(detailItem)}
                         className={`px-3.5 py-2 min-h-[42px] rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer ${
                           detailItem.completed
                             ? 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
@@ -2695,13 +2956,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                             <button
                               type="button"
                               onClick={() => {
-                                onDeleteScoutSeason?.(s.id);
+                                if (!isAdmin && onSubmitTeamRequest) {
+                                  onSubmitTeamRequest({
+                                    teamScope: myTeams[0] || 'calendar',
+                                    entityType: 'scout_season',
+                                    actionType: 'delete',
+                                    title: `Delete Scout Season: ${s.name}`,
+                                    summary: `${s.startDate} → ${s.endDate}`,
+                                    payload: { id: s.id, name: s.name },
+                                    targetId: s.id,
+                                  });
+                                  onShowToast?.('Season delete request sent to Team Admin.');
+                                } else {
+                                  onDeleteScoutSeason?.(s.id);
+                                }
                                 setConfirmDeleteSeasonId(null);
                                 if (editingSeason?.id === s.id) openSeasonForm();
                               }}
                               className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
                             >
-                              Yes
+                              {isAdmin ? 'Yes' : 'Request Delete'}
                             </button>
                           </div>
                         ) : (

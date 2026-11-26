@@ -27,6 +27,7 @@ import {
   ShortageBatchConfig,
   BatchStageAssignment,
   OperationStageKey,
+  TeamChangeRequest,
 } from './types/inventory';
 import {
   getStoredUser,
@@ -42,6 +43,9 @@ import {
   isUserMarketingMember,
   canEditProductMediaAndColors,
   canUserAccessView,
+  canUserEditBookings,
+  canUserManageTeamScope,
+  isFullAccessAdmin,
   normalizeRole,
   getRoleDisplayName,
   normalizeUsername,
@@ -100,6 +104,8 @@ import {
   fetchScoutSeasonsFromDb,
   upsertScoutSeasonToDb,
   deleteScoutSeasonFromDb,
+  fetchTeamRequestsFromDb,
+  upsertTeamRequestToDb,
   CATEGORY_MAP,
   DbConnectionStatus,
 } from './services/supabaseService';
@@ -436,6 +442,7 @@ export default function App() {
   // Store Calendar & Tasks state
   const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>([]);
   const [scoutSeasons, setScoutSeasons] = useState<ScoutSeason[]>([]);
+  const [teamChangeRequests, setTeamChangeRequests] = useState<TeamChangeRequest[]>([]);
   const lastCalendarMutationAtRef = useRef<number>(0);
   const lastBookingMutationAtRef = useRef<number>(0);
 
@@ -483,7 +490,7 @@ export default function App() {
   }, [currentUser]);
 
   // Category handlers
-  const handleAddCategory = async (name: string, description?: string) => {
+  const executeAddCategory = async (name: string, description?: string) => {
     const newId = `cat_${Date.now()}`;
     const newCat: Category = {
       id: newId,
@@ -505,11 +512,7 @@ export default function App() {
     }
   };
 
-  const handleDeleteCategory = async (catId: string) => {
-    if (!isUserAdmin(currentUser)) {
-      showToast('Only Admin can delete categories.');
-      return;
-    }
+  const executeDeleteCategory = async (catId: string) => {
     const deletedCat = categories.find((c) => c.id === catId);
     const nextCats = categories.filter((c) => c.id !== catId);
     setCategories(nextCats);
@@ -550,6 +553,38 @@ export default function App() {
     insertAuditLogInDb(newLog).catch(() => {});
 
     showToast('Category deleted. Existing items are now Unassigned.');
+  };
+
+  const handleAddCategory = async (name: string, description?: string) => {
+    if (!isUserAdmin(currentUser)) {
+      handleSubmitTeamRequest({
+        teamScope: 'inventory',
+        entityType: 'category',
+        actionType: 'create',
+        title: `Create Category: ${name}`,
+        summary: description || 'New inventory category',
+        payload: { name, description },
+      });
+      return;
+    }
+    await executeAddCategory(name, description);
+  };
+
+  const handleDeleteCategory = async (catId: string) => {
+    const deletedCat = categories.find((c) => c.id === catId);
+    if (!isUserAdmin(currentUser)) {
+      handleSubmitTeamRequest({
+        teamScope: 'inventory',
+        entityType: 'category',
+        actionType: 'delete',
+        targetId: catId,
+        title: `Delete Category: ${deletedCat?.name || catId}`,
+        summary: 'Items in this category will become Unassigned once approved.',
+        payload: { categoryId: catId },
+      });
+      return;
+    }
+    await executeDeleteCategory(catId);
   };
 
   // Admin deletes entire product
@@ -774,6 +809,7 @@ export default function App() {
           dbOffers,
           dbBudgeting,
           dbScoutSeasons,
+          dbTeamRequests,
         ] = await Promise.allSettled([
           fetchProductsFromDb(),
           fetchAdjustmentRequestsFromDb(),
@@ -788,6 +824,7 @@ export default function App() {
           fetchMarketingOffersFromDb(),
           fetchBudgetingDataFromDb(),
           fetchScoutSeasonsFromDb(),
+          fetchTeamRequestsFromDb(),
         ]);
 
         let dbProductFolders: string[] = [];
@@ -935,6 +972,11 @@ export default function App() {
         // Sync Calendar Scout Seasons
         if (dbScoutSeasons.status === 'fulfilled' && dbScoutSeasons.value !== null) {
           setScoutSeasons(dbScoutSeasons.value);
+        }
+
+        // Sync Team Change Requests (Staff -> Team Admin approval queue)
+        if (dbTeamRequests.status === 'fulfilled' && Array.isArray(dbTeamRequests.value)) {
+          setTeamChangeRequests(dbTeamRequests.value);
         }
 
         if (notify) {
@@ -2579,7 +2621,28 @@ export default function App() {
   };
 
   // Booking Management Handlers
-  const handleSaveBooking = (newBooking: Booking, autoAdvanceToPreparing = false) => {
+  const handleSaveBooking = (
+    newBooking: Booking,
+    autoAdvanceToPreparing = false,
+    bypassApproval = false
+  ) => {
+    if (!bypassApproval && !isUserAdmin(currentUser)) {
+      if (!canUserEditBookings(currentUser, users)) {
+        showToast('View-only access on Orders & Bookings.');
+        return;
+      }
+      handleSubmitTeamRequest({
+        teamScope: 'budgeting',
+        entityType: 'booking_create',
+        actionType: 'create',
+        targetId: newBooking.id,
+        title: `Create Order #${newBooking.bookingNumber}`,
+        summary: `Client: ${newBooking.clientName} · ${newBooking.total.toFixed(2)} EGP (${newBooking.items.length} item types)`,
+        payload: { booking: newBooking, autoAdvanceToPreparing: false },
+      });
+      return;
+    }
+
     let nextProducts = [...products];
     const variantDbUpdates: { variantId: string; newQty: number }[] = [];
 
@@ -2678,9 +2741,21 @@ export default function App() {
     syncOrderTaskToScoutFera2(safeBooking);
   };
 
-  const handleSaveEditedBooking = (editedBooking: Booking) => {
-    if (!isUserAdmin(currentUser)) {
-      showToast('Only Admins can edit existing bookings.');
+  const handleSaveEditedBooking = (editedBooking: Booking, bypassApproval = false) => {
+    if (!bypassApproval && !isUserAdmin(currentUser)) {
+      if (canUserEditBookings(currentUser, users)) {
+        handleSubmitTeamRequest({
+          teamScope: 'budgeting',
+          entityType: 'booking_edit',
+          actionType: 'update',
+          targetId: editedBooking.id,
+          title: `Edit Order #${editedBooking.bookingNumber}`,
+          summary: `Client: ${editedBooking.clientName} · ${editedBooking.total.toFixed(2)} EGP`,
+          payload: { booking: editedBooking },
+        });
+      } else {
+        showToast('You do not have permission to edit bookings.');
+      }
       return;
     }
     const existing = bookings.find((b) => b.id === editedBooking.id);
@@ -2865,8 +2940,12 @@ export default function App() {
     showToast(`Payment verification request declined for Order #${target.bookingNumber}.`, newLog);
   };
 
-  const handleAdvanceBookingStatus = (bookingId: string, nextStatus: BookingStatus) => {
-    if (nextStatus === 'preparing' && !isUserAdmin(currentUser)) {
+  const handleAdvanceBookingStatus = (
+    bookingId: string,
+    nextStatus: BookingStatus,
+    bypassAdminCheck = false
+  ) => {
+    if (nextStatus === 'preparing' && !bypassAdminCheck && !isUserAdmin(currentUser)) {
       showToast('Only Admins can confirm payment. Please submit a Payment Verification Request.');
       return;
     }
@@ -2991,9 +3070,9 @@ export default function App() {
     }
   };
 
-  const handleDeleteBooking = (bookingId: string) => {
-    if (!isUserAdmin(currentUser)) {
-      showToast('Only Admins can delete bookings.');
+  const handleDeleteBooking = (bookingId: string, bypassAdminCheck = false) => {
+    if (!bypassAdminCheck && !isUserAdmin(currentUser)) {
+      showToast('Only Admins can delete bookings directly.');
       return;
     }
     const target = bookings.find((b) => b.id === bookingId);
@@ -3228,21 +3307,33 @@ export default function App() {
   };
 
   const handleSaveStageVendor = (link: ProductStageVendor) => {
+    const siblingsToClear: ProductStageVendor[] = [];
     setProductStageVendors((prev) => {
       const exists = prev.some((l) => l.id === link.id);
       let next = exists ? prev.map((l) => (l.id === link.id ? link : l)) : [...prev, link];
       if (link.isPrimary) {
-        next = next.map((l) =>
-          l.productId === link.productId && l.stageKey === link.stageKey && l.id !== link.id
-            ? { ...l, isPrimary: false }
-            : l
-        );
+        next = next.map((l) => {
+          if (
+            l.productId === link.productId &&
+            l.stageKey === link.stageKey &&
+            l.id !== link.id &&
+            l.isPrimary
+          ) {
+            const cleared = { ...l, isPrimary: false };
+            siblingsToClear.push(cleared);
+            return cleared;
+          }
+          return l;
+        });
       }
       return next;
     });
     upsertProductStageVendorToDb(link).catch((err) =>
       showToast(`Database stage vendor sync error: ${err?.message || 'Sync failed'}`)
     );
+    siblingsToClear.forEach((s) => {
+      upsertProductStageVendorToDb(s).catch(() => {});
+    });
   };
 
   const handleDeleteStageVendor = (linkId: string) => {
@@ -3584,6 +3675,201 @@ export default function App() {
       showToast(`Database product price sync error: ${err?.message || 'Sync failed'}`)
     );
     showToast(`Updated "${target.name}" catalog price to ${newPrice} EGP.`);
+  };
+
+  // Team Change Requests (Staff request -> Team Admin / Full Admin approval)
+  const handleSubmitTeamRequest = (
+    draft: Omit<
+      TeamChangeRequest,
+      'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'
+    >
+  ) => {
+    if (!currentUser) return;
+    const newReq: TeamChangeRequest = {
+      ...draft,
+      id: `treq_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      status: 'pending',
+      requestedById: currentUser.id,
+      requestedByName: currentUser.name,
+      requestedAt: new Date().toISOString(),
+    };
+    setTeamChangeRequests((prev) => [newReq, ...prev]);
+    upsertTeamRequestToDb(newReq).then((res) => {
+      if (!res.ok && res.error) {
+        showToast(`Failed to sync team request: ${res.error}`);
+      }
+    });
+    showToast(`Request "${newReq.title}" sent to Team Admin for approval.`);
+  };
+
+  const handleApproveTeamRequest = (req: TeamChangeRequest, adminNote?: string) => {
+    if (
+      !currentUser ||
+      (!isFullAccessAdmin(currentUser, users) &&
+        !canUserManageTeamScope(currentUser, req.teamScope, users))
+    ) {
+      showToast('Only an Admin of this team or Full-Access Admin can approve requests.');
+      return;
+    }
+    if (req.status !== 'pending') return;
+
+    switch (req.entityType) {
+      case 'calendar_item':
+        if (req.actionType === 'delete') {
+          handleDeleteCalendarEvent(req.payload?.id || req.targetId || '');
+        } else if (req.payload?.item) {
+          handleSaveCalendarEvent(req.payload.item);
+        }
+        break;
+      case 'scout_season':
+        if (req.actionType === 'delete') {
+          handleDeleteScoutSeason(req.payload?.id || req.targetId || '');
+        } else if (req.payload?.season) {
+          handleSaveScoutSeason(req.payload.season);
+        }
+        break;
+      case 'booking_create':
+        if (req.payload?.booking) {
+          handleSaveBooking(
+            req.payload.booking,
+            Boolean(req.payload.autoAdvanceToPreparing),
+            true
+          );
+        }
+        break;
+      case 'booking_edit':
+        if (req.payload?.booking) {
+          handleSaveEditedBooking(req.payload.booking, true);
+        }
+        break;
+      case 'booking_status':
+        if (req.payload?.bookingId && req.payload?.nextStatus) {
+          handleAdvanceBookingStatus(req.payload.bookingId, req.payload.nextStatus, true);
+        }
+        break;
+      case 'booking_delete':
+        if (req.payload?.bookingId || req.targetId) {
+          handleDeleteBooking(req.payload?.bookingId || req.targetId || '', true);
+        }
+        break;
+      case 'sourcing_vendor':
+        if (req.actionType === 'delete') {
+          handleDeleteVendor(req.payload?.vendorId || req.targetId || '');
+        } else if (req.payload?.vendor) {
+          handleSaveVendor(req.payload.vendor);
+        }
+        break;
+      case 'sourcing_workflow':
+        if (req.payload?.workflow) {
+          handleSaveWorkflow(req.payload.workflow);
+        }
+        break;
+      case 'sourcing_stage_vendor':
+        if (req.actionType === 'delete') {
+          handleDeleteStageVendor(req.payload?.linkId || req.targetId || '');
+        } else if (req.payload?.link) {
+          const link: ProductStageVendor = req.payload.setPrimary
+            ? { ...req.payload.link, isPrimary: true }
+            : req.payload.link;
+          handleSaveStageVendor(link);
+        }
+        break;
+      case 'sourcing_price':
+        if (req.payload?.entry) {
+          handleAddPriceEntry(req.payload.entry);
+        }
+        break;
+      case 'sourcing_batch':
+        if (req.actionType === 'delete') {
+          handleDeleteBatch(req.payload?.batchId || req.targetId || '');
+        } else if (req.payload?.batch) {
+          handleSaveBatch(req.payload.batch);
+        }
+        break;
+      case 'sourcing_stock_in':
+        if (req.payload?.batchId) {
+          handleCompleteBatchStockIn({
+            batchId: req.payload.batchId,
+            finalQuantity: req.payload.finalQuantity,
+            variantId: req.payload.variantId,
+          });
+        }
+        break;
+      case 'marketing_offer':
+        if (req.actionType === 'delete') {
+          handleDeleteMarketingOffer(req.payload?.offerId || req.targetId || '');
+        } else if (req.payload?.offer) {
+          handleSaveMarketingOffer(req.payload.offer, Boolean(req.payload.syncToCalendar));
+        }
+        break;
+      case 'budget_profile':
+        if (req.payload?.profile) {
+          handleSaveBudgetProfile(req.payload.profile);
+        }
+        break;
+      case 'budget_expense':
+        if (req.actionType === 'delete') {
+          handleDeleteBudgetExpense(req.payload?.expenseId || req.targetId || '');
+        } else if (req.payload?.expense) {
+          handleAddBudgetExpense(req.payload.expense);
+        }
+        break;
+      case 'budget_settings':
+        if (req.payload?.settings) {
+          handleSaveBudgetSettings(req.payload.settings);
+        }
+        break;
+      case 'budget_price':
+        if (req.payload?.productId && typeof req.payload?.newPrice === 'number') {
+          handleBudgetUpdateProductPrice(req.payload.productId, req.payload.newPrice);
+        }
+        break;
+      case 'category':
+        if (req.actionType === 'delete') {
+          void executeDeleteCategory(req.payload?.categoryId || req.targetId || '');
+        } else if (req.payload?.name) {
+          void executeAddCategory(req.payload.name, req.payload.description);
+        }
+        break;
+      default:
+        break;
+    }
+
+    const updatedReq: TeamChangeRequest = {
+      ...req,
+      status: 'approved',
+      reviewedById: currentUser.id,
+      reviewedByName: currentUser.name,
+      reviewedAt: new Date().toISOString(),
+      adminNote: adminNote?.trim() || undefined,
+    };
+    setTeamChangeRequests((prev) => prev.map((r) => (r.id === req.id ? updatedReq : r)));
+    upsertTeamRequestToDb(updatedReq).catch(() => {});
+    showToast(`Approved request "${req.title}".`);
+  };
+
+  const handleRejectTeamRequest = (req: TeamChangeRequest, adminNote?: string) => {
+    if (
+      !currentUser ||
+      (!isFullAccessAdmin(currentUser, users) &&
+        !canUserManageTeamScope(currentUser, req.teamScope, users))
+    ) {
+      showToast('Only an Admin of this team or Full-Access Admin can reject requests.');
+      return;
+    }
+    if (req.status !== 'pending') return;
+
+    const updatedReq: TeamChangeRequest = {
+      ...req,
+      status: 'rejected',
+      reviewedById: currentUser.id,
+      reviewedByName: currentUser.name,
+      reviewedAt: new Date().toISOString(),
+      adminNote: adminNote?.trim() || undefined,
+    };
+    setTeamChangeRequests((prev) => prev.map((r) => (r.id === req.id ? updatedReq : r)));
+    upsertTeamRequestToDb(updatedReq).catch(() => {});
+    showToast(`Rejected request "${req.title}".`);
   };
 
   // Refresh data from Supabase
@@ -4330,6 +4616,7 @@ export default function App() {
             bookings={bookings}
             products={products}
             currentUser={currentUser}
+            users={users}
             onShowToast={showToast}
           />
         )}
@@ -4419,14 +4706,19 @@ export default function App() {
             stageVendors={productStageVendors}
             priceHistory={vendorPriceHistory}
             currentUser={currentUser}
+            canEditBookings={canUserEditBookings(currentUser, users)}
+            teamRequests={teamChangeRequests}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
             onOpenNewBookingModal={() => {
               setBookingModalProduct(undefined);
               setBookingToEdit(null);
               setIsBookingModalOpen(true);
             }}
             onEditBooking={(booking) => {
-              if (!isUserAdmin(currentUser)) {
-                showToast('Only Admins can edit bookings.');
+              if (!canUserEditBookings(currentUser, users)) {
+                showToast('Only Budgeting & Liquidity Team or Full-Access Admin can edit bookings.');
                 return;
               }
               if (booking.status !== 'pending' || booking.depositPaid) {
@@ -4467,11 +4759,15 @@ export default function App() {
             users={users}
             currentUser={currentUser}
             scoutSeasons={scoutSeasons}
+            teamRequests={teamChangeRequests}
             onSaveItem={handleSaveCalendarEvent}
             onDeleteItem={handleDeleteCalendarEvent}
             onToggleTaskComplete={handleToggleCalendarTask}
             onSaveScoutSeason={handleSaveScoutSeason}
             onDeleteScoutSeason={handleDeleteScoutSeason}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
@@ -4483,14 +4779,18 @@ export default function App() {
             fare2Leaders={fare2Leaders}
             bookings={bookings}
             currentUser={currentUser}
+            teamRequests={teamChangeRequests}
             onSaveItem={handleSaveCalendarEvent}
             onDeleteItem={handleDeleteCalendarEvent}
             onMoveItemStatus={handleMoveBoardItem}
             onFare2LeaderChange={handleFare2LeaderChange}
             onUserTeamsChange={handleUserTeamsChange}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
             onOpenBooking={(bid) => {
               if (!canUserAccessView(currentUser, 'bookings', users)) {
-                showToast('Orders & Bookings page requires Scout Fera2 Team access.');
+                showToast('Orders & Bookings page requires Scout Fera2 or Budgeting Team access.');
                 return;
               }
               setSelectedBookingForDetails(bid);
@@ -4510,6 +4810,12 @@ export default function App() {
             stageVendors={productStageVendors}
             priceHistory={vendorPriceHistory}
             batches={productionBatches}
+            currentUser={currentUser}
+            users={users}
+            teamRequests={teamChangeRequests}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
             onSaveVendor={handleSaveVendor}
             onDeleteVendor={handleDeleteVendor}
             onSaveWorkflow={handleSaveWorkflow}
@@ -4528,7 +4834,12 @@ export default function App() {
             products={products}
             offers={marketingOffers}
             currentUser={currentUser}
+            users={users}
             canEditMedia={canEditProductMedia}
+            teamRequests={teamChangeRequests}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
             onSaveOffer={handleSaveMarketingOffer}
             onDeleteOffer={handleDeleteMarketingOffer}
             onEditProductMedia={(p) => {
@@ -4555,7 +4866,12 @@ export default function App() {
             budgetSettings={budgetSettings}
             scoutSeasons={scoutSeasons}
             currentUser={currentUser}
+            users={users}
             isUnlocked={isBudgetingUnlocked}
+            teamRequests={teamChangeRequests}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
             onUnlock={() => setIsBudgetingUnlocked(true)}
             onLock={() => setIsBudgetingUnlocked(false)}
             onOpenCalendar={() => handleNavigate('calendar')}
@@ -4592,7 +4908,7 @@ export default function App() {
           setShowAddModal(true);
         }}
         onOpenNewBooking={() => {
-          if (!canUserAccessView(currentUser, 'bookings', users)) return;
+          if (!canUserEditBookings(currentUser, users)) return;
           setBookingModalProduct(undefined);
           setBookingToEdit(null);
           setIsBookingModalOpen(true);

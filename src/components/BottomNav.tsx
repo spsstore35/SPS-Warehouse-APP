@@ -5,6 +5,7 @@ import {
   isUserAdmin,
   isUserLeader,
   canUserAccessView,
+  canUserEditBookings,
   getUserAssignedTeams,
   isFullAccessAdmin,
 } from '../utils/security';
@@ -53,6 +54,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
   const canAnalytics = canUserAccessView(currentUser, 'analytics', users);
   const canBookings = canUserAccessView(currentUser, 'bookings', users);
+  const allowEditBookings = canUserEditBookings(currentUser, users);
   const canCalendar = canUserAccessView(currentUser, 'calendar', users);
   const canBoard = canUserAccessView(currentUser, 'board', users);
   const canSourcing = canUserAccessView(currentUser, 'sourcing', users);
@@ -606,7 +608,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 </button>
               )}
 
-              {canBookings && (
+              {allowEditBookings && (
                 <button
                   type="button"
                   onClick={() => {
@@ -656,7 +658,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 </button>
               )}
 
-              {!canAddProduct && !canBookings && !canCalendar && (
+              {!canAddProduct && !allowEditBookings && !canCalendar && (
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 text-center">
                   Your current account access is limited to your assigned Store Team workspace.
                 </div>
