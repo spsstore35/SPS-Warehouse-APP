@@ -31,6 +31,7 @@ import {
   ProductStageVendor,
   VendorPriceEntry,
   ProductionBatch,
+  CustomStageDefinition,
   OperationStageKey,
   VendorBehaviorTag,
   BookingStockCheckStatus,
@@ -2154,15 +2155,50 @@ export async function fetchSourcingDataFromDb(): Promise<{
       createdAt: String(r.created_at || new Date().toISOString()),
     }));
 
-    const workflows: ProductWorkflow[] = (wfRes.data || []).map((r: any) => ({
-      id: String(r.id),
-      productId: String(r.product_id),
-      workflowType: r.workflow_type === 'ready_made' ? 'ready_made' : 'manufactured',
-      activeStages: Array.isArray(r.active_stages)
-        ? (r.active_stages as OperationStageKey[])
-        : [],
-      updatedAt: r.updated_at || undefined,
-    }));
+    const workflows: ProductWorkflow[] = (wfRes.data || []).map((r: any) => {
+      const rawStages = Array.isArray(r.active_stages) ? r.active_stages : [];
+      let embeddedMeta: {
+        customStages?: Record<string, CustomStageDefinition>;
+        sharedGroupId?: string;
+        sharedGroupName?: string;
+        templateSourceProductId?: string;
+      } = {};
+      const activeStages: OperationStageKey[] = [];
+
+      rawStages.forEach((entry: any) => {
+        const s = String(entry || '');
+        if (s.startsWith('__meta__:')) {
+          try {
+            const parsed = JSON.parse(s.slice(9));
+            if (parsed && typeof parsed === 'object') {
+              embeddedMeta = parsed;
+            }
+          } catch {
+            // ignore malformed metadata marker
+          }
+        } else if (s) {
+          activeStages.push(s as OperationStageKey);
+        }
+      });
+
+      const customStages =
+        r.custom_stages && typeof r.custom_stages === 'object' && Object.keys(r.custom_stages).length > 0
+          ? (r.custom_stages as Record<string, CustomStageDefinition>)
+          : embeddedMeta.customStages;
+
+      return {
+        id: String(r.id),
+        productId: String(r.product_id),
+        workflowType: r.workflow_type === 'ready_made' ? 'ready_made' : 'manufactured',
+        activeStages,
+        customStages: customStages && Object.keys(customStages).length > 0 ? customStages : undefined,
+        sharedGroupId: r.shared_group_id || embeddedMeta.sharedGroupId || undefined,
+        sharedGroupName: r.shared_group_name || embeddedMeta.sharedGroupName || undefined,
+        templateSourceProductId:
+          r.template_source_product_id || embeddedMeta.templateSourceProductId || undefined,
+        updatedAt: r.updated_at || undefined,
+      };
+    });
 
     const stageVendors: ProductStageVendor[] = (psvRes.data || []).map((r: any) => ({
       id: String(r.id),
@@ -2235,16 +2271,58 @@ export async function deleteVendorFromDb(vendorId: string): Promise<void> {
 }
 
 export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<void> {
-  const { error } = await supabase.from('product_workflows').upsert(
+  const cleanStages = (wf.activeStages || []).filter((s) => !String(s).startsWith('__meta__:'));
+  const hasMeta =
+    Boolean(wf.customStages && Object.keys(wf.customStages).length > 0) ||
+    Boolean(wf.sharedGroupId) ||
+    Boolean(wf.sharedGroupName) ||
+    Boolean(wf.templateSourceProductId);
+
+  const encodedStages = hasMeta
+    ? [
+        ...cleanStages,
+        `__meta__:${JSON.stringify({
+          customStages: wf.customStages || undefined,
+          sharedGroupId: wf.sharedGroupId || undefined,
+          sharedGroupName: wf.sharedGroupName || undefined,
+          templateSourceProductId: wf.templateSourceProductId || undefined,
+        })}`,
+      ]
+    : cleanStages;
+
+  const basePayload = {
+    id: wf.id,
+    product_id: wf.productId,
+    workflow_type: wf.workflowType,
+    active_stages: encodedStages,
+    updated_at: wf.updatedAt || new Date().toISOString(),
+  };
+
+  let { error } = await supabase.from('product_workflows').upsert(
     {
-      id: wf.id,
-      product_id: wf.productId,
-      workflow_type: wf.workflowType,
-      active_stages: wf.activeStages,
-      updated_at: wf.updatedAt || new Date().toISOString(),
+      ...basePayload,
+      custom_stages: wf.customStages || {},
+      shared_group_id: wf.sharedGroupId || null,
+      shared_group_name: wf.sharedGroupName || null,
+      template_source_product_id: wf.templateSourceProductId || null,
     },
     { onConflict: 'product_id' }
   );
+
+  if (
+    error &&
+    (error.message?.includes('custom_stages') ||
+      error.message?.includes('shared_group') ||
+      error.message?.includes('template_source_product_id') ||
+      (error as any).code === 'PGRST204' ||
+      (error as any).code === '42703')
+  ) {
+    const retry = await supabase
+      .from('product_workflows')
+      .upsert(basePayload, { onConflict: 'product_id' });
+    error = retry.error;
+  }
+
   if (error) throw error;
 }
 

@@ -32,8 +32,8 @@ interface AdminAnalyticsViewProps {
 }
 
 type DatePreset = 'all' | 'today' | '7d' | 'month' | '30d' | 'custom';
-type SalesPaymentFilter = 'all' | 'paid' | 'pending';
-type AggregatorFilter = 'all' | 'paid' | 'pending_fulfillment';
+type SalesPaymentFilter = 'all' | 'preparing' | 'done';
+type AggregatorFilter = 'all' | 'preparing' | 'done';
 type SalesSortKey = 'revenue' | 'qty' | 'name';
 
 const KNOWN_BRANCHES = [
@@ -77,7 +77,12 @@ const resolveBookingBranchName = (b: Booking): string => {
 };
 
 const isOrderPaidOrConfirmed = (b: Booking): boolean =>
-  Boolean(b.depositPaid || b.status !== 'pending');
+  Boolean(
+    b.depositPaid ||
+      (typeof b.depositPaidAmount === 'number' && b.depositPaidAmount > 0) ||
+      (typeof b.finalPaidAmount === 'number' && b.finalPaidAmount > 0) ||
+      b.status === 'done'
+  );
 
 const getCollectedCashForBooking = (b: Booking): number => {
   if (b.status === 'done') return b.total;
@@ -149,8 +154,8 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
   const [toDate, setToDate] = useState<string>('');
   const [branchFilter, setBranchFilter] = useState<string>('All Branches');
 
-  // Section 1B: Product Sales Filters (default to paid & confirmed only until payment/deposit is accepted)
-  const [salesPaymentFilter, setSalesPaymentFilter] = useState<SalesPaymentFilter>('paid');
+  // Section 1B: Product Sales Filters (strictly paid & deposit-accepted orders only)
+  const [salesPaymentFilter, setSalesPaymentFilter] = useState<SalesPaymentFilter>('all');
   const [salesSearch, setSalesSearch] = useState<string>('');
   const [salesSortKey, setSalesSortKey] = useState<SalesSortKey>('revenue');
   const [salesSortAsc, setSalesSortAsc] = useState<boolean>(false);
@@ -209,10 +214,11 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     }
   };
 
-  // All unique branch options
+  // All unique branch options (strictly from paid/confirmed orders)
   const branchOptions = useMemo(() => {
     const set = new Set<string>(KNOWN_BRANCHES);
     bookings.forEach((b) => {
+      if (!isOrderPaidOrConfirmed(b)) return;
       const grp = resolveBookingBranchName(b);
       if (grp && grp !== 'Unassigned') set.add(grp);
     });
@@ -232,9 +238,11 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     return m;
   }, [products]);
 
-  // Filter Bookings by Date Range + Branch
+  // Filter Bookings by Paid/Confirmed Status + Date Range + Branch (strictly excludes unpaid orders)
   const dateAndBranchFilteredBookings = useMemo(() => {
     return bookings.filter((b) => {
+      if (!isOrderPaidOrConfirmed(b)) return false;
+
       const orderDay = toOrderDateKey(b.createdAt);
       if (fromDate && orderDay && orderDay < fromDate) return false;
       if (toDate && orderDay && orderDay > toDate) return false;
@@ -252,71 +260,57 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     });
   }, [bookings, fromDate, toDate, branchFilter]);
 
-  // Section 1A: KPI Metrics
+  // Section 1A: KPI Metrics (Paid & Deposit-Accepted Orders Only)
   const kpiMetrics = useMemo(() => {
     const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-    let totalRevenue = 0;
     let confirmedRevenue = 0;
-    let pendingRevenue = 0;
     let collectedCash = 0;
-    let totalUnitsSold = 0;
     let confirmedUnits = 0;
-    let pendingUnits = 0;
+    let preparingUnits = 0;
+    let completedUnits = 0;
     let confirmedOrdersCount = 0;
-    let pendingOrdersCount = 0;
+    let preparingOrdersCount = 0;
     let completedOrdersCount = 0;
 
     dateAndBranchFilteredBookings.forEach((b) => {
-      const paid = isOrderPaidOrConfirmed(b);
       const orderTotal = Math.max(0, Number(b.total) || 0);
       const units = b.items.reduce((s, it) => s + (it.quantity || 0), 0);
-      totalRevenue += orderTotal;
-      totalUnitsSold += units;
 
-      if (paid) {
-        confirmedRevenue += orderTotal;
-        confirmedUnits += units;
-        confirmedOrdersCount += 1;
-        collectedCash += Math.min(orderTotal, Math.max(0, getCollectedCashForBooking(b)));
-      } else {
-        pendingRevenue += orderTotal;
-        pendingUnits += units;
-        pendingOrdersCount += 1;
-      }
+      confirmedRevenue += orderTotal;
+      confirmedUnits += units;
+      confirmedOrdersCount += 1;
+      collectedCash += Math.min(orderTotal, Math.max(0, getCollectedCashForBooking(b)));
 
       if (b.status === 'done') {
         completedOrdersCount += 1;
+        completedUnits += units;
+      } else {
+        preparingOrdersCount += 1;
+        preparingUnits += units;
       }
     });
 
-    totalRevenue = round2(totalRevenue);
     confirmedRevenue = round2(confirmedRevenue);
-    pendingRevenue = round2(pendingRevenue);
     collectedCash = round2(Math.min(confirmedRevenue, collectedCash));
-    const receivableBalance = round2(Math.max(0, totalRevenue - collectedCash));
     const confirmedRemainingBalance = round2(Math.max(0, confirmedRevenue - collectedCash));
     const collectedPct = confirmedRevenue > 0 ? Math.round((collectedCash / confirmedRevenue) * 100) : 0;
 
     return {
-      totalRevenue,
       confirmedRevenue,
-      pendingRevenue,
       collectedCash,
-      receivableBalance,
       confirmedRemainingBalance,
       collectedPct,
-      totalUnitsSold,
       confirmedUnits,
-      pendingUnits,
-      totalOrders: dateAndBranchFilteredBookings.length,
+      preparingUnits,
+      completedUnits,
       confirmedOrdersCount,
-      pendingOrdersCount,
+      preparingOrdersCount,
       completedOrdersCount,
     };
   }, [dateAndBranchFilteredBookings]);
 
-  // Section 1B: Product Sales Breakdown (with Sales Payment Filter)
+  // Section 1B: Product Sales Breakdown (Strictly Paid & Confirmed Orders)
   const productSalesRows = useMemo(() => {
     const map = new Map<
       string,
@@ -327,19 +321,21 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         sku: string;
         category: string;
         qtySold: number;
-        confirmedQty: number;
-        pendingQty: number;
+        preparingQty: number;
+        doneQty: number;
         totalRevenue: number;
         confirmedRevenue: number;
-        pendingRevenue: number;
+        preparingRevenue: number;
+        doneRevenue: number;
         orderIds: Set<string>;
       }
     >();
 
     dateAndBranchFilteredBookings.forEach((b) => {
-      const paid = isOrderPaidOrConfirmed(b);
-      if (salesPaymentFilter === 'paid' && !paid) return;
-      if (salesPaymentFilter === 'pending' && paid) return;
+      if (salesPaymentFilter === 'preparing' && b.status === 'done') return;
+      if (salesPaymentFilter === 'done' && b.status !== 'done') return;
+
+      const isDone = b.status === 'done';
 
       b.items.forEach((it) => {
         const catProd =
@@ -353,11 +349,12 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
           sku: catProd?.sku || it.productSku || '—',
           category: catProd?.category || 'Apparel & Gear',
           qtySold: 0,
-          confirmedQty: 0,
-          pendingQty: 0,
+          preparingQty: 0,
+          doneQty: 0,
           totalRevenue: 0,
           confirmedRevenue: 0,
-          pendingRevenue: 0,
+          preparingRevenue: 0,
+          doneRevenue: 0,
           orderIds: new Set<string>(),
         };
 
@@ -365,14 +362,15 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         const lineTotal = it.totalPrice || qty * (it.unitPrice || 0);
         existing.qtySold += qty;
         existing.totalRevenue += lineTotal;
+        existing.confirmedRevenue += lineTotal;
         existing.orderIds.add(b.id);
 
-        if (paid) {
-          existing.confirmedQty += qty;
-          existing.confirmedRevenue += lineTotal;
+        if (isDone) {
+          existing.doneQty += qty;
+          existing.doneRevenue += lineTotal;
         } else {
-          existing.pendingQty += qty;
-          existing.pendingRevenue += lineTotal;
+          existing.preparingQty += qty;
+          existing.preparingRevenue += lineTotal;
         }
 
         map.set(key, existing);
@@ -397,15 +395,9 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     list.sort((a, b) => {
       let cmp = 0;
       if (salesSortKey === 'revenue') {
-        cmp =
-          salesPaymentFilter === 'pending'
-            ? a.pendingRevenue - b.pendingRevenue
-            : a.confirmedRevenue - b.confirmedRevenue;
+        cmp = a.confirmedRevenue - b.confirmedRevenue;
       } else if (salesSortKey === 'qty') {
-        cmp =
-          salesPaymentFilter === 'pending'
-            ? a.pendingQty - b.pendingQty
-            : a.confirmedQty - b.confirmedQty;
+        cmp = a.qtySold - b.qtySold;
       } else {
         cmp = a.productName.localeCompare(b.productName);
       }
@@ -429,9 +421,10 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         qty: acc.qty + r.qtySold,
         revenue: acc.revenue + r.totalRevenue,
         confirmedRevenue: acc.confirmedRevenue + r.confirmedRevenue,
-        pendingRevenue: acc.pendingRevenue + r.pendingRevenue,
+        preparingRevenue: acc.preparingRevenue + r.preparingRevenue,
+        doneRevenue: acc.doneRevenue + r.doneRevenue,
       }),
-      { qty: 0, revenue: 0, confirmedRevenue: 0, pendingRevenue: 0 }
+      { qty: 0, revenue: 0, confirmedRevenue: 0, preparingRevenue: 0, doneRevenue: 0 }
     );
   }, [productSalesRows]);
 
@@ -617,13 +610,15 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     );
   };
 
-  // Bookings filtered specifically for Section 3 (uses aggregator date window if set, else global date range; plus multi-select Fare2)
+  // Bookings filtered specifically for Section 3 (strictly paid/confirmed orders only)
   const aggregatorMatchedBookings = useMemo(() => {
     const effFrom = aggFromDate || fromDate;
     const effTo = aggToDate || toDate;
     const fare2Set = new Set(aggregatorFare2.map((f) => f.toLowerCase()));
 
     return bookings.filter((b) => {
+      if (!isOrderPaidOrConfirmed(b)) return false;
+
       const orderDay = toOrderDateKey(b.createdAt);
       if (effFrom && orderDay && orderDay < effFrom) return false;
       if (effTo && orderDay && orderDay > effTo) return false;
@@ -640,11 +635,8 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         }
       }
 
-      const paid = isOrderPaidOrConfirmed(b);
-      if (aggregatorFilter === 'paid' && !paid) return false;
-      if (aggregatorFilter === 'pending_fulfillment') {
-        if (b.status !== 'pending' && b.status !== 'preparing') return false;
-      }
+      if (aggregatorFilter === 'preparing' && b.status === 'done') return false;
+      if (aggregatorFilter === 'done' && b.status !== 'done') return false;
       return true;
     });
   }, [
@@ -782,11 +774,11 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       const rangeLabel =
         effFrom || effTo ? `${effFrom || 'Start'}_to_${effTo || 'Today'}` : 'All_Time';
       const statusLabel =
-        aggregatorFilter === 'paid'
-          ? 'Paid_Confirmed_Only'
-          : aggregatorFilter === 'pending_fulfillment'
-          ? 'Pending_Fulfillment'
-          : 'All_Orders';
+        aggregatorFilter === 'preparing'
+          ? 'In_Fulfillment_Paid'
+          : aggregatorFilter === 'done'
+          ? 'Completed_Paid'
+          : 'All_Paid_Orders';
 
       // Sheet 1: Master Production & Procurement Aggregator
       const prodSheetRows = productionAggregatorRows.map((r) => ({
@@ -797,8 +789,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         Size: r.size,
         Color: r.colorName,
         'Total Qty Needed': r.totalNeeded,
-        'Confirmed Orders Qty': r.confirmedNeeded,
-        'Pending Payment Qty': r.pendingNeeded,
+        'Paid Orders Qty': r.confirmedNeeded,
         'Live Warehouse Stock': r.warehouseStock,
         'Net To Make / Order (Deficit)': r.netToMake,
         'Contributing Orders': r.ordersCount,
@@ -819,7 +810,6 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         { wch: 16 },
         { wch: 18 },
         { wch: 18 },
-        { wch: 18 },
         { wch: 24 },
         { wch: 16 },
         { wch: 30 },
@@ -831,19 +821,19 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         Product: r.productName,
         SKU: r.sku,
         Category: r.category,
-        'Total Qty Sold': r.qtySold,
-        'Confirmed Qty': r.confirmedQty,
-        'Pending Qty': r.pendingQty,
+        'Paid Qty Sold': r.qtySold,
+        'Preparing Qty': r.preparingQty,
+        'Completed Qty': r.doneQty,
         'Avg Unit Price (EGP)': Number(r.unitPrice.toFixed(2)),
-        'Total Revenue (EGP)': Number(r.totalRevenue.toFixed(2)),
         'Confirmed Revenue (EGP)': Number(r.confirmedRevenue.toFixed(2)),
-        'Pending Revenue (EGP)': Number(r.pendingRevenue.toFixed(2)),
+        'In Preparation Revenue (EGP)': Number(r.preparingRevenue.toFixed(2)),
+        'Completed Revenue (EGP)': Number(r.doneRevenue.toFixed(2)),
         'Orders Count': r.ordersCount,
       }));
       const wsSales = XLSX.utils.json_to_sheet(
         salesSheetRows.length > 0
           ? salesSheetRows
-          : [{ Message: 'No sales recorded for the selected date range.' }]
+          : [{ Message: 'No paid sales recorded for the selected date range.' }]
       );
       wsSales['!cols'] = [
         { wch: 28 },
@@ -853,9 +843,9 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
         { wch: 14 },
         { wch: 14 },
         { wch: 18 },
-        { wch: 20 },
         { wch: 22 },
-        { wch: 20 },
+        { wch: 22 },
+        { wch: 22 },
         { wch: 14 },
       ];
       XLSX.utils.book_append_sheet(wb, wsSales, 'Product Sales');
@@ -1149,9 +1139,7 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                 <span className="text-sm font-bold text-slate-500">EGP</span>
               </div>
               <div className="text-[11px] font-mono tabular-nums text-slate-500 mt-1">
-                Cash Collected: <strong className="text-emerald-700">{formatCurrency(kpiMetrics.collectedCash)} EGP</strong>
-                {' · '}
-                Unpaid Quotes (Excluded): <strong className="text-amber-700">{formatCurrency(kpiMetrics.pendingRevenue)} EGP</strong>
+                Unpaid orders are excluded until deposit or payment is accepted
               </div>
             </div>
 
@@ -1194,25 +1182,25 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                 <span className="text-sm font-bold text-slate-500">pcs</span>
               </div>
               <div className="text-xs text-slate-500 mt-1">
-                From payment-accepted orders (unpaid quotes excluded)
+                Strictly from payment-accepted orders
               </div>
             </div>
 
             <div className="pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
               <div>
-                <div className="text-[10px] font-bold uppercase text-emerald-700">
-                  Confirmed Units
+                <div className="text-[10px] font-bold uppercase text-blue-700">
+                  In Fulfillment
                 </div>
                 <div className="font-mono tabular-nums font-black text-slate-900">
-                  {kpiMetrics.confirmedUnits.toLocaleString()} pcs
+                  {kpiMetrics.preparingUnits.toLocaleString()} pcs
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[10px] font-bold uppercase text-amber-700">
-                  Awaiting Payment
+                <div className="text-[10px] font-bold uppercase text-emerald-700">
+                  Delivered / Done
                 </div>
                 <div className="font-mono tabular-nums font-black text-slate-900">
-                  {kpiMetrics.pendingUnits.toLocaleString()} pcs
+                  {kpiMetrics.completedUnits.toLocaleString()} pcs
                 </div>
               </div>
             </div>
@@ -1238,19 +1226,19 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
 
             <div className="pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
               <div>
-                <div className="text-[10px] font-bold uppercase text-emerald-700">
+                <div className="text-[10px] font-bold uppercase text-blue-700">
                   Paid / Preparing
                 </div>
                 <div className="font-mono tabular-nums font-black text-slate-900">
-                  {kpiMetrics.confirmedOrdersCount} orders
+                  {kpiMetrics.preparingOrdersCount} orders
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[10px] font-bold uppercase text-amber-700">
-                  Awaiting Deposit
+                <div className="text-[10px] font-bold uppercase text-emerald-700">
+                  Completed (Done)
                 </div>
                 <div className="font-mono tabular-nums font-black text-slate-900">
-                  {kpiMetrics.pendingOrdersCount} orders
+                  {kpiMetrics.completedOrdersCount} orders
                 </div>
               </div>
             </div>
@@ -1264,18 +1252,18 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
           <div>
             <h2 className="text-base font-black text-slate-900">Product Sales Breakdown</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Quantity sold, unit price, and total revenue per catalog item
+              Quantity sold, unit price, and confirmed revenue from paid orders only
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Payment Status Filter */}
+            {/* Fulfillment Filter (Paid orders only) */}
             <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
               {(
                 [
-                  { id: 'paid', label: 'Paid & Confirmed' },
-                  { id: 'all', label: 'All Orders' },
-                  { id: 'pending', label: 'Unpaid Quotes' },
+                  { id: 'all', label: 'All Paid Orders' },
+                  { id: 'preparing', label: 'In Preparation' },
+                  { id: 'done', label: 'Completed' },
                 ] as const
               ).map((tab) => (
                 <button
@@ -1348,16 +1336,14 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                       </button>
                     </th>
                     <th className="py-3 px-4 font-bold text-right">Avg Unit Price</th>
-                    <th className="py-3 px-4 font-bold text-right">Paid vs Pending</th>
+                    <th className="py-3 px-4 font-bold text-right">Preparing / Done</th>
                     <th className="py-3 px-4 font-bold text-right">
                       <button
                         type="button"
                         onClick={() => toggleSort('revenue')}
                         className="inline-flex items-center gap-1 hover:text-slate-900 ml-auto"
                       >
-                        <span>
-                          {salesPaymentFilter === 'pending' ? 'Unpaid Quote Value' : 'Confirmed Revenue'}
-                        </span>
+                        <span>Confirmed Revenue</span>
                         <ArrowUpDown className="w-3 h-3" />
                       </button>
                     </th>
@@ -1373,25 +1359,22 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                         </div>
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums font-black text-slate-900">
-                        {(salesPaymentFilter === 'pending' ? row.pendingQty : row.confirmedQty).toLocaleString()} pcs
+                        {row.qtySold.toLocaleString()} pcs
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-700">
                         {formatCurrency(row.unitPrice)} EGP
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-[11px]">
-                        <span className="text-emerald-700 font-bold">
-                          {formatCurrency(row.confirmedRevenue)}
+                        <span className="text-blue-700 font-bold">
+                          {formatCurrency(row.preparingRevenue)}
                         </span>
                         <span className="text-slate-400 mx-1">/</span>
-                        <span className="text-amber-700 font-bold">
-                          {formatCurrency(row.pendingRevenue)}
+                        <span className="text-emerald-700 font-bold">
+                          {formatCurrency(row.doneRevenue)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums font-black text-slate-900">
-                        {formatCurrency(
-                          salesPaymentFilter === 'pending' ? row.pendingRevenue : row.confirmedRevenue
-                        )}{' '}
-                        EGP
+                        {formatCurrency(row.confirmedRevenue)} EGP
                       </td>
                     </tr>
                   ))}
@@ -1400,29 +1383,20 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                   <tr>
                     <td className="py-3 px-4">Total ({productSalesRows.length} items)</td>
                     <td className="py-3 px-4 text-right font-mono tabular-nums">
-                      {(salesPaymentFilter === 'pending'
-                        ? productSalesRows.reduce((s, r) => s + r.pendingQty, 0)
-                        : productSalesRows.reduce((s, r) => s + r.confirmedQty, 0)
-                      ).toLocaleString()}{' '}
-                      pcs
+                      {productSalesRows.reduce((s, r) => s + r.qtySold, 0).toLocaleString()} pcs
                     </td>
                     <td className="py-3 px-4 text-right text-slate-400">—</td>
                     <td className="py-3 px-4 text-right font-mono tabular-nums text-[11px]">
-                      <span className="text-emerald-700">
-                        {formatCurrency(productSalesTotals.confirmedRevenue)}
+                      <span className="text-blue-700">
+                        {formatCurrency(productSalesTotals.preparingRevenue)}
                       </span>
                       <span className="text-slate-400 mx-1">/</span>
-                      <span className="text-amber-700">
-                        {formatCurrency(productSalesTotals.pendingRevenue)}
+                      <span className="text-emerald-700">
+                        {formatCurrency(productSalesTotals.doneRevenue)}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right font-mono tabular-nums">
-                      {formatCurrency(
-                        salesPaymentFilter === 'pending'
-                          ? productSalesTotals.pendingRevenue
-                          : productSalesTotals.confirmedRevenue
-                      )}{' '}
-                      EGP
+                      {formatCurrency(productSalesTotals.confirmedRevenue)} EGP
                     </td>
                   </tr>
                 </tfoot>
@@ -1447,23 +1421,19 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
                     </div>
                     <div className="text-right shrink-0">
                       <div className="font-mono tabular-nums font-black text-sm text-slate-900">
-                        {formatCurrency(
-                          salesPaymentFilter === 'pending' ? row.pendingRevenue : row.confirmedRevenue
-                        )}{' '}
-                        EGP
+                        {formatCurrency(row.confirmedRevenue)} EGP
                       </div>
                       <div className="text-[11px] font-mono tabular-nums text-slate-600">
-                        {salesPaymentFilter === 'pending' ? row.pendingQty : row.confirmedQty} pcs @{' '}
-                        {formatCurrency(row.unitPrice)}
+                        {row.qtySold} pcs @ {formatCurrency(row.unitPrice)}
                       </div>
                     </div>
                   </div>
                   <div className="pt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px] font-mono tabular-nums">
-                    <span className="text-emerald-700 font-bold">
-                      Paid: {formatCurrency(row.confirmedRevenue)} EGP
+                    <span className="text-blue-700 font-bold">
+                      Preparing: {formatCurrency(row.preparingRevenue)} EGP
                     </span>
-                    <span className="text-amber-700 font-bold">
-                      Unpaid: {formatCurrency(row.pendingRevenue)} EGP
+                    <span className="text-emerald-700 font-bold">
+                      Completed: {formatCurrency(row.doneRevenue)} EGP
                     </span>
                   </div>
                 </div>
@@ -1813,9 +1783,9 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
             <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200 overflow-x-auto scrollbar-none">
               {(
                 [
-                  { id: 'all', label: 'All Orders' },
-                  { id: 'paid', label: 'Paid & Confirmed Only' },
-                  { id: 'pending_fulfillment', label: 'Pending Fulfillment' },
+                  { id: 'all', label: 'All Paid Orders' },
+                  { id: 'preparing', label: 'Paid · In Fulfillment' },
+                  { id: 'done', label: 'Paid · Completed' },
                 ] as const
               ).map((opt) => (
                 <button

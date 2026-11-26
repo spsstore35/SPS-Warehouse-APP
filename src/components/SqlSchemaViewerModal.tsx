@@ -237,7 +237,17 @@ CREATE INDEX IF NOT EXISTS idx_team_change_requests_scope_status
 ALTER TABLE public.team_change_requests ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow public all access on team_change_requests" ON public.team_change_requests;
 CREATE POLICY "Allow public all access on team_change_requests" ON public.team_change_requests FOR ALL USING (true) WITH CHECK (true);
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.team_change_requests TO anon, authenticated;`;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.team_change_requests TO anon, authenticated;
+
+-- 10. Custom Per-Item Pipelines & Shared Estamba Template Groups
+ALTER TABLE public.product_workflows
+  ADD COLUMN IF NOT EXISTS custom_stages JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS shared_group_id TEXT,
+  ADD COLUMN IF NOT EXISTS shared_group_name TEXT,
+  ADD COLUMN IF NOT EXISTS template_source_product_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_product_workflows_shared_group
+  ON public.product_workflows (shared_group_id);`;
 
   const fullSchemaSql = `-- ==============================================================================
 -- WEARHOUSE APPAREL INVENTORY - SUPABASE & POSTGRESQL PRODUCTION SCHEMA

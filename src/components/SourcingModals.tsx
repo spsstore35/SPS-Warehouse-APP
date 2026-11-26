@@ -1,16 +1,34 @@
 import React, { useEffect, useState } from 'react';
 import {
   BatchStageAssignment,
+  CustomStageDefinition,
   OperationStageKey,
   Product,
   ProductStageVendor,
+  ProductWorkflow,
   ProductionBatch,
   Vendor,
   VendorBehaviorTag,
   VendorPriceEntry,
+  WorkflowTemplateApplication,
 } from '../types/inventory';
 import { VENDOR_TAG_GROUPS, getStageMeta } from '../utils/sourcing';
-import { X, Check, MapPin, Phone, User as UserIcon, Package, Factory, Calendar } from 'lucide-react';
+import {
+  X,
+  Check,
+  MapPin,
+  Phone,
+  User as UserIcon,
+  Package,
+  Factory,
+  Calendar,
+  Copy,
+  Link2,
+  Unlink,
+  Search,
+  ArrowRight,
+  Layers,
+} from 'lucide-react';
 
 interface GlobalVendorModalProps {
   isOpen: boolean;
@@ -263,6 +281,7 @@ interface StartBatchModalProps {
   isOpen: boolean;
   product: Product;
   activeStages: OperationStageKey[];
+  customStages?: Record<string, CustomStageDefinition>;
   vendors: Vendor[];
   productStageVendors: ProductStageVendor[];
   priceHistory: VendorPriceEntry[];
@@ -276,6 +295,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
   isOpen,
   product,
   activeStages,
+  customStages,
   vendors,
   productStageVendors,
   priceHistory,
@@ -472,7 +492,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
             </div>
             <div className="space-y-2">
               {productionStages.map((stageKey, idx) => {
-                const meta = getStageMeta(stageKey);
+                const meta = getStageMeta(stageKey, customStages);
                 const stageLinks = productStageVendors.filter(
                   (psv) => psv.productId === product.id && psv.stageKey === stageKey
                 );
@@ -593,6 +613,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
 interface CompleteStockInModalProps {
   batch: ProductionBatch | null;
   product: Product | null;
+  customStages?: Record<string, CustomStageDefinition>;
   vendors: Vendor[];
   onClose: () => void;
   onConfirm: (payload: {
@@ -605,6 +626,7 @@ interface CompleteStockInModalProps {
 export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
   batch,
   product,
+  customStages,
   vendors,
   onClose,
   onConfirm,
@@ -692,7 +714,10 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
                 {assignedCostStages.map(([stageKey, val]) => {
                   const vendorName =
                     vendors.find((v) => v.id === val.vendorId)?.name || 'Vendor';
-                  const stageName = getStageMeta(stageKey as OperationStageKey).shortLabel;
+                  const stageName = getStageMeta(
+                    stageKey as OperationStageKey,
+                    customStages
+                  ).shortLabel;
                   return (
                     <div key={stageKey} className="flex items-center justify-between gap-2">
                       <span className="truncate">
@@ -732,6 +757,356 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
               <span>Confirm Stock In</span>
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface ApplyWorkflowTemplateModalProps {
+  isOpen: boolean;
+  targetProduct: Product;
+  targetWorkflow: ProductWorkflow;
+  products: Product[];
+  stageVendors: ProductStageVendor[];
+  getEffectiveWorkflow: (product: Product) => ProductWorkflow;
+  onClose: () => void;
+  onApply: (payload: WorkflowTemplateApplication) => void;
+}
+
+export const ApplyWorkflowTemplateModal: React.FC<ApplyWorkflowTemplateModalProps> = ({
+  isOpen,
+  targetProduct,
+  targetWorkflow,
+  products,
+  stageVendors,
+  getEffectiveWorkflow,
+  onClose,
+  onApply,
+}) => {
+  const [search, setSearch] = useState('');
+  const [selectedSourceId, setSelectedSourceId] = useState<string>('');
+  const [mode, setMode] = useState<'same_all' | 'pipeline_only'>('same_all');
+  const [groupName, setGroupName] = useState('');
+
+  const candidateProducts = products.filter(
+    (p) => p.id !== targetProduct.id && p.status !== 'pending'
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSearch('');
+    setSelectedSourceId('');
+    setMode('same_all');
+    setGroupName(
+      targetWorkflow.sharedGroupName ||
+        `${targetProduct.category || targetProduct.name} Shared Estamba`
+    );
+  }, [isOpen, targetProduct, targetWorkflow.sharedGroupName]);
+
+  const selectedSourceProduct = candidateProducts.find((p) => p.id === selectedSourceId) || null;
+  const selectedSourceWf = selectedSourceProduct
+    ? getEffectiveWorkflow(selectedSourceProduct)
+    : null;
+
+  useEffect(() => {
+    if (!selectedSourceProduct || !selectedSourceWf) return;
+    if (selectedSourceWf.sharedGroupName) {
+      setGroupName(selectedSourceWf.sharedGroupName);
+    } else if (!targetWorkflow.sharedGroupName) {
+      const base =
+        selectedSourceProduct.category && selectedSourceProduct.category !== 'Others'
+          ? `${selectedSourceProduct.category} Shared Estamba`
+          : `${selectedSourceProduct.name} Estamba`;
+      setGroupName(base);
+    }
+  }, [selectedSourceId, selectedSourceProduct, selectedSourceWf, targetWorkflow.sharedGroupName]);
+
+  if (!isOpen) return null;
+
+  const q = search.trim().toLowerCase();
+  const filteredCandidates = candidateProducts
+    .filter((p) => {
+      if (!q) return true;
+      const wf = getEffectiveWorkflow(p);
+      return `${p.name} ${p.sku} ${p.category} ${wf.sharedGroupName || ''}`
+        .toLowerCase()
+        .includes(q);
+    })
+    .sort((a, b) => {
+      const aSameCat = a.category === targetProduct.category ? 0 : 1;
+      const bSameCat = b.category === targetProduct.category ? 0 : 1;
+      if (aSameCat !== bSameCat) return aSameCat - bSameCat;
+      return a.name.localeCompare(b.name);
+    });
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden my-4 flex flex-col max-h-[90vh]">
+        <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-indigo-100 text-indigo-700 shrink-0">
+              <Copy className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-base font-bold text-slate-900 truncate">
+                Use Template / Shared Estamba
+              </h3>
+              <p className="text-xs text-slate-500 truncate">
+                Copy pipeline or sync vendors from another item onto{' '}
+                <strong className="text-slate-800">{targetProduct.name}</strong>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+            aria-label="Close modal"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {targetWorkflow.sharedGroupId && (
+            <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-start gap-2.5">
+                <Link2 className="w-4 h-4 text-indigo-700 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-indigo-950">
+                    Currently Linked: {targetWorkflow.sharedGroupName || 'Shared Estamba Group'}
+                  </div>
+                  <div className="text-[11px] text-indigo-700 mt-0.5">
+                    Any stage, vendor, ordering script, or price updates sync automatically across all items in this group.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  onApply({
+                    sourceProductId: targetProduct.id,
+                    targetProductId: targetProduct.id,
+                    mode: 'unlink',
+                  })
+                }
+                className="px-3 py-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 self-start sm:self-center"
+              >
+                <Unlink className="w-3.5 h-3.5" />
+                <span>Unlink Item</span>
+              </button>
+            </div>
+          )}
+
+          {/* Step 1: Pick source product */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-xs font-bold text-slate-800">
+                1. Choose Source Item (Estamba)
+              </label>
+              <span className="text-[11px] text-slate-500">
+                {filteredCandidates.length} items available
+              </span>
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search products by name, SKU, category, or shared group..."
+                className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+              />
+            </div>
+
+            <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+              {filteredCandidates.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  No matching items found.
+                </div>
+              ) : (
+                filteredCandidates.map((cand) => {
+                  const candWf = getEffectiveWorkflow(cand);
+                  const candVendorCount = new Set(
+                    stageVendors
+                      .filter((psv) => psv.productId === cand.id)
+                      .map((psv) => psv.vendorId)
+                  ).size;
+                  const isChosen = selectedSourceId === cand.id;
+
+                  return (
+                    <button
+                      key={cand.id}
+                      type="button"
+                      onClick={() => setSelectedSourceId(cand.id)}
+                      className={`w-full text-left p-3 flex items-start justify-between gap-3 transition-colors ${
+                        isChosen ? 'bg-slate-900 text-white' : 'bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`text-xs font-bold truncate ${
+                              isChosen ? 'text-white' : 'text-slate-900'
+                            }`}
+                          >
+                            {cand.name}
+                          </span>
+                          <span
+                            className={`text-[10px] font-mono ${
+                              isChosen ? 'text-slate-300' : 'text-slate-500'
+                            }`}
+                          >
+                            {cand.sku}
+                          </span>
+                          {candWf.sharedGroupId && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold inline-flex items-center gap-1 ${
+                                isChosen
+                                  ? 'bg-indigo-500/30 text-indigo-100'
+                                  : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                              }`}
+                            >
+                              <Link2 className="w-2.5 h-2.5" />
+                              <span>{candWf.sharedGroupName || 'Shared Group'}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div
+                          className={`text-[11px] flex items-center gap-1 flex-wrap ${
+                            isChosen ? 'text-slate-200' : 'text-slate-500'
+                          }`}
+                        >
+                          {candWf.activeStages.map((stKey, idx) => (
+                            <React.Fragment key={stKey}>
+                              <span>{getStageMeta(stKey, candWf.customStages).shortLabel}</span>
+                              {idx < candWf.activeStages.length - 1 && (
+                                <ArrowRight className="w-2.5 h-2.5 opacity-60 shrink-0" />
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div
+                        className={`text-[11px] font-mono shrink-0 text-right ${
+                          isChosen ? 'text-slate-200' : 'text-slate-600'
+                        }`}
+                      >
+                        <div>{candWf.activeStages.length} stages</div>
+                        <div>{candVendorCount} vendors</div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Step 2: Same Everything vs Estamba Only */}
+          {selectedSourceProduct && selectedSourceWf && (
+            <div className="space-y-3 pt-2 border-t border-slate-200">
+              <div className="text-xs font-bold text-slate-800">
+                2. Same Everything or Estamba Only?
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setMode('same_all')}
+                  className={`text-left p-3.5 rounded-xl border transition-all space-y-1.5 ${
+                    mode === 'same_all'
+                      ? 'border-indigo-600 bg-indigo-50/70 ring-2 ring-indigo-600/15'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-900 inline-flex items-center gap-1.5">
+                      <Link2 className="w-3.5 h-3.5 text-indigo-700" />
+                      <span>Same Everything (Sync All)</span>
+                    </span>
+                    {mode === 'same_all' && (
+                      <Check className="w-4 h-4 text-indigo-700 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Copies pipeline stages AND all vendors, ordering scripts &amp; prices, and links them live. Editing any item in the group automatically updates all linked items (stock &amp; batches stay separate).
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMode('pipeline_only')}
+                  className={`text-left p-3.5 rounded-xl border transition-all space-y-1.5 ${
+                    mode === 'pipeline_only'
+                      ? 'border-slate-900 bg-slate-50 ring-2 ring-slate-900/10'
+                      : 'border-slate-200 bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-900 inline-flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-slate-700" />
+                      <span>Estamba Only (Stages Only)</span>
+                    </span>
+                    {mode === 'pipeline_only' && (
+                      <Check className="w-4 h-4 text-slate-900 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Copies only the pipeline flowchart stages from{' '}
+                    <strong>{selectedSourceProduct.name}</strong>. Vendors, prices, and future edits remain independent.
+                  </p>
+                </button>
+              </div>
+
+              {mode === 'same_all' && (
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Shared Estamba Group Name
+                  </label>
+                  <input
+                    type="text"
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
+                    placeholder="e.g. Folar Variants Group"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold min-h-[38px]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!selectedSourceProduct}
+            onClick={() => {
+              if (!selectedSourceProduct) return;
+              onApply({
+                sourceProductId: selectedSourceProduct.id,
+                targetProductId: targetProduct.id,
+                mode,
+                sharedGroupName: mode === 'same_all' ? groupName.trim() || undefined : undefined,
+              });
+            }}
+            className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold inline-flex items-center gap-1.5 min-h-[38px]"
+          >
+            <Check className="w-4 h-4" />
+            <span>
+              {mode === 'same_all' ? 'Link & Sync Everything' : 'Copy Pipeline Estamba'}
+            </span>
+          </button>
         </div>
       </div>
     </div>

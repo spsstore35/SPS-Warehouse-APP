@@ -28,13 +28,14 @@ import {
   BatchStageAssignment,
   OperationStageKey,
   TeamChangeRequest,
+  WorkflowTemplateApplication,
 } from './types/inventory';
 import {
   getStoredUser,
   saveStoredUser,
   clearLegacyLocalEntityCaches,
 } from './utils/storage';
-import { getStageMeta } from './utils/sourcing';
+import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType } from './utils/sourcing';
 import { getEffectiveProductOffer } from './utils/offers';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import {
@@ -2360,7 +2361,7 @@ export default function App() {
         .filter(([, val]) => Boolean(val?.vendorId))
         .map(([sKey, val]) => {
           const vObj = vendors.find((v) => v.id === val.vendorId);
-          return `${getStageMeta(sKey as OperationStageKey).shortLabel}: ${
+          return `${getStageMeta(sKey as OperationStageKey, wf?.customStages).shortLabel}: ${
             vObj?.name || val.vendorId
           }${val.cost ? ` (${val.cost} EGP)` : ''}`;
         })
@@ -3294,33 +3295,135 @@ export default function App() {
     showToast(`Removed vendor "${target?.name || 'Vendor'}".`);
   };
 
+  const getEffectiveWorkflowForProduct = (productId: string): ProductWorkflow => {
+    const existing = productWorkflows.find((w) => w.productId === productId);
+    if (existing && existing.activeStages.length > 0) return existing;
+    const prod = products.find((p) => p.id === productId);
+    const inferredType =
+      existing?.workflowType || (prod ? inferDefaultWorkflowType(prod) : 'manufactured');
+    return {
+      id: existing?.id || `wf_${productId}`,
+      productId,
+      workflowType: inferredType,
+      activeStages: [...DEFAULT_STAGE_KEYS[inferredType]],
+      customStages: existing?.customStages,
+      sharedGroupId: existing?.sharedGroupId,
+      sharedGroupName: existing?.sharedGroupName,
+      templateSourceProductId: existing?.templateSourceProductId,
+      updatedAt: existing?.updatedAt,
+    };
+  };
+
   const handleSaveWorkflow = (workflow: ProductWorkflow) => {
+    const nowIso = workflow.updatedAt || new Date().toISOString();
+    const toSync: ProductWorkflow[] = [{ ...workflow, updatedAt: nowIso }];
+
+    if (workflow.sharedGroupId) {
+      productWorkflows.forEach((w) => {
+        if (
+          w.sharedGroupId === workflow.sharedGroupId &&
+          w.productId !== workflow.productId
+        ) {
+          toSync.push({
+            ...w,
+            workflowType: workflow.workflowType,
+            activeStages: [...workflow.activeStages],
+            customStages: workflow.customStages ? { ...workflow.customStages } : undefined,
+            sharedGroupId: workflow.sharedGroupId,
+            sharedGroupName: workflow.sharedGroupName,
+            updatedAt: nowIso,
+          });
+        }
+      });
+    }
+
+    const syncByProductId = new Map(toSync.map((w) => [w.productId, w]));
     setProductWorkflows((prev) => {
-      const exists = prev.some((w) => w.productId === workflow.productId);
-      return exists
-        ? prev.map((w) => (w.productId === workflow.productId ? workflow : w))
-        : [workflow, ...prev];
+      const updated = prev.map((w) => syncByProductId.get(w.productId) || w);
+      const existingIds = new Set(prev.map((w) => w.productId));
+      const added = toSync.filter((w) => !existingIds.has(w.productId));
+      return [...added, ...updated];
     });
-    upsertProductWorkflowToDb(workflow).catch((err) =>
-      showToast(`Database workflow sync error: ${err?.message || 'Sync failed'}`)
-    );
+
+    toSync.forEach((wf) => {
+      upsertProductWorkflowToDb(wf).catch((err) =>
+        showToast(`Database workflow sync error: ${err?.message || 'Sync failed'}`)
+      );
+    });
   };
 
   const handleSaveStageVendor = (link: ProductStageVendor) => {
-    const siblingsToClear: ProductStageVendor[] = [];
+    const sourceWf = productWorkflows.find((w) => w.productId === link.productId);
+    const groupProductIds = sourceWf?.sharedGroupId
+      ? productWorkflows
+          .filter((w) => w.sharedGroupId === sourceWf.sharedGroupId)
+          .map((w) => w.productId)
+      : [link.productId];
+    if (!groupProductIds.includes(link.productId)) {
+      groupProductIds.push(link.productId);
+    }
+
+    const toUpsert: ProductStageVendor[] = [];
+    const siblingLinksToAdd: ProductStageVendor[] = [];
+    const updatedMap = new Map<string, ProductStageVendor>();
+
+    // Primary target product link
+    updatedMap.set(link.id, link);
+    toUpsert.push(link);
+
+    // Mirror onto shared estamba siblings
+    groupProductIds.forEach((pid, idx) => {
+      if (pid === link.productId) return;
+      const existingSibling = productStageVendors.find(
+        (l) =>
+          l.productId === pid &&
+          l.stageKey === link.stageKey &&
+          l.vendorId === link.vendorId
+      );
+      if (existingSibling) {
+        const synced: ProductStageVendor = {
+          ...existingSibling,
+          isPrimary: link.isPrimary,
+          approxOrderQty: link.approxOrderQty,
+          orderScriptNotes: link.orderScriptNotes,
+        };
+        updatedMap.set(synced.id, synced);
+        toUpsert.push(synced);
+      } else {
+        const created: ProductStageVendor = {
+          id: `psv_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+          productId: pid,
+          stageKey: link.stageKey,
+          vendorId: link.vendorId,
+          isPrimary: link.isPrimary,
+          approxOrderQty: link.approxOrderQty,
+          orderScriptNotes: link.orderScriptNotes,
+        };
+        siblingLinksToAdd.push(created);
+        toUpsert.push(created);
+      }
+    });
+
+    const groupIdSet = new Set(groupProductIds);
     setProductStageVendors((prev) => {
-      const exists = prev.some((l) => l.id === link.id);
-      let next = exists ? prev.map((l) => (l.id === link.id ? link : l)) : [...prev, link];
+      const existsPrimary = prev.some((l) => l.id === link.id);
+      let next = prev.map((l) => updatedMap.get(l.id) || l);
+      if (!existsPrimary) {
+        next = [...next, link];
+      }
+      if (siblingLinksToAdd.length > 0) {
+        next = [...next, ...siblingLinksToAdd];
+      }
       if (link.isPrimary) {
         next = next.map((l) => {
           if (
-            l.productId === link.productId &&
+            groupIdSet.has(l.productId) &&
             l.stageKey === link.stageKey &&
-            l.id !== link.id &&
+            l.vendorId !== link.vendorId &&
             l.isPrimary
           ) {
             const cleared = { ...l, isPrimary: false };
-            siblingsToClear.push(cleared);
+            toUpsert.push(cleared);
             return cleared;
           }
           return l;
@@ -3328,27 +3431,281 @@ export default function App() {
       }
       return next;
     });
-    upsertProductStageVendorToDb(link).catch((err) =>
-      showToast(`Database stage vendor sync error: ${err?.message || 'Sync failed'}`)
-    );
-    siblingsToClear.forEach((s) => {
-      upsertProductStageVendorToDb(s).catch(() => {});
+
+    toUpsert.forEach((item, idx) => {
+      upsertProductStageVendorToDb(item).catch((err) => {
+        if (idx === 0) {
+          showToast(`Database stage vendor sync error: ${err?.message || 'Sync failed'}`);
+        }
+      });
     });
   };
 
   const handleDeleteStageVendor = (linkId: string) => {
-    setProductStageVendors((prev) => prev.filter((l) => l.id !== linkId));
-    deleteProductStageVendorFromDb(linkId).catch((err) =>
-      showToast(`Database stage vendor delete error: ${err?.message || 'Sync failed'}`)
-    );
+    const targetLink = productStageVendors.find((l) => l.id === linkId);
+    const sourceWf = targetLink
+      ? productWorkflows.find((w) => w.productId === targetLink.productId)
+      : undefined;
+
+    const idsToDelete = new Set<string>([linkId]);
+    if (targetLink && sourceWf?.sharedGroupId) {
+      const siblingIds = new Set(
+        productWorkflows
+          .filter((w) => w.sharedGroupId === sourceWf.sharedGroupId)
+          .map((w) => w.productId)
+      );
+      productStageVendors.forEach((l) => {
+        if (
+          siblingIds.has(l.productId) &&
+          l.stageKey === targetLink.stageKey &&
+          l.vendorId === targetLink.vendorId
+        ) {
+          idsToDelete.add(l.id);
+        }
+      });
+    }
+
+    setProductStageVendors((prev) => prev.filter((l) => !idsToDelete.has(l.id)));
+    idsToDelete.forEach((id) => {
+      deleteProductStageVendorFromDb(id).catch((err) => {
+        if (id === linkId) {
+          showToast(`Database stage vendor delete error: ${err?.message || 'Sync failed'}`);
+        }
+      });
+    });
   };
 
   const handleAddPriceEntry = (entry: VendorPriceEntry) => {
-    setVendorPriceHistory((prev) => [entry, ...prev]);
-    insertVendorPriceEntryToDb(entry).catch((err) =>
-      showToast(`Database price log error: ${err?.message || 'Sync failed'}`)
+    const baseLink = productStageVendors.find((l) => l.id === entry.productStageVendorId);
+    const sourceWf = baseLink
+      ? productWorkflows.find((w) => w.productId === baseLink.productId)
+      : undefined;
+
+    const entriesToAdd: VendorPriceEntry[] = [entry];
+    if (baseLink && sourceWf?.sharedGroupId) {
+      const siblingIds = new Set(
+        productWorkflows
+          .filter(
+            (w) =>
+              w.sharedGroupId === sourceWf.sharedGroupId &&
+              w.productId !== baseLink.productId
+          )
+          .map((w) => w.productId)
+      );
+      productStageVendors.forEach((l, idx) => {
+        if (
+          siblingIds.has(l.productId) &&
+          l.stageKey === baseLink.stageKey &&
+          l.vendorId === baseLink.vendorId &&
+          l.id !== baseLink.id
+        ) {
+          entriesToAdd.push({
+            ...entry,
+            id: `vph_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+            productStageVendorId: l.id,
+          });
+        }
+      });
+    }
+
+    setVendorPriceHistory((prev) => [...entriesToAdd, ...prev]);
+    entriesToAdd.forEach((item, idx) => {
+      insertVendorPriceEntryToDb(item).catch((err) => {
+        if (idx === 0) {
+          showToast(`Database price log error: ${err?.message || 'Sync failed'}`);
+        }
+      });
+    });
+    showToast(
+      entriesToAdd.length > 1
+        ? `Logged price ${entry.unitPrice.toLocaleString()} EGP (synced to ${entriesToAdd.length} linked items).`
+        : `Logged price ${entry.unitPrice.toLocaleString()} EGP.`
     );
-    showToast(`Logged price ${entry.unitPrice.toLocaleString()} EGP.`);
+  };
+
+  const handleApplyWorkflowTemplate = (payload: WorkflowTemplateApplication) => {
+    const nowIso = new Date().toISOString();
+    const targetProd = products.find((p) => p.id === payload.targetProductId);
+
+    if (payload.mode === 'unlink') {
+      const targetWf = getEffectiveWorkflowForProduct(payload.targetProductId);
+      const unlinked: ProductWorkflow = {
+        ...targetWf,
+        sharedGroupId: undefined,
+        sharedGroupName: undefined,
+        updatedAt: nowIso,
+      };
+      setProductWorkflows((prev) => {
+        const exists = prev.some((w) => w.productId === unlinked.productId);
+        return exists
+          ? prev.map((w) => (w.productId === unlinked.productId ? unlinked : w))
+          : [unlinked, ...prev];
+      });
+      upsertProductWorkflowToDb(unlinked).catch((err) =>
+        showToast(`Database unlink sync error: ${err?.message || 'Sync failed'}`)
+      );
+      showToast(`Unlinked "${targetProd?.name || 'item'}" from shared estamba.`);
+      return;
+    }
+
+    const sourceWf = getEffectiveWorkflowForProduct(payload.sourceProductId);
+    const sourceProd = products.find((p) => p.id === payload.sourceProductId);
+
+    if (payload.mode === 'pipeline_only') {
+      const targetWf = getEffectiveWorkflowForProduct(payload.targetProductId);
+      const copied: ProductWorkflow = {
+        ...targetWf,
+        workflowType: sourceWf.workflowType,
+        activeStages: [...sourceWf.activeStages],
+        customStages: sourceWf.customStages ? { ...sourceWf.customStages } : undefined,
+        sharedGroupId: undefined,
+        sharedGroupName: undefined,
+        templateSourceProductId: payload.sourceProductId,
+        updatedAt: nowIso,
+      };
+      setProductWorkflows((prev) => {
+        const exists = prev.some((w) => w.productId === copied.productId);
+        return exists
+          ? prev.map((w) => (w.productId === copied.productId ? copied : w))
+          : [copied, ...prev];
+      });
+      upsertProductWorkflowToDb(copied).catch((err) =>
+        showToast(`Database estamba sync error: ${err?.message || 'Sync failed'}`)
+      );
+      showToast(
+        `Copied pipeline estamba from "${sourceProd?.name || 'source'}" to "${
+          targetProd?.name || 'item'
+        }" (vendors kept independent).`
+      );
+      return;
+    }
+
+    // mode === 'same_all': link into Shared Estamba & sync pipeline + vendors + scripts + prices
+    const groupId =
+      sourceWf.sharedGroupId ||
+      `grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const groupName =
+      payload.sharedGroupName ||
+      sourceWf.sharedGroupName ||
+      `${sourceProd?.category || sourceProd?.name || 'Shared'} Estamba`;
+
+    const memberIds = new Set<string>([payload.sourceProductId, payload.targetProductId]);
+    if (sourceWf.sharedGroupId) {
+      productWorkflows.forEach((w) => {
+        if (w.sharedGroupId === sourceWf.sharedGroupId) {
+          memberIds.add(w.productId);
+        }
+      });
+    }
+
+    const syncedWorkflows: ProductWorkflow[] = Array.from(memberIds).map((pid) => {
+      const base = getEffectiveWorkflowForProduct(pid);
+      return {
+        ...base,
+        workflowType: sourceWf.workflowType,
+        activeStages: [...sourceWf.activeStages],
+        customStages: sourceWf.customStages ? { ...sourceWf.customStages } : undefined,
+        sharedGroupId: groupId,
+        sharedGroupName: groupName,
+        templateSourceProductId:
+          pid === payload.sourceProductId
+            ? sourceWf.templateSourceProductId
+            : payload.sourceProductId,
+        updatedAt: nowIso,
+      };
+    });
+
+    const wfByPid = new Map(syncedWorkflows.map((w) => [w.productId, w]));
+    setProductWorkflows((prev) => {
+      const updated = prev.map((w) => wfByPid.get(w.productId) || w);
+      const existingIds = new Set(prev.map((w) => w.productId));
+      const added = syncedWorkflows.filter((w) => !existingIds.has(w.productId));
+      return [...added, ...updated];
+    });
+    syncedWorkflows.forEach((wf) => {
+      upsertProductWorkflowToDb(wf).catch((err) =>
+        showToast(`Database shared estamba sync error: ${err?.message || 'Sync failed'}`)
+      );
+    });
+
+    // Clone & sync stage vendors + price history from source onto target
+    const sourceLinks = productStageVendors.filter(
+      (l) => l.productId === payload.sourceProductId
+    );
+    const existingTargetLinks = productStageVendors.filter(
+      (l) => l.productId === payload.targetProductId
+    );
+    const sourceKeys = new Set(sourceLinks.map((l) => `${l.stageKey}::${l.vendorId}`));
+    const targetIdsToDelete = existingTargetLinks
+      .filter((l) => !sourceKeys.has(`${l.stageKey}::${l.vendorId}`))
+      .map((l) => l.id);
+
+    const upsertedTargetLinks: ProductStageVendor[] = [];
+    const clonedPrices: VendorPriceEntry[] = [];
+
+    sourceLinks.forEach((srcLink, idx) => {
+      const matchTarget = existingTargetLinks.find(
+        (l) => l.stageKey === srcLink.stageKey && l.vendorId === srcLink.vendorId
+      );
+      const targetLink: ProductStageVendor = matchTarget
+        ? {
+            ...matchTarget,
+            isPrimary: srcLink.isPrimary,
+            approxOrderQty: srcLink.approxOrderQty,
+            orderScriptNotes: srcLink.orderScriptNotes,
+          }
+        : {
+            id: `psv_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+            productId: payload.targetProductId,
+            stageKey: srcLink.stageKey,
+            vendorId: srcLink.vendorId,
+            isPrimary: srcLink.isPrimary,
+            approxOrderQty: srcLink.approxOrderQty,
+            orderScriptNotes: srcLink.orderScriptNotes,
+          };
+      upsertedTargetLinks.push(targetLink);
+
+      const targetHasPrices = vendorPriceHistory.some(
+        (ph) => ph.productStageVendorId === targetLink.id
+      );
+      if (!matchTarget || !targetHasPrices) {
+        const srcPrices = vendorPriceHistory.filter(
+          (ph) => ph.productStageVendorId === srcLink.id
+        );
+        srcPrices.forEach((sp, pIdx) => {
+          clonedPrices.push({
+            ...sp,
+            id: `vph_${Date.now()}_${idx}_${pIdx}_${Math.random().toString(36).slice(2, 6)}`,
+            productStageVendorId: targetLink.id,
+          });
+        });
+      }
+    });
+
+    const deleteSet = new Set(targetIdsToDelete);
+    const upsertById = new Map(upsertedTargetLinks.map((l) => [l.id, l]));
+    setProductStageVendors((prev) => {
+      const filtered = prev
+        .filter((l) => !deleteSet.has(l.id))
+        .map((l) => upsertById.get(l.id) || l);
+      const existingIds = new Set(filtered.map((l) => l.id));
+      const added = upsertedTargetLinks.filter((l) => !existingIds.has(l.id));
+      return [...filtered, ...added];
+    });
+
+    if (clonedPrices.length > 0) {
+      setVendorPriceHistory((prev) => [...clonedPrices, ...prev]);
+    }
+
+    targetIdsToDelete.forEach((id) => deleteProductStageVendorFromDb(id).catch(() => {}));
+    upsertedTargetLinks.forEach((lnk) => upsertProductStageVendorToDb(lnk).catch(() => {}));
+    clonedPrices.forEach((entry) => insertVendorPriceEntryToDb(entry).catch(() => {}));
+
+    showToast(
+      `Linked "${targetProd?.name || 'item'}" with "${
+        sourceProd?.name || 'source'
+      }" under "${groupName}" (pipeline & vendors synced).`
+    );
   };
 
   const handleSaveBatch = (batch: ProductionBatch) => {
@@ -3458,13 +3815,16 @@ export default function App() {
           l.vendorId === assignment.vendorId
       );
       if (!link) {
+        const productCustomStages = productWorkflows.find(
+          (w) => w.productId === product.id
+        )?.customStages;
         link = {
           id: `psv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           productId: product.id,
           stageKey,
           vendorId: assignment.vendorId,
           isPrimary: false,
-          approxOrderQty: `${qtyToAdd} ${getStageMeta(stageKey).defaultUnit}`,
+          approxOrderQty: `${qtyToAdd} ${getStageMeta(stageKey, productCustomStages).defaultUnit}`,
           orderScriptNotes: '',
         };
         createdLinks.push(link);
@@ -3793,6 +4153,11 @@ export default function App() {
             finalQuantity: req.payload.finalQuantity,
             variantId: req.payload.variantId,
           });
+        }
+        break;
+      case 'sourcing_template':
+        if (req.payload?.targetProductId && req.payload?.mode) {
+          handleApplyWorkflowTemplate(req.payload as WorkflowTemplateApplication);
         }
         break;
       case 'marketing_offer':
@@ -4819,6 +5184,7 @@ export default function App() {
             onSaveVendor={handleSaveVendor}
             onDeleteVendor={handleDeleteVendor}
             onSaveWorkflow={handleSaveWorkflow}
+            onApplyWorkflowTemplate={handleApplyWorkflowTemplate}
             onSaveStageVendor={handleSaveStageVendor}
             onDeleteStageVendor={handleDeleteStageVendor}
             onAddPriceEntry={handleAddPriceEntry}

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  CustomStageDefinition,
   OperationStageKey,
   Product,
   ProductStageVendor,
@@ -10,6 +11,7 @@ import {
   Vendor,
   VendorBehaviorTag,
   VendorPriceEntry,
+  WorkflowTemplateApplication,
   WorkflowType,
 } from '../types/inventory';
 import {
@@ -23,23 +25,31 @@ import {
 } from '../utils/sourcing';
 import { isUserAdmin } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
-import { GlobalVendorModal, StartBatchModal, CompleteStockInModal } from './SourcingModals';
+import {
+  ApplyWorkflowTemplateModal,
+  CompleteStockInModal,
+  GlobalVendorModal,
+  StartBatchModal,
+} from './SourcingModals';
 import {
   ArrowLeft,
   ArrowRight,
   Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   ExternalLink,
   Factory,
   Image as ImageIcon,
   Layers,
+  Link2,
   MapPin,
   MessageCircle,
   Package,
   Pencil,
   Phone,
   Plus,
+  RotateCcw,
   Search,
   Settings2,
   Star,
@@ -66,6 +76,7 @@ interface SourcingOperationsViewProps {
   onSaveVendor: (vendor: Vendor) => void;
   onDeleteVendor: (vendorId: string) => void;
   onSaveWorkflow: (workflow: ProductWorkflow) => void;
+  onApplyWorkflowTemplate?: (payload: WorkflowTemplateApplication) => void;
   onSaveStageVendor: (link: ProductStageVendor) => void;
   onDeleteStageVendor: (linkId: string) => void;
   onAddPriceEntry: (entry: VendorPriceEntry) => void;
@@ -98,6 +109,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onSaveVendor,
   onDeleteVendor,
   onSaveWorkflow,
+  onApplyWorkflowTemplate,
   onSaveStageVendor,
   onDeleteStageVendor,
   onAddPriceEntry,
@@ -117,6 +129,13 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
   // Product Workspace Controls
   const [showCustomizeStages, setShowCustomizeStages] = useState(false);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [newStageName, setNewStageName] = useState('');
+  const [newStageUnit, setNewStageUnit] = useState('piece');
+  const [newStageDesc, setNewStageDesc] = useState('');
+  const [editingStageKey, setEditingStageKey] = useState<string | null>(null);
+  const [editingStageLabel, setEditingStageLabel] = useState('');
+  const [editingStageUnit, setEditingStageUnit] = useState('piece');
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
@@ -219,6 +238,29 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       .sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate))[0];
   };
 
+  const commitWorkflowUpdate = (
+    product: Product,
+    updatedWf: ProductWorkflow,
+    title: string,
+    summary: string,
+    toastMsg?: string
+  ) => {
+    if (!isAdmin && onSubmitTeamRequest) {
+      onSubmitTeamRequest({
+        teamScope: 'purchases',
+        entityType: 'sourcing_workflow',
+        actionType: 'update',
+        targetId: updatedWf.id,
+        title,
+        summary,
+        payload: { workflow: updatedWf },
+      });
+      return;
+    }
+    onSaveWorkflow(updatedWf);
+    if (toastMsg) onShowToast?.(toastMsg);
+  };
+
   const handleSwitchWorkflowType = (product: Product, nextType: WorkflowType) => {
     const existing = getEffectiveWorkflow(product);
     const updated: ProductWorkflow = {
@@ -229,20 +271,11 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       activeStages: [...DEFAULT_STAGE_KEYS[nextType]],
       updatedAt: new Date().toISOString(),
     };
-    if (!isAdmin && onSubmitTeamRequest) {
-      onSubmitTeamRequest({
-        teamScope: 'purchases',
-        entityType: 'sourcing_workflow',
-        actionType: 'update',
-        targetId: updated.id,
-        title: `Switch Workflow: ${product.name}`,
-        summary: `Change pipeline to ${nextType === 'manufactured' ? 'Manufactured' : 'Ready-Made'}.`,
-        payload: { workflow: updated },
-      });
-      return;
-    }
-    onSaveWorkflow(updated);
-    onShowToast?.(
+    commitWorkflowUpdate(
+      product,
+      updated,
+      `Switch Workflow: ${product.name}`,
+      `Change pipeline to ${nextType === 'manufactured' ? 'Manufactured' : 'Ready-Made'}.`,
       `Switched "${product.name}" to ${nextType === 'manufactured' ? 'Manufactured' : 'Ready-Made'} pipeline.`
     );
   };
@@ -251,37 +284,156 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     if (stageKey === 'stock_in') return; // Final Gard stage stays required
     const wf = getEffectiveWorkflow(product);
     const exists = wf.activeStages.includes(stageKey);
-    const orderRef = ALL_OPERATION_STAGES.map((s) => s.key);
     let nextStages: OperationStageKey[];
     if (exists) {
-      if (wf.activeStages.length <= 2) {
-        onShowToast?.('Keep at least 1 sourcing/production stage before Stock-In.');
-        return;
-      }
       nextStages = wf.activeStages.filter((k) => k !== stageKey);
     } else {
-      nextStages = [...wf.activeStages, stageKey].sort(
-        (a, b) => orderRef.indexOf(a) - orderRef.indexOf(b)
-      );
+      const stockIdx = wf.activeStages.indexOf('stock_in');
+      if (stockIdx === -1) {
+        nextStages = [...wf.activeStages, stageKey, 'stock_in'];
+      } else {
+        nextStages = [
+          ...wf.activeStages.slice(0, stockIdx),
+          stageKey,
+          ...wf.activeStages.slice(stockIdx),
+        ];
+      }
     }
     const updatedWf: ProductWorkflow = {
       ...wf,
       activeStages: nextStages,
       updatedAt: new Date().toISOString(),
     };
-    if (!isAdmin && onSubmitTeamRequest) {
-      onSubmitTeamRequest({
-        teamScope: 'purchases',
-        entityType: 'sourcing_workflow',
-        actionType: 'update',
-        targetId: updatedWf.id,
-        title: `Customize Pipeline Stages: ${product.name}`,
-        summary: `${exists ? 'Remove' : 'Add'} stage "${getStageMeta(stageKey).shortLabel}".`,
-        payload: { workflow: updatedWf },
-      });
+    commitWorkflowUpdate(
+      product,
+      updatedWf,
+      `Customize Pipeline Stages: ${product.name}`,
+      `${exists ? 'Remove' : 'Add'} stage "${getStageMeta(stageKey, wf.customStages).shortLabel}".`
+    );
+  };
+
+  const handleMoveStageInWorkflow = (
+    product: Product,
+    stageKey: OperationStageKey,
+    direction: -1 | 1
+  ) => {
+    if (stageKey === 'stock_in') return;
+    const wf = getEffectiveWorkflow(product);
+    const nonStockStages = wf.activeStages.filter((k) => k !== 'stock_in');
+    const idx = nonStockStages.indexOf(stageKey);
+    const targetIdx = idx + direction;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= nonStockStages.length) return;
+    const reordered = [...nonStockStages];
+    [reordered[idx], reordered[targetIdx]] = [reordered[targetIdx], reordered[idx]];
+    const nextStages: OperationStageKey[] = [...reordered, 'stock_in'];
+    const updatedWf: ProductWorkflow = {
+      ...wf,
+      activeStages: nextStages,
+      updatedAt: new Date().toISOString(),
+    };
+    commitWorkflowUpdate(
+      product,
+      updatedWf,
+      `Reorder Pipeline Stages: ${product.name}`,
+      `Moved "${getStageMeta(stageKey, wf.customStages).shortLabel}".`
+    );
+  };
+
+  const handleAddCustomStage = (product: Product) => {
+    const trimmedName = newStageName.trim();
+    if (!trimmedName) {
+      onShowToast?.('Enter a name for the custom stage.');
       return;
     }
-    onSaveWorkflow(updatedWf);
+    const wf = getEffectiveWorkflow(product);
+    const slug = trimmedName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 20);
+    const key = `custom_${slug || 'stage'}_${Date.now().toString(36).slice(-4)}`;
+    const nextCustomStages: Record<string, CustomStageDefinition> = {
+      ...(wf.customStages || {}),
+      [key]: {
+        key,
+        label: trimmedName,
+        shortLabel: trimmedName,
+        description: newStageDesc.trim() || `Custom stage: ${trimmedName}`,
+        defaultUnit: newStageUnit.trim() || 'piece',
+      },
+    };
+    const stockIdx = wf.activeStages.indexOf('stock_in');
+    const nextStages: OperationStageKey[] =
+      stockIdx === -1
+        ? [...wf.activeStages, key, 'stock_in']
+        : [...wf.activeStages.slice(0, stockIdx), key, ...wf.activeStages.slice(stockIdx)];
+
+    const updatedWf: ProductWorkflow = {
+      ...wf,
+      activeStages: nextStages,
+      customStages: nextCustomStages,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setNewStageName('');
+    setNewStageDesc('');
+    setNewStageUnit('piece');
+    commitWorkflowUpdate(
+      product,
+      updatedWf,
+      `Add Custom Stage: ${product.name}`,
+      `Added custom stage "${trimmedName}" (${nextCustomStages[key].defaultUnit}).`,
+      `Added stage "${trimmedName}" to pipeline.`
+    );
+  };
+
+  const handleSaveStageRename = (product: Product, stageKey: OperationStageKey) => {
+    const trimmed = editingStageLabel.trim();
+    if (!trimmed) {
+      setEditingStageKey(null);
+      return;
+    }
+    const wf = getEffectiveWorkflow(product);
+    const existingMeta = getStageMeta(stageKey, wf.customStages);
+    const nextCustomStages: Record<string, CustomStageDefinition> = {
+      ...(wf.customStages || {}),
+      [stageKey]: {
+        key: stageKey,
+        label: trimmed,
+        shortLabel: trimmed,
+        description: existingMeta.description,
+        defaultUnit: editingStageUnit.trim() || existingMeta.defaultUnit || 'piece',
+      },
+    };
+    const updatedWf: ProductWorkflow = {
+      ...wf,
+      customStages: nextCustomStages,
+      updatedAt: new Date().toISOString(),
+    };
+    setEditingStageKey(null);
+    commitWorkflowUpdate(
+      product,
+      updatedWf,
+      `Rename Pipeline Stage: ${product.name}`,
+      `Renamed stage to "${trimmed}".`,
+      `Updated stage "${trimmed}".`
+    );
+  };
+
+  const handleResetToCleanPipeline = (product: Product) => {
+    const wf = getEffectiveWorkflow(product);
+    const updatedWf: ProductWorkflow = {
+      ...wf,
+      activeStages: ['stock_in'],
+      updatedAt: new Date().toISOString(),
+    };
+    commitWorkflowUpdate(
+      product,
+      updatedWf,
+      `Start Clean Pipeline: ${product.name}`,
+      `Reset stages to empty + Final Gard ready to customize from scratch.`,
+      `Cleared stages for "${product.name}". Add your custom stages below.`
+    );
   };
 
   const handleLinkVendorToStage = (
@@ -315,7 +467,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         actionType: 'create',
         targetId: newLink.id,
         title: `Link Vendor: ${vendorName}`,
-        summary: `Link ${vendorName} to ${getStageMeta(stageKey).shortLabel} for "${prodName}".`,
+        summary: `Link ${vendorName} to ${getStageMeta(stageKey, workflows.find((w) => w.productId === productId)?.customStages).shortLabel} for "${prodName}".`,
         payload: { link: newLink },
       });
       setLinkVendorId('');
@@ -336,7 +488,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         actionType: 'update',
         targetId: targetLink.id,
         title: `Set Primary Vendor: ${vendorName}`,
-        summary: `Make ${vendorName} primary on ${getStageMeta(targetLink.stageKey).shortLabel} for "${prodName}".`,
+        summary: `Make ${vendorName} primary on ${getStageMeta(targetLink.stageKey, workflows.find((w) => w.productId === targetLink.productId)?.customStages).shortLabel} for "${prodName}".`,
         payload: { link: { ...targetLink, isPrimary: true }, setPrimary: true },
       });
       return;
@@ -353,11 +505,15 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     });
   };
 
-  const handleAdvanceBatchStage = (batch: ProductionBatch, activeStages: OperationStageKey[]) => {
+  const handleAdvanceBatchStage = (
+    batch: ProductionBatch,
+    activeStages: OperationStageKey[],
+    customStages?: Record<string, CustomStageDefinition>
+  ) => {
     const currentIndex = activeStages.indexOf(batch.currentStageKey);
     if (currentIndex === -1 || currentIndex >= activeStages.length - 1) return;
     const nextStageKey = activeStages[currentIndex + 1];
-    const nextStageMeta = getStageMeta(nextStageKey);
+    const nextStageMeta = getStageMeta(nextStageKey, customStages);
     const updatedBatch: ProductionBatch = {
       ...batch,
       currentStageKey: nextStageKey,
@@ -602,7 +758,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           {product.name}
                         </h3>
 
-                        <div className="flex items-center gap-2 text-xs text-slate-500 mt-1.5">
+                        <div className="flex items-center gap-2 text-xs text-slate-500 mt-1.5 flex-wrap">
                           <span className="font-mono tabular-nums font-semibold text-slate-800">
                             {product.totalQuantity} pcs in stock
                           </span>
@@ -610,6 +766,14 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           <span>
                             {linkedVendorCount} {linkedVendorCount === 1 ? 'vendor' : 'vendors'}
                           </span>
+                          {wf.sharedGroupId && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[10px] font-bold text-indigo-700">
+                              <Link2 className="w-2.5 h-2.5" />
+                              <span className="truncate max-w-[130px]">
+                                {wf.sharedGroupName || 'Shared Estamba'}
+                              </span>
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -726,8 +890,27 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => setIsTemplateModalOpen(true)}
+                  className={`px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 min-h-[40px] transition-colors ${
+                    workflow.sharedGroupId
+                      ? 'border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  }`}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>
+                    {workflow.sharedGroupId ? 'Shared Estamba Linked' : 'Template (Estamba)'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setShowCustomizeStages((prev) => !prev)}
-                  className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 inline-flex items-center gap-1.5 min-h-[40px]"
+                  className={`px-3.5 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 min-h-[40px] ${
+                    showCustomizeStages
+                      ? 'border-slate-900 bg-slate-900 text-white'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                  }`}
                 >
                   <Settings2 className="w-3.5 h-3.5" />
                   <span>Customize Stages</span>
@@ -735,42 +918,272 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               </div>
             </div>
 
-            {/* Optional Stage Customizer */}
-            {showCustomizeStages && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-bold text-slate-800">
-                    Select Active Pipeline Stages for {selectedProduct.name}
+            {/* Shared Estamba Live Sync Banner */}
+            {workflow.sharedGroupId && (() => {
+              const linkedSiblings = workflows
+                .filter(
+                  (w) =>
+                    w.sharedGroupId === workflow.sharedGroupId &&
+                    w.productId !== selectedProduct.id
+                )
+                .map((w) => products.find((p) => p.id === w.productId))
+                .filter((p): p is Product => Boolean(p));
+
+              return (
+                <div className="bg-indigo-50/90 border border-indigo-200 rounded-2xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <Link2 className="w-4 h-4 text-indigo-700 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-indigo-950">
+                        Shared Estamba Group: {workflow.sharedGroupName || 'Synced Items'}
+                      </div>
+                      <div className="text-[11px] text-indigo-800 mt-0.5">
+                        Synced pipeline, vendors, ordering scripts &amp; prices with{' '}
+                        {linkedSiblings.length > 0 ? (
+                          <strong>
+                            {linkedSiblings.map((p) => p.name).join(', ')}
+                          </strong>
+                        ) : (
+                          'linked items'
+                        )}
+                        . Any edit updates all linked items (stock &amp; batches remain per-item).
+                      </div>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowCustomizeStages(false)}
-                    className="text-xs font-semibold text-slate-500 hover:text-slate-800"
-                  >
-                    Done
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setIsTemplateModalOpen(true)}
+                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-indigo-100 border border-indigo-200 text-xs font-bold text-indigo-800"
+                    >
+                      Manage Link
+                    </button>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {ALL_OPERATION_STAGES.map((st) => {
-                    const active = workflow.activeStages.includes(st.key);
-                    const locked = st.key === 'stock_in';
-                    return (
-                      <button
-                        key={st.key}
-                        type="button"
-                        disabled={locked}
-                        onClick={() => handleToggleStageInWorkflow(selectedProduct, st.key)}
-                        className={`px-3 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors disabled:opacity-70 ${
-                          active
-                            ? 'bg-slate-900 text-white border-slate-900'
-                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        {active && <Check className="w-3.5 h-3.5" />}
-                        <span>{st.shortLabel}</span>
-                      </button>
-                    );
-                  })}
+              );
+            })()}
+
+            {/* Custom Per-Item Pipeline Builder & Stage Customizer */}
+            {showCustomizeStages && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-bold text-slate-900">
+                      Custom Pipeline Builder — {selectedProduct.name}
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Toggle standard stages, create custom stages for this item, rename, or reorder with arrows.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleResetToCleanPipeline(selectedProduct)}
+                      className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 text-xs font-semibold text-slate-700 inline-flex items-center gap-1.5"
+                      title="Clear stages and start from scratch"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Start Clean</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomizeStages(false)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+
+                {/* Standard Presets */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                    Standard Stages
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {ALL_OPERATION_STAGES.map((st) => {
+                      const active = workflow.activeStages.includes(st.key);
+                      const locked = st.key === 'stock_in';
+                      return (
+                        <button
+                          key={st.key}
+                          type="button"
+                          disabled={locked}
+                          onClick={() => handleToggleStageInWorkflow(selectedProduct, st.key)}
+                          className={`px-3 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors disabled:opacity-70 ${
+                            active
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {active && <Check className="w-3.5 h-3.5" />}
+                          <span>{getStageMeta(st.key, workflow.customStages).shortLabel}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Current Active Order + Reorder / Rename / Remove */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                    Current Flowchart Order ({workflow.activeStages.length} stages)
+                  </div>
+                  <div className="space-y-2">
+                    {workflow.activeStages.map((stageKey, sIdx) => {
+                      const meta = getStageMeta(stageKey, workflow.customStages);
+                      const isStockIn = stageKey === 'stock_in';
+                      const nonStockLen = workflow.activeStages.filter(
+                        (k) => k !== 'stock_in'
+                      ).length;
+                      const isEditing = editingStageKey === stageKey;
+
+                      return (
+                        <div
+                          key={stageKey}
+                          className={`p-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 ${
+                            isStockIn
+                              ? 'bg-emerald-50/50 border-emerald-200'
+                              : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          {isEditing ? (
+                            <div className="flex flex-wrap items-center gap-2 flex-1">
+                              <input
+                                type="text"
+                                value={editingStageLabel}
+                                onChange={(e) => setEditingStageLabel(e.target.value)}
+                                placeholder="Stage name"
+                                className="flex-1 min-w-[160px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-900"
+                              />
+                              <input
+                                type="text"
+                                value={editingStageUnit}
+                                onChange={(e) => setEditingStageUnit(e.target.value)}
+                                placeholder="Unit (piece, meter...)"
+                                className="w-28 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-900"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveStageRename(selectedProduct, stageKey)}
+                                className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingStageKey(null)}
+                                className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono text-xs font-bold text-slate-500">
+                                  0{sIdx + 1}.
+                                </span>
+                                <span className="text-xs font-bold text-slate-900 truncate">
+                                  {meta.label}
+                                </span>
+                                <span className="text-[11px] font-mono text-slate-500">
+                                  ({meta.defaultUnit})
+                                </span>
+                              </div>
+
+                              {!isStockIn && (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={sIdx === 0}
+                                    onClick={() =>
+                                      handleMoveStageInWorkflow(selectedProduct, stageKey, -1)
+                                    }
+                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-35"
+                                    title="Move earlier"
+                                  >
+                                    <ArrowLeft className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={sIdx >= nonStockLen - 1}
+                                    onClick={() =>
+                                      handleMoveStageInWorkflow(selectedProduct, stageKey, 1)
+                                    }
+                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-35"
+                                    title="Move later"
+                                  >
+                                    <ArrowRight className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingStageKey(stageKey);
+                                      setEditingStageLabel(meta.label);
+                                      setEditingStageUnit(meta.defaultUnit || 'piece');
+                                    }}
+                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900"
+                                    title="Rename / edit unit"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleStageInWorkflow(selectedProduct, stageKey)
+                                    }
+                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-rose-600 hover:bg-rose-50"
+                                    title="Remove stage"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Add Custom Stage Form */}
+                <div className="pt-2 border-t border-slate-100 space-y-2">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                    Add Custom Stage for This Item
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                    <input
+                      type="text"
+                      value={newStageName}
+                      onChange={(e) => setNewStageName(e.target.value)}
+                      placeholder="Stage name (e.g. Fabric Dyeing, Embroidery, Printing...)"
+                      className="sm:col-span-5 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                    <input
+                      type="text"
+                      value={newStageUnit}
+                      onChange={(e) => setNewStageUnit(e.target.value)}
+                      placeholder="Unit (piece, meter, kg)"
+                      className="sm:col-span-2 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                    <input
+                      type="text"
+                      value={newStageDesc}
+                      onChange={(e) => setNewStageDesc(e.target.value)}
+                      placeholder="Description (optional)"
+                      className="sm:col-span-3 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddCustomStage(selectedProduct)}
+                      className="sm:col-span-2 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center justify-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Stage</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -794,7 +1207,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               <div className="overflow-x-auto pb-2">
                 <div className="flex items-stretch gap-2 min-w-max">
                   {workflow.activeStages.map((stageKey, idx) => {
-                    const meta = getStageMeta(stageKey);
+                    const meta = getStageMeta(stageKey, workflow.customStages);
                     const stageLinks = stageVendors.filter(
                       (psv) => psv.productId === selectedProduct.id && psv.stageKey === stageKey
                     );
@@ -964,7 +1377,10 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {visibleBatches.map((batch) => {
-                    const currentStageMeta = getStageMeta(batch.currentStageKey);
+                    const currentStageMeta = getStageMeta(
+                      batch.currentStageKey,
+                      workflow.customStages
+                    );
                     const stageIdx = workflow.activeStages.indexOf(batch.currentStageKey);
                     const isFinalStage = batch.currentStageKey === 'stock_in';
                     const stageAssignment = batch.stageAssignments?.[batch.currentStageKey];
@@ -1076,7 +1492,11 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() =>
-                                  handleAdvanceBatchStage(batch, workflow.activeStages)
+                                  handleAdvanceBatchStage(
+                                    batch,
+                                    workflow.activeStages,
+                                    workflow.customStages
+                                  )
                                 }
                                 className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 min-h-[40px]"
                               >
@@ -1111,7 +1531,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
             {/* STAGE & VENDOR DETAIL SLIDE-OVER DRAWER */}
             {drawerStageKey && (() => {
-              const stageMeta = getStageMeta(drawerStageKey);
+              const stageMeta = getStageMeta(drawerStageKey, workflow.customStages);
               const linkedPsvs = stageVendors
                 .filter(
                   (psv) =>
@@ -1140,6 +1560,14 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           {stageMeta.label}
                         </h3>
                         <p className="text-xs text-slate-500 mt-0.5">{stageMeta.description}</p>
+                        {workflow.sharedGroupId && (
+                          <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] font-semibold text-indigo-700">
+                            <Link2 className="w-3 h-3" />
+                            <span>
+                              Synced with {workflow.sharedGroupName || 'Shared Estamba Group'}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -1691,6 +2119,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               isOpen={isStartBatchOpen}
               product={selectedProduct}
               activeStages={workflow.activeStages}
+              customStages={workflow.customStages}
               vendors={vendors}
               productStageVendors={stageVendors}
               priceHistory={priceHistory}
@@ -1702,6 +2131,10 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               }}
               onCreateBatch={(batch) => {
                 const wasEdit = Boolean(editingBatch);
+                const stageShort = getStageMeta(
+                  batch.currentStageKey,
+                  workflow.customStages
+                ).shortLabel;
                 if (!isAdmin && onSubmitTeamRequest) {
                   onSubmitTeamRequest({
                     teamScope: 'purchases',
@@ -1709,7 +2142,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     actionType: wasEdit ? 'update' : 'create',
                     targetId: batch.id,
                     title: `${wasEdit ? 'Update' : 'Start'} Batch ${batch.batchCode}`,
-                    summary: `${selectedProduct.name} · ${batch.quantity} pcs @ ${getStageMeta(batch.currentStageKey).shortLabel}`,
+                    summary: `${selectedProduct.name} · ${batch.quantity} pcs @ ${stageShort}`,
                     payload: { batch },
                   });
                   setIsStartBatchOpen(false);
@@ -1723,7 +2156,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 onShowToast?.(
                   wasEdit
                     ? `${batch.batchCode} updated (${batch.quantity} pcs).`
-                    : `${batch.batchCode} started at ${getStageMeta(batch.currentStageKey).shortLabel}.`
+                    : `${batch.batchCode} started at ${stageShort}.`
                 );
               }}
             />
@@ -1732,6 +2165,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
             <CompleteStockInModal
               batch={stockInBatch}
               product={selectedProduct}
+              customStages={workflow.customStages}
               vendors={vendors}
               onClose={() => setStockInBatch(null)}
               onConfirm={(payload) => {
@@ -1751,6 +2185,45 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 }
                 onCompleteBatchStockIn(payload);
                 setStockInBatch(null);
+              }}
+            />
+
+            {/* Use Template / Shared Estamba Modal */}
+            <ApplyWorkflowTemplateModal
+              isOpen={isTemplateModalOpen}
+              targetProduct={selectedProduct}
+              targetWorkflow={workflow}
+              products={activeCatalogProducts}
+              stageVendors={stageVendors}
+              getEffectiveWorkflow={getEffectiveWorkflow}
+              onClose={() => setIsTemplateModalOpen(false)}
+              onApply={(payload) => {
+                const srcProd = products.find((p) => p.id === payload.sourceProductId);
+                if (!isAdmin && onSubmitTeamRequest) {
+                  onSubmitTeamRequest({
+                    teamScope: 'purchases',
+                    entityType: 'sourcing_template',
+                    actionType: 'update',
+                    targetId: selectedProduct.id,
+                    title:
+                      payload.mode === 'unlink'
+                        ? `Unlink Estamba: ${selectedProduct.name}`
+                        : payload.mode === 'same_all'
+                        ? `Link Shared Estamba: ${selectedProduct.name}`
+                        : `Copy Estamba Pipeline: ${selectedProduct.name}`,
+                    summary:
+                      payload.mode === 'unlink'
+                        ? `Unlink "${selectedProduct.name}" from shared estamba group.`
+                        : payload.mode === 'same_all'
+                        ? `Sync pipeline & vendors from "${srcProd?.name || payload.sourceProductId}" onto "${selectedProduct.name}".`
+                        : `Copy pipeline stages only from "${srcProd?.name || payload.sourceProductId}" onto "${selectedProduct.name}".`,
+                    payload,
+                  });
+                  setIsTemplateModalOpen(false);
+                  return;
+                }
+                onApplyWorkflowTemplate?.(payload);
+                setIsTemplateModalOpen(false);
               }}
             />
           </div>
@@ -1975,7 +2448,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           {linkedEntries.map((entry) => {
                             const prod = products.find((p) => p.id === entry.productId);
                             if (!prod) return null;
-                            const stMeta = getStageMeta(entry.stageKey);
+                            const prodWf = workflows.find((w) => w.productId === prod.id);
+                            const stMeta = getStageMeta(entry.stageKey, prodWf?.customStages);
                             return (
                               <button
                                 key={entry.id}

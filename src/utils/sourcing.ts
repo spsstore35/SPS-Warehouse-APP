@@ -1,4 +1,5 @@
 import {
+  CustomStageDefinition,
   OperationStageKey,
   Product,
   VendorBehaviorTag,
@@ -63,7 +64,20 @@ export const DEFAULT_STAGE_KEYS: Record<WorkflowType, OperationStageKey[]> = {
   ready_made: ['supplier_sourcing', 'packaging', 'stock_in'],
 };
 
-export function getStageMeta(key: OperationStageKey): OperationStageMeta {
+export function getStageMeta(
+  key: OperationStageKey,
+  customStages?: Record<string, CustomStageDefinition>
+): OperationStageMeta {
+  const custom = customStages?.[key];
+  if (custom) {
+    return {
+      key,
+      label: custom.label,
+      shortLabel: custom.shortLabel || custom.label,
+      description: custom.description || 'Custom item pipeline stage',
+      defaultUnit: custom.defaultUnit || 'piece',
+    };
+  }
   return (
     ALL_OPERATION_STAGES.find((s) => s.key === key) || {
       key,

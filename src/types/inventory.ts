@@ -294,7 +294,7 @@ export interface Vendor {
 
 export type WorkflowType = 'manufactured' | 'ready_made';
 
-export type OperationStageKey =
+export type StandardOperationStageKey =
   | 'raw_material'
   | 'manufacturing'
   | 'tailor'
@@ -302,12 +302,33 @@ export type OperationStageKey =
   | 'packaging'
   | 'stock_in';
 
+export type OperationStageKey = StandardOperationStageKey | (string & {});
+
+export interface CustomStageDefinition {
+  key: string;
+  label: string;
+  shortLabel?: string;
+  description?: string;
+  defaultUnit?: string;
+}
+
 export interface ProductWorkflow {
   id: string;
   productId: string;
   workflowType: WorkflowType;
   activeStages: OperationStageKey[];
+  customStages?: Record<string, CustomStageDefinition>;
+  sharedGroupId?: string;
+  sharedGroupName?: string;
+  templateSourceProductId?: string;
   updatedAt?: string;
+}
+
+export interface WorkflowTemplateApplication {
+  sourceProductId: string;
+  targetProductId: string;
+  mode: 'same_all' | 'pipeline_only' | 'unlink';
+  sharedGroupName?: string;
 }
 
 export interface ProductStageVendor {
@@ -450,6 +471,7 @@ export type TeamRequestEntityType =
   | 'sourcing_price'
   | 'sourcing_batch'
   | 'sourcing_stock_in'
+  | 'sourcing_template'
   | 'marketing_offer'
   | 'budget_profile'
   | 'budget_expense'

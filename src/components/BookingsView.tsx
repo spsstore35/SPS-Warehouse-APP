@@ -2678,7 +2678,10 @@ This is our official Scout Store number. Through this chat, you can:
                       </div>
                       <div className="space-y-2">
                         {item.activeStages.map((stageKey, sIdx) => {
-                          const meta = getStageMeta(stageKey);
+                          const itemCustomStages = workflows.find(
+                            (w) => w.productId === item.productId
+                          )?.customStages;
+                          const meta = getStageMeta(stageKey, itemCustomStages);
                           const stageLinks = stageVendors.filter(
                             (psv) => psv.productId === item.productId && psv.stageKey === stageKey
                           );
