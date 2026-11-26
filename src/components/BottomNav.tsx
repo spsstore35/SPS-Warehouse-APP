@@ -223,8 +223,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   <h3 className="text-base font-black text-slate-900 truncate">
                     {currentUser.name}
                   </h3>
-                  <p className="text-xs text-slate-500 truncate" title={currentUser.email}>
-                    {currentUser.email}
+                  <p
+                    className="text-xs text-slate-500 truncate"
+                    title={currentUser.email || currentUser.phone || currentUser.username || ''}
+                  >
+                    {currentUser.email || (currentUser.username ? `@${currentUser.username}` : currentUser.phone || '')}
                   </p>
                 </div>
               </div>

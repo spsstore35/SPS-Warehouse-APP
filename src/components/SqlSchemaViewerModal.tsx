@@ -30,13 +30,27 @@ BEGIN
   END IF;
 END $$;
 
--- 2. Add Username, Phone, Store Team (6 teams) & Scout Fera2 assignment columns to profiles
+-- 2. Add Username, Phone, Store Team (6 teams) & Scout Fera2 assignment columns to profiles + make email optional
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS username TEXT,
   ADD COLUMN IF NOT EXISTS phone TEXT,
   ADD COLUMN IF NOT EXISTS approved_by_name TEXT,
   ADD COLUMN IF NOT EXISTS assigned_teams JSONB NOT NULL DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS assigned_fare2 JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE public.profiles
+  ALTER COLUMN email DROP NOT NULL;
+
+ALTER TABLE public.profiles
+  DROP CONSTRAINT IF EXISTS profiles_email_key;
+
+UPDATE public.profiles
+SET email = NULL
+WHERE BTRIM(COALESCE(email, '')) = '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS profiles_email_unique_idx
+  ON public.profiles (LOWER(BTRIM(email)))
+  WHERE email IS NOT NULL AND BTRIM(email) <> '';
 
 CREATE UNIQUE INDEX IF NOT EXISTS profiles_username_unique_idx
   ON public.profiles (LOWER(BTRIM(username)))
@@ -53,6 +67,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS profiles_phone_unique_idx
     END
   )
   WHERE phone IS NOT NULL AND REGEXP_REPLACE(phone, '[^0-9]', '', 'g') <> '';
+
+ALTER TABLE public.profiles
+  DROP CONSTRAINT IF EXISTS profiles_at_least_one_contact_check;
+
+ALTER TABLE public.profiles
+  ADD CONSTRAINT profiles_at_least_one_contact_check
+  CHECK (
+    (email IS NOT NULL AND BTRIM(email) <> '') OR
+    (username IS NOT NULL AND BTRIM(username) <> '') OR
+    (phone IS NOT NULL AND BTRIM(phone) <> '')
+  );
 
 -- 3. Add Troop Group, Scout Fera2, Assigned Member, and Payment Verification columns to bookings
 ALTER TABLE public.bookings
@@ -159,7 +184,7 @@ BEGIN
   RETURN QUERY
   SELECT p.*
   FROM public.profiles p
-  WHERE LOWER(BTRIM(p.email)) = LOWER(v_raw)
+  WHERE (p.email IS NOT NULL AND BTRIM(p.email) <> '' AND LOWER(BTRIM(p.email)) = LOWER(v_raw))
      OR (p.username IS NOT NULL AND BTRIM(p.username) <> '' AND LOWER(BTRIM(p.username)) = v_user)
      OR (
        v_norm_phone <> '' AND p.phone IS NOT NULL AND (
@@ -210,7 +235,7 @@ CREATE TABLE public.categories (
 -- PROFILES & AUTH WITH PENDING APPROVAL + TEAM & FERA2 ASSIGNMENTS
 CREATE TABLE public.profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email TEXT UNIQUE NOT NULL,
+    email TEXT,
     username TEXT,
     phone TEXT,
     password_hash TEXT,
@@ -225,7 +250,12 @@ CREATE TABLE public.profiles (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     approved_at TIMESTAMPTZ,
     approved_by UUID REFERENCES public.profiles(id),
-    approved_by_name TEXT
+    approved_by_name TEXT,
+    CONSTRAINT profiles_at_least_one_contact_check CHECK (
+      (email IS NOT NULL AND BTRIM(email) <> '') OR
+      (username IS NOT NULL AND BTRIM(username) <> '') OR
+      (phone IS NOT NULL AND BTRIM(phone) <> '')
+    )
 );
 
 -- PRODUCTS CATALOG (Connected to categories via category_id FK)

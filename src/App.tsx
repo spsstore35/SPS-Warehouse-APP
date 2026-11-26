@@ -677,7 +677,7 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       summary: `Deleted user account "${targetUser?.name || 'User'}"`,
-      details: `Account for ${targetUser?.email} (${targetUser?.role}) permanently removed.`,
+      details: `Account for ${targetUser?.email || (targetUser?.username ? `@${targetUser.username}` : targetUser?.phone || targetUser?.name || 'User')} (${targetUser?.role}) permanently removed.`,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
     insertAuditLogInDb(newLog).catch(() => {});
@@ -743,8 +743,8 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       reason: `Account Role Changed: ${oldRole.toUpperCase()} → ${newRole.toUpperCase()}`,
-      summary: `Account Role Changed: "${targetUser?.name || targetUser?.email || 'User'}" to ${nextRoleLabel}`,
-      details: `User (${targetUser?.email}) role changed from ${oldRole.toUpperCase()} to ${newRole.toUpperCase()} by Admin.`,
+      summary: `Account Role Changed: "${targetUser?.name || targetUser?.email || targetUser?.phone || 'User'}" to ${nextRoleLabel}`,
+      details: `User (${targetUser?.email || (targetUser?.username ? `@${targetUser.username}` : targetUser?.phone || targetUser?.name || 'User')}) role changed from ${oldRole.toUpperCase()} to ${newRole.toUpperCase()} by Admin.`,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
     insertAuditLogInDb(newLog).catch(() => {});
@@ -1687,7 +1687,7 @@ export default function App() {
       actorName: currentUser.name,
       actorRole: 'admin',
       summary: `Approved registration for "${targetUser?.name || 'Staff'}"`,
-      details: `Account for ${targetUser?.email} (${targetUser?.requestedRole || targetUser?.role}) activated in Supabase.`,
+      details: `Account for ${targetUser?.email || (targetUser?.username ? `@${targetUser.username}` : targetUser?.phone || targetUser?.name || 'Staff')} (${targetUser?.requestedRole || targetUser?.role}) activated in Supabase.`,
     };
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
@@ -1716,7 +1716,7 @@ export default function App() {
       actorName: currentUser?.name || 'Admin',
       actorRole: 'admin',
       summary: `Declined registration for "${targetUser?.name || 'Staff'}"`,
-      details: `Registration for ${targetUser?.email} was declined.`,
+      details: `Registration for ${targetUser?.email || (targetUser?.username ? `@${targetUser.username}` : targetUser?.phone || targetUser?.name || 'Staff')} was declined.`,
     };
     setAuditLogs([newLog, ...auditLogs]);
     insertAuditLogInDb(newLog).catch(() => {});
@@ -1726,21 +1726,32 @@ export default function App() {
   // Admin directly creates a staff or admin account with status 'active' (no approval needed)
   const handleCreateUserDirectly = async (data: {
     name: string;
-    email: string;
+    email?: string;
     username?: string;
     phone?: string;
     password?: string;
     role: Role;
     assignedTeams?: StoreTeamId[];
   }): Promise<{ success: boolean; error?: string }> => {
-    const cleanEmail = data.email.toLowerCase().trim();
+    const cleanEmail = (data.email || '').toLowerCase().trim() || undefined;
     const cleanUsername = normalizeUsername(data.username) || undefined;
     const cleanPhone = normalizePhoneNumber(data.phone) || undefined;
     const initialTeams = data.role === 'leader' ? [] : data.assignedTeams || [];
+    const primaryContact =
+      cleanEmail || (cleanUsername ? `@${cleanUsername}` : cleanPhone || data.name.trim());
+
+    if (!cleanEmail && !cleanUsername && !cleanPhone) {
+      return {
+        success: false,
+        error: 'Please enter at least one contact method: Email, Username, or Phone Number.',
+      };
+    }
 
     // 1. Check local state
-    const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
-    if (existing && existing.status === 'active') {
+    const existingByEmail = cleanEmail
+      ? users.find((u) => (u.email || '').toLowerCase() === cleanEmail)
+      : undefined;
+    if (existingByEmail && existingByEmail.status === 'active') {
       return { success: false, error: 'An active account with this email address already exists.' };
     }
     if (cleanUsername && users.some((u) => normalizeUsername(u.username) === cleanUsername)) {
@@ -1752,18 +1763,52 @@ export default function App() {
 
     try {
       const { supabase } = await import('./services/supabaseClient');
-      const { hashPassword } = await import('./utils/security');
+      const { hashPassword, getPhoneSearchVariants, buildSyntheticNoEmail } = await import('./utils/security');
       const plainPassword = data.password && data.password.trim().length >= 4 ? data.password.trim() : '123456';
       const securePasswordHash = await hashPassword(plainPassword);
 
-      // 2. Check if user already exists in remote Supabase profiles table
-      const { data: existingProfile, error: existingErr } = await supabase
-        .from('profiles')
-        .select('id, email, status')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
+      // 2. Check if user already exists in remote Supabase profiles table (when matching by email/username/phone)
+      let existingProfile: any = null;
+      if (cleanEmail) {
+        const { data: emailMatch, error: existingErr } = await supabase
+          .from('profiles')
+          .select('id, email, status')
+          .ilike('email', cleanEmail)
+          .maybeSingle();
+        if (existingErr) throw existingErr;
+        existingProfile = emailMatch;
+      }
 
-      if (existingErr) throw existingErr;
+      if (!existingProfile && cleanUsername) {
+        const { data: userMatch, error: userErr } = await supabase
+          .from('profiles')
+          .select('id, email, status')
+          .ilike('username', cleanUsername)
+          .maybeSingle();
+        if (!userErr && userMatch) {
+          if (userMatch.status === 'active') {
+            return { success: false, error: 'An account with this username already exists.' };
+          }
+          existingProfile = userMatch;
+        }
+      }
+
+      if (!existingProfile && cleanPhone) {
+        const variants = getPhoneSearchVariants(cleanPhone);
+        if (variants.length > 0) {
+          const { data: phoneMatch, error: phoneErr } = await supabase
+            .from('profiles')
+            .select('id, email, status')
+            .in('phone', variants)
+            .limit(1);
+          if (!phoneErr && phoneMatch && phoneMatch.length > 0) {
+            if (phoneMatch[0].status === 'active') {
+              return { success: false, error: 'An account with this phone number already exists.' };
+            }
+            existingProfile = phoneMatch[0];
+          }
+        }
+      }
 
       if (existingProfile) {
         const updatePayload: Record<string, any> = {
@@ -1777,6 +1822,9 @@ export default function App() {
           approved_at: new Date().toISOString(),
           approved_by_name: currentUser?.name || 'Admin',
         };
+        if (cleanEmail) {
+          updatePayload.email = cleanEmail;
+        }
         if (data.password && data.password.trim().length >= 4) {
           updatePayload.password_hash = securePasswordHash;
         }
@@ -1804,12 +1852,14 @@ export default function App() {
 
         setUsers((prev) =>
           prev.map((u) =>
-            u.email.toLowerCase() === cleanEmail
+            u.id === existingProfile.id ||
+            (cleanEmail && (u.email || '').toLowerCase() === cleanEmail)
               ? {
                   ...u,
                   status: 'active',
                   role: data.role,
                   name: data.name.trim(),
+                  email: cleanEmail || u.email,
                   username: cleanUsername,
                   phone: cleanPhone,
                   assignedTeams: initialTeams,
@@ -1818,7 +1868,7 @@ export default function App() {
           )
         );
 
-        showToast(`Account for ${cleanEmail} updated to Active.`);
+        showToast(`Account for ${primaryContact} updated to Active.`);
         return { success: true };
       }
 
@@ -1848,7 +1898,7 @@ export default function App() {
       const insertPayload: Record<string, any> = {
         id: newUser.id,
         full_name: newUser.name,
-        email: newUser.email,
+        email: cleanEmail || null,
         username: cleanUsername || null,
         phone: cleanPhone || null,
         password_hash: securePasswordHash,
@@ -1862,13 +1912,25 @@ export default function App() {
         created_at: newUser.createdAt,
       };
 
-      let { error: insertErr } = await supabase.from('profiles').insert(insertPayload);
-
-      if (insertErr && (insertErr.code === 'PGRST204' || insertErr.code === '42703')) {
-        delete insertPayload.username;
-        delete insertPayload.phone;
-        const retryIns = await supabase.from('profiles').insert(insertPayload);
-        insertErr = retryIns.error;
+      let insertErr: any = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const res = await supabase.from('profiles').insert(insertPayload);
+        insertErr = res.error;
+        if (!insertErr) break;
+        if (
+          !cleanEmail &&
+          (insertErr.code === '23502' ||
+            String(insertErr.message || '').toLowerCase().includes('null value in column "email"'))
+        ) {
+          insertPayload.email = buildSyntheticNoEmail(cleanUsername, cleanPhone, newId);
+          continue;
+        }
+        if (insertErr.code === 'PGRST204' || insertErr.code === '42703') {
+          delete insertPayload.username;
+          delete insertPayload.phone;
+          continue;
+        }
+        break;
       }
 
       if (insertErr) {
@@ -1880,9 +1942,11 @@ export default function App() {
         }
         // If unique constraint on email was hit, update existing row instead
         if (
-          insertErr.code === '23505' ||
-          insertErr.message?.includes('profiles_email_key') ||
-          insertErr.message?.includes('duplicate key')
+          cleanEmail &&
+          (insertErr.code === '23505' ||
+            insertErr.message?.includes('profiles_email_key') ||
+            insertErr.message?.includes('profiles_email_unique_idx') ||
+            insertErr.message?.includes('duplicate key'))
         ) {
           const { error: dupRetryErr } = await supabase
             .from('profiles')
@@ -1909,6 +1973,10 @@ export default function App() {
       setUsers((prev) => [newUser, ...prev]);
 
       // Record audit log
+      const contactLogStr = [cleanEmail, cleanUsername ? `@${cleanUsername}` : '', cleanPhone]
+        .filter(Boolean)
+        .join(' • ');
+
       const newLog: AuditLogEntry = {
         id: `log_${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -1916,7 +1984,7 @@ export default function App() {
         actorName: currentUser?.name || 'Admin',
         actorRole: 'admin',
         summary: `Created pre-approved account for "${newUser.name}"`,
-        details: `Account for ${newUser.email}${cleanUsername ? ` (@${cleanUsername})` : ''}${cleanPhone ? ` • ${cleanPhone}` : ''} (${getRoleDisplayName(newUser.role)}) created directly as Active without approval.`,
+        details: `Account for ${contactLogStr || newUser.name} (${getRoleDisplayName(newUser.role)}) created directly as Active without approval.`,
       };
       setAuditLogs((prev) => [newLog, ...prev]);
       insertAuditLogInDb(newLog).catch(() => {});

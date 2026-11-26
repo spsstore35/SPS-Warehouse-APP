@@ -4,6 +4,33 @@
 
 import type { Role, StoreTeamId, User } from '../types/inventory';
 
+const SYNTHETIC_EMAIL_SUFFIX = '@noemail.sps.local';
+
+export function isSyntheticNoEmail(email?: string | null): boolean {
+  return Boolean(email && email.trim().toLowerCase().endsWith(SYNTHETIC_EMAIL_SUFFIX));
+}
+
+export function getPublicUserEmail(email?: string | null): string | undefined {
+  const clean = (email || '').trim().toLowerCase();
+  if (!clean || isSyntheticNoEmail(clean)) return undefined;
+  return clean;
+}
+
+export function buildSyntheticNoEmail(
+  username?: string | null,
+  phone?: string | null,
+  fallbackId?: string
+): string {
+  const rawPart =
+    normalizeUsername(username) ||
+    normalizePhoneNumber(phone).replace(/[^a-zA-Z0-9]/g, '') ||
+    (fallbackId ? fallbackId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) : '') ||
+    String(Date.now());
+  const safeSlug = rawPart.replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 32) || 'user';
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${safeSlug}.${suffix}${SYNTHETIC_EMAIL_SUFFIX}`;
+}
+
 export function normalizeUsername(raw?: string | null): string {
   if (!raw) return '';
   return raw

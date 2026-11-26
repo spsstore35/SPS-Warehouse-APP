@@ -68,11 +68,17 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
         return;
       }
 
+      const {
+        verifyPassword,
+        hashPassword,
+        normalizeRole,
+        getPublicUserEmail,
+      } = await import('../utils/security');
       if (profile.status === 'pending') {
         setPendingAccountInfo({
           id: profile.id,
           name: profile.full_name,
-          email: profile.email,
+          email: getPublicUserEmail(profile.email),
           username: profile.username || undefined,
           phone: profile.phone || undefined,
           role: profile.role,
@@ -89,7 +95,6 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
         return;
       }
 
-      const { verifyPassword, hashPassword, normalizeRole } = await import('../utils/security');
       const isMatch = await verifyPassword(password, profile.password_hash);
       if (!isMatch) {
         setLoginError('Invalid credentials. Please check your password.');
@@ -116,7 +121,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       const userObj: User = {
         id: profile.id,
         name: profile.full_name || 'Staff User',
-        email: profile.email,
+        email: getPublicUserEmail(profile.email),
         username: profile.username || undefined,
         phone: profile.phone || undefined,
         role: normalizedRole,
@@ -145,19 +150,37 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       setIsSubmitting(false);
       return;
     }
-    if (!signUpEmail.trim()) {
-      setSignUpError('Please enter a valid email address');
+
+    const cleanEmail = signUpEmail.trim().toLowerCase();
+    const cleanUserInput = signUpUsername.trim().replace(/^@+/, '');
+    const cleanPhoneInput = signUpPhone.trim();
+
+    if (!cleanEmail && !cleanUserInput && !cleanPhoneInput) {
+      setSignUpError('Please enter at least one: Email, Username, or Phone Number.');
       setIsSubmitting(false);
       return;
     }
-    if (signUpUsername.trim()) {
-      const cleanUserCheck = signUpUsername.trim().replace(/^@+/, '');
-      if (cleanUserCheck.length < 3 || !/^[a-zA-Z0-9._-]+$/.test(cleanUserCheck)) {
+
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setSignUpError('Please enter a valid email address or leave Email empty.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (cleanUserInput) {
+      if (cleanUserInput.length < 3 || !/^[a-zA-Z0-9._-]+$/.test(cleanUserInput)) {
         setSignUpError('Username must be at least 3 characters (letters, numbers, ".", "_", or "-").');
         setIsSubmitting(false);
         return;
       }
     }
+
+    if (cleanPhoneInput && cleanPhoneInput.replace(/\D/g, '').length < 6) {
+      setSignUpError('Please enter a valid phone number.');
+      setIsSubmitting(false);
+      return;
+    }
+
     if (!signUpPassword || signUpPassword.length < 4) {
       setSignUpError('Password must be at least 4 characters');
       setIsSubmitting(false);
@@ -169,9 +192,9 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       const { registerUserInDb } = await import('../services/supabaseService');
       const newUser = await registerUserInDb({
         name: signUpName,
-        email: signUpEmail,
-        username: signUpUsername || undefined,
-        phone: signUpPhone || undefined,
+        email: cleanEmail || undefined,
+        username: cleanUserInput || undefined,
+        phone: cleanPhoneInput || undefined,
         password: signUpPassword,
         requestedRole: signUpRole,
       });
@@ -372,7 +395,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   has been submitted.
                 </p>
                 <div className="p-3 bg-white/80 rounded-xl border border-amber-200 text-left text-xs text-slate-700 space-y-1">
-                  <div><strong>Email:</strong> {signUpSuccess.email}</div>
+                  {signUpSuccess.email && <div><strong>Email:</strong> {signUpSuccess.email}</div>}
                   {signUpSuccess.username && <div><strong>Username:</strong> @{signUpSuccess.username}</div>}
                   {signUpSuccess.phone && <div><strong>Phone:</strong> {signUpSuccess.phone}</div>}
                   <div><strong>Status:</strong> <span className="font-bold text-amber-800">Pending Admin Approval</span></div>
@@ -381,7 +404,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   type="button"
                   onClick={() => {
                     setMode('login');
-                    setIdentifier(signUpSuccess.username || signUpSuccess.phone || signUpSuccess.email);
+                    setIdentifier(signUpSuccess.username || signUpSuccess.phone || signUpSuccess.email || '');
                   }}
                   className="w-full py-2.5 px-4 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-sm"
                 >
@@ -407,6 +430,10 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                       className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
                     />
                   </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 font-medium">
+                  Enter <strong>at least one</strong> contact method below — Phone Number, Username, or Email (email is optional if using phone or username).
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -449,7 +476,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                    Email Address *
+                    Email Address <span className="font-normal text-slate-400">(Optional)</span>
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -457,10 +484,9 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                     </div>
                     <input
                       type="email"
-                      required
                       value={signUpEmail}
                       onChange={(e) => setSignUpEmail(e.target.value)}
-                      placeholder="enter your email"
+                      placeholder="Optional if phone or username entered"
                       className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-slate-900"
                     />
                   </div>
@@ -502,6 +528,24 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <button
                       type="button"
+                      onClick={() => setSignUpRole('admin')}
+                      className={`p-3 rounded-xl border text-left text-xs transition-all ${
+                        signUpRole === 'admin'
+                          ? 'border-amber-500 bg-amber-50 text-amber-950 font-bold shadow-sm'
+                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="font-bold flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>Admin</span>
+                      </div>
+                      <div className="text-[11px] font-normal text-slate-500 mt-1">
+                        Team admin controls
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => setSignUpRole('worker')}
                       className={`p-3 rounded-xl border text-left text-xs transition-all ${
                         signUpRole === 'worker'
@@ -514,7 +558,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                         <span>Staff</span>
                       </div>
                       <div className="text-[11px] font-normal text-slate-500 mt-1">
-                        Orders & stock counts
+                        Orders &amp; stock counts
                       </div>
                     </button>
 
@@ -529,28 +573,10 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                     >
                       <div className="font-bold flex items-center gap-1.5">
                         <UserIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span>Leader</span>
+                        <span>Scout Leader</span>
                       </div>
                       <div className="text-[11px] font-normal text-slate-500 mt-1">
-                        View items & prices
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setSignUpRole('admin')}
-                      className={`p-3 rounded-xl border text-left text-xs transition-all ${
-                        signUpRole === 'admin'
-                          ? 'border-amber-500 bg-amber-50 text-amber-950 font-bold shadow-sm'
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="font-bold flex items-center gap-1.5">
-                        <ShieldCheck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                        <span>Admin</span>
-                      </div>
-                      <div className="text-[11px] font-normal text-slate-500 mt-1">
-                        Full store control
+                        View items &amp; prices
                       </div>
                     </button>
                   </div>

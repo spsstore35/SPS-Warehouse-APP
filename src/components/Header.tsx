@@ -353,16 +353,6 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {canUserAccessView(currentUser, 'add-product', users) && (
-                <button
-                  onClick={() => onNavigate('add-product')}
-                  className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 ${
-                    activeView === 'add-product' ? 'text-slate-900 font-bold border-b-2 border-slate-900 pb-0.5' : ''
-                  }`}
-                >
-                  {isAdmin ? 'Add New Item' : '+ Add New Item'}
-                </button>
-              )}
             </nav>
 
             {canSlideRight && (
@@ -409,8 +399,11 @@ export const Header: React.FC<HeaderProps> = ({
                       <div className="text-sm font-black text-slate-900 truncate">
                         {currentUser.name}
                       </div>
-                      <div className="text-xs text-slate-500 truncate mt-0.5" title={currentUser.email}>
-                        {currentUser.email}
+                      <div
+                        className="text-xs text-slate-500 truncate mt-0.5"
+                        title={currentUser.email || currentUser.phone || currentUser.username || ''}
+                      >
+                        {currentUser.email || (currentUser.username ? `@${currentUser.username}` : currentUser.phone || '')}
                       </div>
                     </div>
                   </div>

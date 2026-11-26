@@ -881,7 +881,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
   const doesMemberMatchQuery = (member: User, qLower: string): boolean => {
     if (
       member.name.toLowerCase().includes(qLower) ||
-      member.email.toLowerCase().includes(qLower)
+      (member.email || '').toLowerCase().includes(qLower) ||
+      (member.username || '').toLowerCase().includes(qLower) ||
+      (member.phone || '').toLowerCase().includes(qLower)
     ) {
       return true;
     }
@@ -2009,7 +2011,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                               <h3 className="text-sm sm:text-base font-black text-slate-900 group-hover:text-blue-700 truncate transition-colors">
                                 {member.name}
                               </h3>
-                              <p className="text-xs text-slate-500 truncate">{member.email}</p>
+                              <p className="text-xs text-slate-500 truncate">
+                                {member.email || (member.username ? `@${member.username}` : member.phone || '')}
+                              </p>
                             </div>
                           </div>
                           <div className="flex flex-col items-end gap-1 shrink-0">
@@ -3008,7 +3012,10 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
                     <h2 className="text-lg font-black text-slate-900 truncate">
                       {selectedMember.name}
                     </h2>
-                    <p className="text-xs text-slate-500 truncate">{selectedMember.email}</p>
+                    <p className="text-xs text-slate-500 truncate">
+                      {selectedMember.email ||
+                        (selectedMember.username ? `@${selectedMember.username}` : selectedMember.phone || '')}
+                    </p>
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {isFullAccessAdmin(selectedMember, users) ? (
                         <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-300 text-[11px] font-bold">

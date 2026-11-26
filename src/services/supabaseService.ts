@@ -4,6 +4,8 @@ import {
   normalizeUsername,
   normalizePhoneNumber,
   getPhoneSearchVariants,
+  getPublicUserEmail,
+  buildSyntheticNoEmail,
 } from '../utils/security';
 import {
   Product,
@@ -761,7 +763,7 @@ export async function fetchUsersFromDb(): Promise<User[]> {
     return {
       id: u.id,
       name: u.full_name || u.name || 'User',
-      email: u.email,
+      email: getPublicUserEmail(u.email),
       username: u.username || undefined,
       phone: u.phone || undefined,
       password: u.password_plain || u.password_hash || undefined,
@@ -879,12 +881,20 @@ export async function lookupProfileForLogin(identifier: string): Promise<any | n
 
 export async function registerUserInDb(data: {
   name: string;
-  email: string;
+  email?: string;
   username?: string;
   phone?: string;
   password?: string;
   requestedRole: Role;
 }): Promise<User> {
+  const cleanEmail = (data.email || '').trim().toLowerCase() || undefined;
+  const cleanUsername = normalizeUsername(data.username) || undefined;
+  const cleanPhone = normalizePhoneNumber(data.phone) || undefined;
+
+  if (!cleanEmail && !cleanUsername && !cleanPhone) {
+    throw new Error('Please provide at least an email address, username, or phone number.');
+  }
+
   // Generate a valid RFC4122 v4 UUID so PostgreSQL UUID primary key accepts it without syntax error (22P02)
   const validUuid = typeof crypto !== 'undefined' && crypto.randomUUID 
     ? crypto.randomUUID() 
@@ -894,13 +904,10 @@ export async function registerUserInDb(data: {
         return v.toString(16);
       });
 
-  const cleanUsername = normalizeUsername(data.username) || undefined;
-  const cleanPhone = normalizePhoneNumber(data.phone) || undefined;
-
   const newUser: User = {
     id: validUuid,
     name: data.name.trim(),
-    email: data.email.trim().toLowerCase(),
+    email: cleanEmail,
     username: cleanUsername,
     phone: cleanPhone,
     password: data.password || 'password123',
@@ -924,7 +931,7 @@ export async function registerUserInDb(data: {
 
   const payload: Record<string, any> = {
     id: newUser.id,
-    email: newUser.email,
+    email: cleanEmail || null,
     username: cleanUsername || null,
     phone: cleanPhone || null,
     password_hash: securePasswordHash,
@@ -938,10 +945,17 @@ export async function registerUserInDb(data: {
   };
 
   let error: any = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     const res = await supabase.from('profiles').insert(payload);
     error = res.error;
     if (!error) break;
+    if (
+      !cleanEmail &&
+      (error.code === '23502' || String(error.message || '').toLowerCase().includes('null value in column "email"'))
+    ) {
+      payload.email = buildSyntheticNoEmail(cleanUsername, cleanPhone, newUser.id);
+      continue;
+    }
     if (error.code === 'PGRST204' || error.code === '42703') {
       const missingCol = extractMissingColumnName(error);
       if (missingCol && missingCol in payload) {
@@ -956,6 +970,9 @@ export async function registerUserInDb(data: {
   }
 
   if (error) {
+    if (error.message?.includes('profiles_email_key') || error.message?.includes('profiles_email_unique_idx')) {
+      throw new Error('An account with this email already exists.');
+    }
     if (error.message?.includes('profiles_username_unique_idx') || error.message?.includes('username')) {
       throw new Error('An account with this username already exists.');
     }
@@ -970,6 +987,10 @@ export async function registerUserInDb(data: {
     throw error;
   }
 
+  const contactLabel = [cleanEmail, cleanUsername ? `@${cleanUsername}` : '', cleanPhone]
+    .filter(Boolean)
+    .join(', ');
+
   try {
     await insertAuditLogInDb({
       id: `audit-reg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
@@ -977,8 +998,8 @@ export async function registerUserInDb(data: {
       action: 'account_updated',
       actorName: newUser.name,
       actorRole: newUser.requestedRole === 'full_admin' ? 'admin' : newUser.requestedRole || 'worker',
-      summary: `New account registration: "${newUser.name}" (${newUser.email}).`,
-      details: `New staff member "${newUser.name}" (${newUser.email}${cleanUsername ? `, @${cleanUsername}` : ''}${cleanPhone ? `, ${cleanPhone}` : ''}) registered and requires administrator approval.`,
+      summary: `New account registration: "${newUser.name}" (${contactLabel}).`,
+      details: `New staff member "${newUser.name}" (${contactLabel}) registered and requires administrator approval.`,
       reason: 'New Account Registration',
     });
   } catch {
