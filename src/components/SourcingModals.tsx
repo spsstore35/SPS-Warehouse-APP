@@ -28,6 +28,8 @@ import {
   Search,
   ArrowRight,
   Layers,
+  Clock,
+  AlertCircle,
 } from 'lucide-react';
 
 interface GlobalVendorModalProps {
@@ -282,6 +284,7 @@ interface StartBatchModalProps {
   product: Product;
   activeStages: OperationStageKey[];
   customStages?: Record<string, CustomStageDefinition>;
+  stageLeadTimes?: Record<string, number>;
   vendors: Vendor[];
   productStageVendors: ProductStageVendor[];
   priceHistory: VendorPriceEntry[];
@@ -296,6 +299,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
   product,
   activeStages,
   customStages,
+  stageLeadTimes,
   vendors,
   productStageVendors,
   priceHistory,
@@ -310,6 +314,11 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
   const [targetDate, setTargetDate] = useState<string>('');
   const [assignments, setAssignments] = useState<Record<string, BatchStageAssignment>>({});
   const [error, setError] = useState('');
+
+  const totalLeadDays = activeStages.reduce(
+    (sum, k) => sum + Math.max(0, Number(stageLeadTimes?.[k] || 0)),
+    0
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -336,7 +345,10 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
     setBatchCode(`Batch #${105 + existingBatchCount}`);
     setQuantity(100);
     setVariantId(product.variants[0]?.id || '');
-    const defaultTarget = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const leadDaysToAdd = totalLeadDays > 0 ? totalLeadDays : 7;
+    const defaultTarget = new Date(Date.now() + leadDaysToAdd * 86400000)
+      .toISOString()
+      .slice(0, 10);
     setTargetDate(defaultTarget);
 
     // Pre-fill each stage with primary vendor and latest recorded price
@@ -361,7 +373,16 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
     });
     setAssignments(nextAssignments);
     setError('');
-  }, [isOpen, initialBatch, product, activeStages, productStageVendors, priceHistory, existingBatchCount]);
+  }, [
+    isOpen,
+    initialBatch,
+    product,
+    activeStages,
+    totalLeadDays,
+    productStageVendors,
+    priceHistory,
+    existingBatchCount,
+  ]);
 
   if (!isOpen) return null;
 
@@ -453,7 +474,10 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Target Completion
+                Target Completion{' '}
+                {totalLeadDays > 0 && (
+                  <span className="font-mono text-indigo-700">(~{totalLeadDays}d est.)</span>
+                )}
               </label>
               <div className="relative">
                 <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -493,6 +517,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
             <div className="space-y-2">
               {productionStages.map((stageKey, idx) => {
                 const meta = getStageMeta(stageKey, customStages);
+                const estDays = Number(stageLeadTimes?.[stageKey] || 0);
                 const stageLinks = productStageVendors.filter(
                   (psv) => psv.productId === product.id && psv.stageKey === stageKey
                 );
@@ -509,8 +534,15 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
                     className="p-3 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center"
                   >
                     <div className="sm:col-span-5">
-                      <div className="text-xs font-bold text-slate-900">
-                        0{idx + 1}. {meta.shortLabel}
+                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                        <span>
+                          0{idx + 1}. {meta.shortLabel}
+                        </span>
+                        {estDays > 0 && (
+                          <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-mono">
+                            {estDays}d
+                          </span>
+                        )}
                       </div>
                       <div className="text-[11px] text-slate-500">Cost per {meta.defaultUnit}</div>
                     </div>
@@ -713,7 +745,9 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
               <div className="space-y-1 text-xs text-emerald-800">
                 {assignedCostStages.map(([stageKey, val]) => {
                   const vendorName =
-                    vendors.find((v) => v.id === val.vendorId)?.name || 'Vendor';
+                    vendors.find((v) => v.id === val.vendorId)?.name ||
+                    val.customVendorName ||
+                    'Vendor';
                   const stageName = getStageMeta(
                     stageKey as OperationStageKey,
                     customStages
@@ -724,7 +758,8 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
                         {stageName} · {vendorName}
                       </span>
                       <span className="font-mono tabular-nums font-bold shrink-0">
-                        {val.cost} EGP
+                        {val.cost} EGP/unit
+                        {val.totalCost ? ` (${val.totalCost.toLocaleString()} EGP total)` : ''}
                       </span>
                     </div>
                   );
@@ -1108,6 +1143,403 @@ export const ApplyWorkflowTemplateModal: React.FC<ApplyWorkflowTemplateModalProp
             </span>
           </button>
         </div>
+      </div>
+    </div>
+  );
+};
+
+interface AdvanceStageModalProps {
+  batch: ProductionBatch | null;
+  product: Product | null;
+  currentStageKey: OperationStageKey | null;
+  nextStageKey: OperationStageKey | null;
+  customStages?: Record<string, CustomStageDefinition>;
+  stageLeadTimes?: Record<string, number>;
+  vendors: Vendor[];
+  productStageVendors: ProductStageVendor[];
+  priceHistory: VendorPriceEntry[];
+  onClose: () => void;
+  onConfirm: (payload: {
+    batchId: string;
+    stageKey: OperationStageKey;
+    nextStageKey: OperationStageKey;
+    assignment: BatchStageAssignment;
+  }) => void;
+}
+
+export const AdvanceStageModal: React.FC<AdvanceStageModalProps> = ({
+  batch,
+  product,
+  currentStageKey,
+  nextStageKey,
+  customStages,
+  stageLeadTimes,
+  vendors,
+  productStageVendors,
+  priceHistory,
+  onClose,
+  onConfirm,
+}) => {
+  const [vendorMode, setVendorMode] = useState<'directory' | 'custom'>('directory');
+  const [vendorId, setVendorId] = useState('');
+  const [customVendorName, setCustomVendorName] = useState('');
+  const [costType, setCostType] = useState<'total' | 'unit'>('total');
+  const [costInput, setCostInput] = useState('');
+  const [noExternalCost, setNoExternalCost] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!batch || !product || !currentStageKey) return;
+    const existing = batch.stageAssignments?.[currentStageKey];
+    const stageLinks = productStageVendors.filter(
+      (psv) => psv.productId === product.id && psv.stageKey === currentStageKey
+    );
+    const primaryLink = stageLinks.find((l) => l.isPrimary) || stageLinks[0];
+
+    if (existing?.customVendorName && !existing?.vendorId) {
+      setVendorMode('custom');
+      setCustomVendorName(existing.customVendorName);
+      setVendorId('');
+    } else {
+      setVendorMode('directory');
+      setVendorId(existing?.vendorId || primaryLink?.vendorId || '');
+      setCustomVendorName('');
+    }
+
+    if (typeof existing?.totalCost === 'number' && existing.totalCost > 0) {
+      setCostType('total');
+      setCostInput(String(existing.totalCost));
+      setNoExternalCost(false);
+    } else if (typeof existing?.cost === 'number' && existing.cost > 0) {
+      setCostType('unit');
+      setCostInput(String(existing.cost));
+      setNoExternalCost(false);
+    } else {
+      setCostType('total');
+      setCostInput('');
+      setNoExternalCost(false);
+    }
+
+    setNotes(existing?.notes || '');
+    setError('');
+  }, [batch, product, currentStageKey, productStageVendors]);
+
+  if (!batch || !product || !currentStageKey || !nextStageKey) return null;
+
+  const currentMeta = getStageMeta(currentStageKey, customStages);
+  const nextMeta = getStageMeta(nextStageKey, customStages);
+  const estDays = Number(stageLeadTimes?.[currentStageKey] || 0);
+
+  const stageLinks = productStageVendors.filter(
+    (psv) => psv.productId === product.id && psv.stageKey === currentStageKey
+  );
+  const linkedVendorIds = new Set(stageLinks.map((l) => l.vendorId));
+  const orderedVendors = [
+    ...vendors.filter((v) => linkedVendorIds.has(v.id)),
+    ...vendors.filter((v) => !linkedVendorIds.has(v.id)),
+  ];
+
+  const qty = Math.max(1, Number(batch.quantity) || 1);
+  const parsedNum = Number(costInput);
+  const hasValidPositiveCost =
+    costInput.trim() !== '' && !isNaN(parsedNum) && parsedNum > 0;
+
+  const computedUnitCost = noExternalCost
+    ? 0
+    : !hasValidPositiveCost
+    ? 0
+    : costType === 'total'
+    ? Math.round((parsedNum / qty) * 100) / 100
+    : Math.round(parsedNum * 100) / 100;
+
+  const computedTotalCost = noExternalCost
+    ? 0
+    : !hasValidPositiveCost
+    ? 0
+    : costType === 'total'
+    ? Math.round(parsedNum * 100) / 100
+    : Math.round(parsedNum * qty * 100) / 100;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (vendorMode === 'directory' && !vendorId) {
+      setError('Choose which vendor did this stage, or switch to "Other / Custom Name" to enter who did it.');
+      return;
+    }
+    if (vendorMode === 'custom' && !customVendorName.trim()) {
+      setError('Enter the vendor, workshop, or person name who completed this stage.');
+      return;
+    }
+    if (!noExternalCost && !hasValidPositiveCost) {
+      setError('Enter how much this stage cost (EGP) before moving to the next pipeline stage.');
+      return;
+    }
+
+    onConfirm({
+      batchId: batch.id,
+      stageKey: currentStageKey,
+      nextStageKey,
+      assignment: {
+        vendorId: vendorMode === 'directory' ? vendorId : undefined,
+        customVendorName: vendorMode === 'custom' ? customVendorName.trim() : undefined,
+        cost: computedUnitCost,
+        totalCost: computedTotalCost,
+        notes: notes.trim() || undefined,
+        completedAt: new Date().toISOString(),
+      },
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden my-4">
+        <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-bold text-slate-900">
+              Complete Stage &amp; Advance Batch
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5 truncate">
+              {batch.batchCode} ({batch.quantity} pcs) · {product.name}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70"
+            aria-label="Close modal"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[82vh] overflow-y-auto">
+          {/* Transition Card */}
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                Completing Stage
+              </div>
+              <div className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                {currentMeta.label}
+              </div>
+              {estDays > 0 && (
+                <div className="inline-flex items-center gap-1 text-[11px] text-indigo-700 font-semibold mt-1">
+                  <Clock className="w-3 h-3" />
+                  <span>Est. duration: {estDays} days</span>
+                </div>
+              )}
+            </div>
+            <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
+            <div className="min-w-0 text-right">
+              <div className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">
+                Moving To
+              </div>
+              <div className="text-xs font-bold text-slate-900 truncate mt-0.5">
+                {nextMeta.shortLabel}
+              </div>
+            </div>
+          </div>
+
+          {/* Required Field 1: Vendor or Custom Person */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="text-xs font-bold text-slate-800">
+                1. Done At Which Vendor / Person? *
+              </label>
+              <div className="flex items-center gap-1 p-0.5 bg-slate-100 border border-slate-200 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setVendorMode('directory')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                    vendorMode === 'directory'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Registered Vendor
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVendorMode('custom')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                    vendorMode === 'custom'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Other / Person Name
+                </button>
+              </div>
+            </div>
+
+            {vendorMode === 'directory' ? (
+              <select
+                value={vendorId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setVendorId(nextId);
+                  setError('');
+                  if (!costInput && nextId) {
+                    const matchLink = stageLinks.find((l) => l.vendorId === nextId);
+                    const latest = matchLink
+                      ? priceHistory
+                          .filter((ph) => ph.productStageVendorId === matchLink.id)
+                          .sort((a, b) => b.purchaseDate.localeCompare(a.purchaseDate))[0]
+                      : undefined;
+                    if (latest?.unitPrice) {
+                      setCostType('unit');
+                      setCostInput(String(latest.unitPrice));
+                    }
+                  }
+                }}
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:border-slate-900"
+              >
+                <option value="">Select vendor...</option>
+                {orderedVendors.map((v) => {
+                  const lnk = stageLinks.find((l) => l.vendorId === v.id);
+                  return (
+                    <option key={v.id} value={v.id}>
+                      {lnk?.isPrimary ? `★ ${v.name} (Primary)` : v.name}
+                      {v.location ? ` — ${v.location}` : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={customVendorName}
+                onChange={(e) => {
+                  setCustomVendorName(e.target.value);
+                  setError('');
+                }}
+                placeholder="Write workshop, supplier, or person name (e.g. Abu Tarek Workshop, In-House)..."
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+              />
+            )}
+          </div>
+
+          {/* Required Field 2: Cost (EGP) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="text-xs font-bold text-slate-800">
+                2. How Much Did This Stage Cost? (EGP) *
+              </label>
+              <div className="flex items-center gap-1 p-0.5 bg-slate-100 border border-slate-200 rounded-lg">
+                <button
+                  type="button"
+                  disabled={noExternalCost}
+                  onClick={() => setCostType('total')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors disabled:opacity-50 ${
+                    costType === 'total'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Total Stage Cost
+                </button>
+                <button
+                  type="button"
+                  disabled={noExternalCost}
+                  onClick={() => setCostType('unit')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors disabled:opacity-50 ${
+                    costType === 'unit'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Per {currentMeta.defaultUnit}
+                </button>
+              </div>
+            </div>
+
+            <div className="relative">
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                disabled={noExternalCost}
+                value={noExternalCost ? '0' : costInput}
+                onChange={(e) => {
+                  setCostInput(e.target.value);
+                  setError('');
+                }}
+                placeholder={
+                  costType === 'total'
+                    ? `Total EGP paid for ${qty} pcs...`
+                    : `Cost in EGP per ${currentMeta.defaultUnit}...`
+                }
+                className="w-full pl-3.5 pr-12 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums font-bold text-slate-900 focus:outline-none focus:border-slate-900 disabled:bg-slate-100 disabled:text-slate-500"
+              />
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
+                EGP
+              </span>
+            </div>
+
+            {hasValidPositiveCost && !noExternalCost && (
+              <div className="text-[11px] font-mono text-slate-600 flex items-center justify-between px-1">
+                <span>
+                  Per {currentMeta.defaultUnit}: <strong>{computedUnitCost} EGP</strong>
+                </span>
+                <span>
+                  Total ({qty} pcs): <strong>{computedTotalCost.toLocaleString()} EGP</strong>
+                </span>
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none pt-0.5">
+              <input
+                type="checkbox"
+                checked={noExternalCost}
+                onChange={(e) => {
+                  setNoExternalCost(e.target.checked);
+                  setError('');
+                }}
+                className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+              />
+              <span>Internal / no cash cost for this stage (0 EGP)</span>
+            </label>
+          </div>
+
+          {/* Optional Stage Notes */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Stage Notes / Receipt Ref (Optional)
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Invoice #, quality note, actual days taken..."
+              className="w-full px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+            />
+          </div>
+
+          {error && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold min-h-[40px]"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-1.5 min-h-[40px]"
+            >
+              <span>Save &amp; Move to {nextMeta.shortLabel}</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

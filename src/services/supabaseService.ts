@@ -2159,6 +2159,7 @@ export async function fetchSourcingDataFromDb(): Promise<{
       const rawStages = Array.isArray(r.active_stages) ? r.active_stages : [];
       let embeddedMeta: {
         customStages?: Record<string, CustomStageDefinition>;
+        stageLeadTimes?: Record<string, number>;
         sharedGroupId?: string;
         sharedGroupName?: string;
         templateSourceProductId?: string;
@@ -2186,12 +2187,23 @@ export async function fetchSourcingDataFromDb(): Promise<{
           ? (r.custom_stages as Record<string, CustomStageDefinition>)
           : embeddedMeta.customStages;
 
+      const stageLeadTimes =
+        r.stage_lead_times &&
+        typeof r.stage_lead_times === 'object' &&
+        Object.keys(r.stage_lead_times).length > 0
+          ? (r.stage_lead_times as Record<string, number>)
+          : embeddedMeta.stageLeadTimes;
+
       return {
         id: String(r.id),
         productId: String(r.product_id),
         workflowType: r.workflow_type === 'ready_made' ? 'ready_made' : 'manufactured',
         activeStages,
         customStages: customStages && Object.keys(customStages).length > 0 ? customStages : undefined,
+        stageLeadTimes:
+          stageLeadTimes && Object.keys(stageLeadTimes).length > 0
+            ? stageLeadTimes
+            : undefined,
         sharedGroupId: r.shared_group_id || embeddedMeta.sharedGroupId || undefined,
         sharedGroupName: r.shared_group_name || embeddedMeta.sharedGroupName || undefined,
         templateSourceProductId:
@@ -2274,6 +2286,7 @@ export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<vo
   const cleanStages = (wf.activeStages || []).filter((s) => !String(s).startsWith('__meta__:'));
   const hasMeta =
     Boolean(wf.customStages && Object.keys(wf.customStages).length > 0) ||
+    Boolean(wf.stageLeadTimes && Object.keys(wf.stageLeadTimes).length > 0) ||
     Boolean(wf.sharedGroupId) ||
     Boolean(wf.sharedGroupName) ||
     Boolean(wf.templateSourceProductId);
@@ -2283,6 +2296,7 @@ export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<vo
         ...cleanStages,
         `__meta__:${JSON.stringify({
           customStages: wf.customStages || undefined,
+          stageLeadTimes: wf.stageLeadTimes || undefined,
           sharedGroupId: wf.sharedGroupId || undefined,
           sharedGroupName: wf.sharedGroupName || undefined,
           templateSourceProductId: wf.templateSourceProductId || undefined,
@@ -2302,6 +2316,7 @@ export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<vo
     {
       ...basePayload,
       custom_stages: wf.customStages || {},
+      stage_lead_times: wf.stageLeadTimes || {},
       shared_group_id: wf.sharedGroupId || null,
       shared_group_name: wf.sharedGroupName || null,
       template_source_product_id: wf.templateSourceProductId || null,
@@ -2312,6 +2327,7 @@ export async function upsertProductWorkflowToDb(wf: ProductWorkflow): Promise<vo
   if (
     error &&
     (error.message?.includes('custom_stages') ||
+      error.message?.includes('stage_lead_times') ||
       error.message?.includes('shared_group') ||
       error.message?.includes('template_source_product_id') ||
       (error as any).code === 'PGRST204' ||

@@ -3,6 +3,7 @@
 
 ALTER TABLE public.product_workflows
   ADD COLUMN IF NOT EXISTS custom_stages JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS stage_lead_times JSONB NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS shared_group_id TEXT,
   ADD COLUMN IF NOT EXISTS shared_group_name TEXT,
   ADD COLUMN IF NOT EXISTS template_source_product_id TEXT;

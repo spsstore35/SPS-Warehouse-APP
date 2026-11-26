@@ -318,6 +318,7 @@ export interface ProductWorkflow {
   workflowType: WorkflowType;
   activeStages: OperationStageKey[];
   customStages?: Record<string, CustomStageDefinition>;
+  stageLeadTimes?: Record<string, number>;
   sharedGroupId?: string;
   sharedGroupName?: string;
   templateSourceProductId?: string;
@@ -352,8 +353,11 @@ export interface VendorPriceEntry {
 
 export interface BatchStageAssignment {
   vendorId?: string;
+  customVendorName?: string;
   cost?: number;
+  totalCost?: number;
   notes?: string;
+  completedAt?: string;
 }
 
 export interface ProductionBatch {

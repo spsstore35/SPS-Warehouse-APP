@@ -239,9 +239,10 @@ DROP POLICY IF EXISTS "Allow public all access on team_change_requests" ON publi
 CREATE POLICY "Allow public all access on team_change_requests" ON public.team_change_requests FOR ALL USING (true) WITH CHECK (true);
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.team_change_requests TO anon, authenticated;
 
--- 10. Custom Per-Item Pipelines & Shared Estamba Template Groups
+-- 10. Custom Per-Item Pipelines, Stage Lead Times & Shared Estamba Template Groups
 ALTER TABLE public.product_workflows
   ADD COLUMN IF NOT EXISTS custom_stages JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS stage_lead_times JSONB NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS shared_group_id TEXT,
   ADD COLUMN IF NOT EXISTS shared_group_name TEXT,
   ADD COLUMN IF NOT EXISTS template_source_product_id TEXT;

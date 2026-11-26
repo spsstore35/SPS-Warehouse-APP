@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  BatchStageAssignment,
   CustomStageDefinition,
   OperationStageKey,
   Product,
@@ -26,6 +27,7 @@ import {
 import { isUserAdmin } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
+  AdvanceStageModal,
   ApplyWorkflowTemplateModal,
   CompleteStockInModal,
   GlobalVendorModal,
@@ -37,6 +39,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Clock,
   Copy,
   ExternalLink,
   Factory,
@@ -132,15 +135,22 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [newStageName, setNewStageName] = useState('');
   const [newStageUnit, setNewStageUnit] = useState('piece');
+  const [newStageDays, setNewStageDays] = useState('');
   const [newStageDesc, setNewStageDesc] = useState('');
   const [editingStageKey, setEditingStageKey] = useState<string | null>(null);
   const [editingStageLabel, setEditingStageLabel] = useState('');
   const [editingStageUnit, setEditingStageUnit] = useState('piece');
+  const [editingStageDays, setEditingStageDays] = useState('');
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [stockInBatch, setStockInBatch] = useState<ProductionBatch | null>(null);
+  const [advancingBatchContext, setAdvancingBatchContext] = useState<{
+    batch: ProductionBatch;
+    currentStageKey: OperationStageKey;
+    nextStageKey: OperationStageKey;
+  } | null>(null);
 
   // Stage Drawer Controls
   const [linkVendorId, setLinkVendorId] = useState('');
@@ -368,21 +378,31 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         ? [...wf.activeStages, key, 'stock_in']
         : [...wf.activeStages.slice(0, stockIdx), key, ...wf.activeStages.slice(stockIdx)];
 
+    const parsedNewDays = Math.max(0, Math.round(Number(newStageDays) || 0));
+    const nextLeadTimes: Record<string, number> = {
+      ...(wf.stageLeadTimes || {}),
+      ...(parsedNewDays > 0 ? { [key]: parsedNewDays } : {}),
+    };
+
     const updatedWf: ProductWorkflow = {
       ...wf,
       activeStages: nextStages,
       customStages: nextCustomStages,
+      stageLeadTimes: nextLeadTimes,
       updatedAt: new Date().toISOString(),
     };
 
     setNewStageName('');
     setNewStageDesc('');
     setNewStageUnit('piece');
+    setNewStageDays('');
     commitWorkflowUpdate(
       product,
       updatedWf,
       `Add Custom Stage: ${product.name}`,
-      `Added custom stage "${trimmedName}" (${nextCustomStages[key].defaultUnit}).`,
+      `Added custom stage "${trimmedName}" (${nextCustomStages[key].defaultUnit}${
+        parsedNewDays > 0 ? `, ${parsedNewDays}d` : ''
+      }).`,
       `Added stage "${trimmedName}" to pipeline.`
     );
   };
@@ -405,9 +425,16 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         defaultUnit: editingStageUnit.trim() || existingMeta.defaultUnit || 'piece',
       },
     };
+    const parsedDays = Math.max(0, Math.round(Number(editingStageDays) || 0));
+    const nextLeadTimes: Record<string, number> = { ...(wf.stageLeadTimes || {}) };
+    if (editingStageDays.trim() !== '') {
+      nextLeadTimes[stageKey] = parsedDays;
+    }
+
     const updatedWf: ProductWorkflow = {
       ...wf,
       customStages: nextCustomStages,
+      stageLeadTimes: nextLeadTimes,
       updatedAt: new Date().toISOString(),
     };
     setEditingStageKey(null);
@@ -417,6 +444,50 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       `Rename Pipeline Stage: ${product.name}`,
       `Renamed stage to "${trimmed}".`,
       `Updated stage "${trimmed}".`
+    );
+  };
+
+  const handleUpdateStageLeadTime = (
+    product: Product,
+    stageKey: OperationStageKey,
+    rawDays: string
+  ) => {
+    const wf = getEffectiveWorkflow(product);
+    const parsed = Math.max(0, Math.round(Number(rawDays) || 0));
+    const nextLeadTimes: Record<string, number> = { ...(wf.stageLeadTimes || {}) };
+    if (rawDays.trim() === '' || parsed === 0) {
+      delete nextLeadTimes[stageKey];
+    } else {
+      nextLeadTimes[stageKey] = parsed;
+    }
+    const updatedWf: ProductWorkflow = {
+      ...wf,
+      stageLeadTimes: nextLeadTimes,
+      updatedAt: new Date().toISOString(),
+    };
+    commitWorkflowUpdate(
+      product,
+      updatedWf,
+      `Update Stage Duration: ${product.name}`,
+      `Set estimated time for "${getStageMeta(stageKey, wf.customStages).shortLabel}" to ${parsed} days.`
+    );
+  };
+
+  const getWorkflowTotalDays = (wf: ProductWorkflow): number =>
+    wf.activeStages.reduce(
+      (sum, k) => sum + Math.max(0, Number(wf.stageLeadTimes?.[k] || 0)),
+      0
+    );
+
+  const getRemainingDaysFromStage = (
+    wf: ProductWorkflow,
+    currentKey: OperationStageKey
+  ): number => {
+    const idx = wf.activeStages.indexOf(currentKey);
+    const slice = idx >= 0 ? wf.activeStages.slice(idx) : wf.activeStages;
+    return slice.reduce(
+      (sum, k) => sum + Math.max(0, Number(wf.stageLeadTimes?.[k] || 0)),
+      0
     );
   };
 
@@ -505,33 +576,73 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     });
   };
 
-  const handleAdvanceBatchStage = (
+  const handleRequestAdvanceBatchStage = (
     batch: ProductionBatch,
-    activeStages: OperationStageKey[],
-    customStages?: Record<string, CustomStageDefinition>
+    activeStages: OperationStageKey[]
   ) => {
     const currentIndex = activeStages.indexOf(batch.currentStageKey);
     if (currentIndex === -1 || currentIndex >= activeStages.length - 1) return;
     const nextStageKey = activeStages[currentIndex + 1];
-    const nextStageMeta = getStageMeta(nextStageKey, customStages);
+    setAdvancingBatchContext({
+      batch,
+      currentStageKey: batch.currentStageKey,
+      nextStageKey,
+    });
+  };
+
+  const handleConfirmAdvanceBatchStage = ({
+    batchId,
+    stageKey,
+    nextStageKey,
+    assignment,
+  }: {
+    batchId: string;
+    stageKey: OperationStageKey;
+    nextStageKey: OperationStageKey;
+    assignment: BatchStageAssignment;
+  }) => {
+    const targetBatch = batches.find((b) => b.id === batchId);
+    if (!targetBatch) return;
+    const prod = products.find((p) => p.id === targetBatch.productId);
+    const wf = prod ? getEffectiveWorkflow(prod) : undefined;
+    const nextStageMeta = getStageMeta(nextStageKey, wf?.customStages);
+    const completedMeta = getStageMeta(stageKey, wf?.customStages);
+
+    const vendorLabel = assignment.vendorId
+      ? vendors.find((v) => v.id === assignment.vendorId)?.name || 'Vendor'
+      : assignment.customVendorName || 'Workshop';
+
     const updatedBatch: ProductionBatch = {
-      ...batch,
+      ...targetBatch,
       currentStageKey: nextStageKey,
+      stageAssignments: {
+        ...(targetBatch.stageAssignments || {}),
+        [stageKey]: assignment,
+      },
     };
+
     if (!isAdmin && onSubmitTeamRequest) {
       onSubmitTeamRequest({
         teamScope: 'purchases',
         entityType: 'sourcing_batch',
         actionType: 'update',
-        targetId: batch.id,
-        title: `Advance Batch ${batch.batchCode}`,
-        summary: `Move ${batch.batchCode} (${batch.quantity} pcs) to ${nextStageMeta.shortLabel}.`,
+        targetId: targetBatch.id,
+        title: `Advance Batch ${targetBatch.batchCode}`,
+        summary: `Completed ${completedMeta.shortLabel} @ ${vendorLabel} (${(
+          assignment.totalCost ?? assignment.cost ?? 0
+        ).toLocaleString()} EGP) -> ${nextStageMeta.shortLabel}.`,
         payload: { batch: updatedBatch },
       });
+      setAdvancingBatchContext(null);
       return;
     }
     onSaveBatch(updatedBatch);
-    onShowToast?.(`${batch.batchCode} moved to ${nextStageMeta.shortLabel}.`);
+    setAdvancingBatchContext(null);
+    onShowToast?.(
+      `${targetBatch.batchCode} moved to ${nextStageMeta.shortLabel} (${vendorLabel} · ${(
+        assignment.totalCost ?? assignment.cost ?? 0
+      ).toLocaleString()} EGP).`
+    );
   };
 
   const totalActiveBatches = batches.filter((b) => b.status === 'in_progress').length;
@@ -766,6 +877,12 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           <span>
                             {linkedVendorCount} {linkedVendorCount === 1 ? 'vendor' : 'vendors'}
                           </span>
+                          {getWorkflowTotalDays(wf) > 0 && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-mono font-bold text-slate-700">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>~{getWorkflowTotalDays(wf)}d lead</span>
+                            </span>
+                          )}
                           {wf.sharedGroupId && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[10px] font-bold text-indigo-700">
                               <Link2 className="w-2.5 h-2.5" />
@@ -1024,10 +1141,16 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                   </div>
                 </div>
 
-                {/* Current Active Order + Reorder / Rename / Remove */}
+                {/* Current Active Order + Reorder / Rename / Est. Days / Remove */}
                 <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                    Current Flowchart Order ({workflow.activeStages.length} stages)
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                      Current Flowchart Order ({workflow.activeStages.length} stages)
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-800">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Total Pipeline Time: {getWorkflowTotalDays(workflow)} days</span>
+                    </div>
                   </div>
                   <div className="space-y-2">
                     {workflow.activeStages.map((stageKey, sIdx) => {
@@ -1037,6 +1160,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                         (k) => k !== 'stock_in'
                       ).length;
                       const isEditing = editingStageKey === stageKey;
+                      const stageDays = workflow.stageLeadTimes?.[stageKey] ?? '';
 
                       return (
                         <div
@@ -1054,14 +1178,22 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                 value={editingStageLabel}
                                 onChange={(e) => setEditingStageLabel(e.target.value)}
                                 placeholder="Stage name"
-                                className="flex-1 min-w-[160px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-900"
+                                className="flex-1 min-w-[150px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-900"
                               />
                               <input
                                 type="text"
                                 value={editingStageUnit}
                                 onChange={(e) => setEditingStageUnit(e.target.value)}
                                 placeholder="Unit (piece, meter...)"
-                                className="w-28 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-900"
+                                className="w-24 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs text-slate-900"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                value={editingStageDays}
+                                onChange={(e) => setEditingStageDays(e.target.value)}
+                                placeholder="Days"
+                                className="w-20 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono text-slate-900"
                               />
                               <button
                                 type="button"
@@ -1092,54 +1224,81 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                 </span>
                               </div>
 
-                              {!isStockIn && (
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    disabled={sIdx === 0}
-                                    onClick={() =>
-                                      handleMoveStageInWorkflow(selectedProduct, stageKey, -1)
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1">
+                                  <Clock className="w-3 h-3 text-slate-400" />
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={stageDays}
+                                    onChange={(e) =>
+                                      handleUpdateStageLeadTime(
+                                        selectedProduct,
+                                        stageKey,
+                                        e.target.value
+                                      )
                                     }
-                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-35"
-                                    title="Move earlier"
-                                  >
-                                    <ArrowLeft className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={sIdx >= nonStockLen - 1}
-                                    onClick={() =>
-                                      handleMoveStageInWorkflow(selectedProduct, stageKey, 1)
-                                    }
-                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-35"
-                                    title="Move later"
-                                  >
-                                    <ArrowRight className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingStageKey(stageKey);
-                                      setEditingStageLabel(meta.label);
-                                      setEditingStageUnit(meta.defaultUnit || 'piece');
-                                    }}
-                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900"
-                                    title="Rename / edit unit"
-                                  >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleToggleStageInWorkflow(selectedProduct, stageKey)
-                                    }
-                                    className="p-1.5 rounded-lg bg-white border border-slate-200 text-rose-600 hover:bg-rose-50"
-                                    title="Remove stage"
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
+                                    placeholder="0"
+                                    className="w-11 text-xs font-mono font-bold text-slate-900 text-center focus:outline-none"
+                                    title="Estimated duration in days"
+                                  />
+                                  <span className="text-[10px] font-semibold text-slate-500">
+                                    days
+                                  </span>
                                 </div>
-                              )}
+
+                                {!isStockIn && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={sIdx === 0}
+                                      onClick={() =>
+                                        handleMoveStageInWorkflow(selectedProduct, stageKey, -1)
+                                      }
+                                      className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-35"
+                                      title="Move earlier"
+                                    >
+                                      <ArrowLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={sIdx >= nonStockLen - 1}
+                                      onClick={() =>
+                                        handleMoveStageInWorkflow(selectedProduct, stageKey, 1)
+                                      }
+                                      className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900 disabled:opacity-35"
+                                      title="Move later"
+                                    >
+                                      <ArrowRight className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingStageKey(stageKey);
+                                        setEditingStageLabel(meta.label);
+                                        setEditingStageUnit(meta.defaultUnit || 'piece');
+                                        setEditingStageDays(
+                                          stageDays !== '' ? String(stageDays) : ''
+                                        );
+                                      }}
+                                      className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-slate-900"
+                                      title="Rename / edit unit"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleToggleStageInWorkflow(selectedProduct, stageKey)
+                                      }
+                                      className="p-1.5 rounded-lg bg-white border border-slate-200 text-rose-600 hover:bg-rose-50"
+                                      title="Remove stage"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </>
                           )}
                         </div>
@@ -1159,21 +1318,29 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                       value={newStageName}
                       onChange={(e) => setNewStageName(e.target.value)}
                       placeholder="Stage name (e.g. Fabric Dyeing, Embroidery, Printing...)"
-                      className="sm:col-span-5 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                      className="sm:col-span-4 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
                     />
                     <input
                       type="text"
                       value={newStageUnit}
                       onChange={(e) => setNewStageUnit(e.target.value)}
-                      placeholder="Unit (piece, meter, kg)"
+                      placeholder="Unit (piece, meter)"
                       className="sm:col-span-2 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={newStageDays}
+                      onChange={(e) => setNewStageDays(e.target.value)}
+                      placeholder="Est. days"
+                      className="sm:col-span-2 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-slate-900"
                     />
                     <input
                       type="text"
                       value={newStageDesc}
                       onChange={(e) => setNewStageDesc(e.target.value)}
-                      placeholder="Description (optional)"
-                      className="sm:col-span-3 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                      placeholder="Notes (optional)"
+                      className="sm:col-span-2 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-slate-900"
                     />
                     <button
                       type="button"
@@ -1190,24 +1357,42 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
             {/* VISUAL HORIZONTAL PROCESS FLOWCHART */}
             <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">
                     Process Pipeline Flowchart
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Click any stage node to manage assigned vendors, ordering scripts, and price history.
+                    Click any stage node to manage assigned vendors, estimated days, ordering scripts, and price history.
                   </p>
                 </div>
-                <span className="text-xs font-mono text-slate-500 hidden sm:inline">
-                  {workflow.activeStages.length} stages
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {getWorkflowTotalDays(workflow) > 0 ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-800">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Total Est. Time: {getWorkflowTotalDays(workflow)} days</span>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomizeStages(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-semibold text-slate-700"
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span>+ Set Est. Days</span>
+                    </button>
+                  )}
+                  <span className="text-xs font-mono text-slate-500 hidden sm:inline">
+                    {workflow.activeStages.length} stages
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto pb-2">
                 <div className="flex items-stretch gap-2 min-w-max">
                   {workflow.activeStages.map((stageKey, idx) => {
                     const meta = getStageMeta(stageKey, workflow.customStages);
+                    const estDays = Number(workflow.stageLeadTimes?.[stageKey] || 0);
                     const stageLinks = stageVendors.filter(
                       (psv) => psv.productId === selectedProduct.id && psv.stageKey === stageKey
                     );
@@ -1247,11 +1432,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               <span className="font-mono font-bold text-slate-500">
                                 0{idx + 1}.
                               </span>
-                              {stageBatchesCount > 0 && (
-                                <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold text-[11px] font-mono tabular-nums">
-                                  {stageBatchesCount} active
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1">
+                                {estDays > 0 && (
+                                  <span className="px-1.5 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-[10px] font-mono tabular-nums inline-flex items-center gap-0.5">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    <span>{estDays}d</span>
+                                  </span>
+                                )}
+                                {stageBatchesCount > 0 && (
+                                  <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold text-[11px] font-mono tabular-nums">
+                                    {stageBatchesCount} active
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <div className="text-sm font-bold text-slate-900 leading-snug">
@@ -1387,8 +1580,45 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     const currentVendor = stageAssignment?.vendorId
                       ? vendors.find((v) => v.id === stageAssignment.vendorId)
                       : null;
+                    const currentActorName =
+                      currentVendor?.name || stageAssignment?.customVendorName || '';
                     const targetVariant = selectedProduct.variants.find(
                       (v) => v.id === batch.variantId
+                    );
+                    const totalPipelineDays = getWorkflowTotalDays(workflow);
+                    const remainingPipelineDays = getRemainingDaysFromStage(
+                      workflow,
+                      batch.currentStageKey
+                    );
+                    const loggedStages = workflow.activeStages
+                      .filter((stKey) => {
+                        const a = batch.stageAssignments?.[stKey];
+                        return Boolean(
+                          a && (a.vendorId || a.customVendorName || a.completedAt || (a.totalCost ?? a.cost))
+                        );
+                      })
+                      .map((stKey) => {
+                        const a = batch.stageAssignments[stKey];
+                        const vName = a.vendorId
+                          ? vendors.find((v) => v.id === a.vendorId)?.name || 'Vendor'
+                          : a.customVendorName || 'Vendor';
+                        const totalStageEgp =
+                          typeof a.totalCost === 'number' && a.totalCost >= 0
+                            ? a.totalCost
+                            : typeof a.cost === 'number'
+                            ? Math.round(a.cost * Math.max(1, batch.quantity) * 100) / 100
+                            : 0;
+                        return {
+                          stageKey: stKey,
+                          label: getStageMeta(stKey, workflow.customStages).shortLabel,
+                          vendorName: vName,
+                          totalEgp: totalStageEgp,
+                          completed: Boolean(a.completedAt),
+                        };
+                      });
+                    const totalSpentSoFar = loggedStages.reduce(
+                      (sum, st) => sum + (st.totalEgp || 0),
+                      0
                     );
                     const progressPct =
                       workflow.activeStages.length > 0 && stageIdx >= 0
@@ -1422,13 +1652,21 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               </div>
                               <div className="text-xs text-slate-500 mt-1">
                                 Stage: <strong className="text-slate-900">{currentStageMeta.label}</strong>
-                                {currentVendor ? ` · ${currentVendor.name}` : ''}
+                                {currentActorName ? ` · ${currentActorName}` : ''}
                               </div>
-                              {batch.targetDate && (
-                                <div className="text-[11px] font-mono text-slate-500 mt-0.5">
-                                  Target date: {batch.targetDate}
-                                </div>
-                              )}
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-500 mt-0.5">
+                                {batch.targetDate && <span>Target: {batch.targetDate}</span>}
+                                {totalPipelineDays > 0 && batch.status === 'in_progress' && (
+                                  <span className="text-indigo-700 font-semibold">
+                                    · ~{remainingPipelineDays}d left (of {totalPipelineDays}d est.)
+                                  </span>
+                                )}
+                                {totalSpentSoFar > 0 && (
+                                  <span className="text-emerald-700 font-bold">
+                                    · Cost logged: {totalSpentSoFar.toLocaleString()} EGP
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             <div className="flex items-center gap-1">
@@ -1471,6 +1709,27 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             </div>
                           </div>
 
+                          {/* Completed / Logged Stages Cost & Vendor Trail */}
+                          {loggedStages.some((st) => st.completed) && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {loggedStages
+                                .filter((st) => st.completed)
+                                .map((st) => (
+                                  <span
+                                    key={st.stageKey}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-semibold text-slate-700"
+                                  >
+                                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                    <span>{st.label}:</span>
+                                    <span className="text-slate-900">{st.vendorName}</span>
+                                    <span className="font-mono text-emerald-700">
+                                      ({st.totalEgp.toLocaleString()} EGP)
+                                    </span>
+                                  </span>
+                                ))}
+                            </div>
+                          )}
+
                           {/* Clean Progress Bar */}
                           <div className="space-y-1">
                             <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
@@ -1492,10 +1751,9 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() =>
-                                  handleAdvanceBatchStage(
+                                  handleRequestAdvanceBatchStage(
                                     batch,
-                                    workflow.activeStages,
-                                    workflow.customStages
+                                    workflow.activeStages
                                   )
                                 }
                                 className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center justify-center gap-1.5 min-h-[40px]"
@@ -1552,22 +1810,45 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                   >
                     {/* Drawer Header */}
                     <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-start justify-between gap-3">
-                      <div>
+                      <div className="space-y-1.5 min-w-0">
                         <div className="text-xs font-semibold text-slate-500">
                           {selectedProduct.name} · Stage Details
                         </div>
-                        <h3 className="text-base font-bold text-slate-900 mt-0.5">
+                        <h3 className="text-base font-bold text-slate-900">
                           {stageMeta.label}
                         </h3>
-                        <p className="text-xs text-slate-500 mt-0.5">{stageMeta.description}</p>
-                        {workflow.sharedGroupId && (
-                          <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] font-semibold text-indigo-700">
-                            <Link2 className="w-3 h-3" />
-                            <span>
-                              Synced with {workflow.sharedGroupName || 'Shared Estamba Group'}
+                        <p className="text-xs text-slate-500">{stageMeta.description}</p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200">
+                            <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                            <span className="text-[11px] font-bold text-slate-700">
+                              Est. Time:
                             </span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={workflow.stageLeadTimes?.[drawerStageKey] ?? ''}
+                              onChange={(e) =>
+                                handleUpdateStageLeadTime(
+                                  selectedProduct,
+                                  drawerStageKey,
+                                  e.target.value
+                                )
+                              }
+                              placeholder="0"
+                              className="w-12 px-1 py-0.5 rounded border border-slate-200 text-xs font-mono font-bold text-slate-900 text-center"
+                            />
+                            <span className="text-[11px] text-slate-500">days</span>
                           </div>
-                        )}
+                          {workflow.sharedGroupId && (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-50 border border-indigo-200 text-[11px] font-semibold text-indigo-700">
+                              <Link2 className="w-3 h-3" />
+                              <span>
+                                Synced with {workflow.sharedGroupName || 'Shared Estamba Group'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -2120,6 +2401,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               product={selectedProduct}
               activeStages={workflow.activeStages}
               customStages={workflow.customStages}
+              stageLeadTimes={workflow.stageLeadTimes}
               vendors={vendors}
               productStageVendors={stageVendors}
               priceHistory={priceHistory}
@@ -2159,6 +2441,21 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     : `${batch.batchCode} started at ${stageShort}.`
                 );
               }}
+            />
+
+            {/* Mandatory Cost + Vendor Gate When Advancing Stage */}
+            <AdvanceStageModal
+              batch={advancingBatchContext?.batch || null}
+              product={selectedProduct}
+              currentStageKey={advancingBatchContext?.currentStageKey || null}
+              nextStageKey={advancingBatchContext?.nextStageKey || null}
+              customStages={workflow.customStages}
+              stageLeadTimes={workflow.stageLeadTimes}
+              vendors={vendors}
+              productStageVendors={stageVendors}
+              priceHistory={priceHistory}
+              onClose={() => setAdvancingBatchContext(null)}
+              onConfirm={handleConfirmAdvanceBatchStage}
             />
 
             {/* Complete & Stock In (Gard) Modal */}

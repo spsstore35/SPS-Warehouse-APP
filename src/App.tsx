@@ -3307,6 +3307,7 @@ export default function App() {
       workflowType: inferredType,
       activeStages: [...DEFAULT_STAGE_KEYS[inferredType]],
       customStages: existing?.customStages,
+      stageLeadTimes: existing?.stageLeadTimes,
       sharedGroupId: existing?.sharedGroupId,
       sharedGroupName: existing?.sharedGroupName,
       templateSourceProductId: existing?.templateSourceProductId,
@@ -3329,6 +3330,9 @@ export default function App() {
             workflowType: workflow.workflowType,
             activeStages: [...workflow.activeStages],
             customStages: workflow.customStages ? { ...workflow.customStages } : undefined,
+            stageLeadTimes: workflow.stageLeadTimes
+              ? { ...workflow.stageLeadTimes }
+              : undefined,
             sharedGroupId: workflow.sharedGroupId,
             sharedGroupName: workflow.sharedGroupName,
             updatedAt: nowIso,
@@ -3558,6 +3562,7 @@ export default function App() {
         workflowType: sourceWf.workflowType,
         activeStages: [...sourceWf.activeStages],
         customStages: sourceWf.customStages ? { ...sourceWf.customStages } : undefined,
+        stageLeadTimes: sourceWf.stageLeadTimes ? { ...sourceWf.stageLeadTimes } : undefined,
         sharedGroupId: undefined,
         sharedGroupName: undefined,
         templateSourceProductId: payload.sourceProductId,
@@ -3605,6 +3610,7 @@ export default function App() {
         workflowType: sourceWf.workflowType,
         activeStages: [...sourceWf.activeStages],
         customStages: sourceWf.customStages ? { ...sourceWf.customStages } : undefined,
+        stageLeadTimes: sourceWf.stageLeadTimes ? { ...sourceWf.stageLeadTimes } : undefined,
         sharedGroupId: groupId,
         sharedGroupName: groupName,
         templateSourceProductId:
