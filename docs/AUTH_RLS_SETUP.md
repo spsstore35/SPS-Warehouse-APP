@@ -20,7 +20,12 @@ The OLD site keeps working until Step 8 (the "switch"). Steps 1-7 are safe.
 - Default deny: RLS is on for every table; `anon` has no access.
 - Role names: `admin` = team_admin, `worker` = staff (no enum change needed).
 
+## Names are NOT changed
+The migration only ADDS: tables `teams`, `user_teams`, `security_events`, view `leader_product_variants`, helper functions. It does not rename, drop or retype any existing table or column (checked by comparing the column list before and after on a copy built from the repo schema). Old `profiles.password_hash` stays as a column (emptied at the switch, old values saved in `private.legacy_password_hashes`). `profiles.assigned_teams` stays and is kept in sync from `user_teams`.
+New in the database after the switch: `profiles.id` must match a Supabase Auth user (foreign key). Existing rows and data are kept.
+
 ## Steps
+0. FIRST (read-only, safe): run `supabase/preflight_schema_check.sql`. Empty result = your database has every table/column the repo expects. Anything listed = tell us before going on. Do the whole process on a staging copy first (Supabase branch or a restored backup), not production.
 1. Supabase > SQL editor: paste the whole `20261202_auth_rls_v3.sql` and Run. (Part 1 only: adds tables and functions, copies your users into Supabase Auth. The site still works.)
 2. Make yourself full_admin: `select private.make_full_admin('your-email-or-username');`
    (If you have no account yet: `select private.create_first_admin('email','a-long-password','Your Name');`)
