@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet, KeyRound } from 'lucide-react';
 import {
   isUserAdmin,
   isUserLeader,
@@ -10,6 +10,7 @@ import {
   isFullAccessAdmin,
 } from '../utils/security';
 import { STORE_TEAMS } from './CalendarView';
+import { ChangePasswordModal } from './ChangePasswordModal';
 import {
   getNotificationPermissionState,
   requestNotificationPermission,
@@ -50,6 +51,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const userTeams = getUserAssignedTeams(currentUser);
   const fullAccessAdmin = isFullAccessAdmin(currentUser, users);
   const [showAccountSheet, setShowAccountSheet] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [showCreateChoiceSheet, setShowCreateChoiceSheet] = useState(false);
 
   const canAnalytics = canUserAccessView(currentUser, 'analytics', users);
@@ -532,6 +534,21 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               )}
             </div>
 
+            {/* Change Password */}
+            <div className="pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountSheet(false);
+                  setShowChangePassword(true);
+                }}
+                className="w-full flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors"
+              >
+                <KeyRound className="w-4 h-4 text-amber-600" />
+                <span>Change Password</span>
+              </button>
+            </div>
+
             {/* Red Logout Button */}
             <div className="pt-2 border-t border-slate-100">
               <button
@@ -677,6 +694,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </div>
         </div>
       )}
+
+      <ChangePasswordModal
+        isOpen={showChangePassword}
+        currentUser={currentUser}
+        onClose={() => setShowChangePassword(false)}
+      />
     </nav>
   );
 };

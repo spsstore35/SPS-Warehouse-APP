@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet, KeyRound } from 'lucide-react';
 import {
   isUserAdmin,
   isUserLeader,
@@ -9,6 +9,7 @@ import {
   isFullAccessAdmin,
 } from '../utils/security';
 import { STORE_TEAMS } from './CalendarView';
+import { ChangePasswordModal } from './ChangePasswordModal';
 import {
   getNotificationPermissionState,
   requestNotificationPermission,
@@ -48,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   const fullAccessAdmin = isFullAccessAdmin(currentUser, users);
   const teamScopeKey = userTeams.join(',');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
   const [canSlideLeft, setCanSlideLeft] = useState(false);
@@ -698,6 +700,21 @@ export const Header: React.FC<HeaderProps> = ({
                     )}
                   </div>
 
+                  {/* Change Password */}
+                  <div className="pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        setIsChangePasswordOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Change Password</span>
+                    </button>
+                  </div>
+
                   {/* Red Logout Button */}
                   <div className="pt-2 border-t border-slate-100">
                     <button
@@ -718,6 +735,11 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        currentUser={currentUser}
+        onClose={() => setIsChangePasswordOpen(false)}
+      />
     </header>
   );
 };

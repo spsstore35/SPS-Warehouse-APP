@@ -71,6 +71,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       const {
         verifyPassword,
         hashPassword,
+        isBcryptHash,
         normalizeRole,
         getPublicUserEmail,
       } = await import('../utils/security');
@@ -102,14 +103,19 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
         return;
       }
 
-      // Auto-upgrade legacy plain text or null passwords to secure SHA-256 hash in Supabase
-      if (profile.password_hash === password || !profile.password_hash) {
-        const { supabase } = await import('../services/supabaseClient');
-        const newSecureHash = await hashPassword(password);
-        await supabase
-          .from('profiles')
-          .update({ password_hash: newSecureHash })
-          .eq('id', profile.id);
+      // Auto-upgrade any non-bcrypt stored password (plain text, null, or
+      // legacy SHA-256) to a bcrypt hash in Supabase after a successful login.
+      if (!isBcryptHash(profile.password_hash)) {
+        try {
+          const { supabase } = await import('../services/supabaseClient');
+          const newSecureHash = await hashPassword(password);
+          await supabase
+            .from('profiles')
+            .update({ password_hash: newSecureHash })
+            .eq('id', profile.id);
+        } catch {
+          // Re-hash failure must never block a successful login.
+        }
       }
 
       const normalizedRole: Role = normalizeRole(profile.role || profile.requested_role);
