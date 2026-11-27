@@ -187,6 +187,56 @@ end $$;
 revoke all on function public.admin_set_user_teams(uuid, text[], text[]), public.admin_set_team_role(uuid, text, text) from public, anon;
 grant execute on function public.admin_set_user_teams(uuid, text[], text[]), public.admin_set_team_role(uuid, text, text) to authenticated;
 
+-- 1.4c Checked stock changes. The app changes stock in 3 places: (a) an order takes stock when the
+-- deposit is confirmed, (b) goods arriving from a purchase/production batch are added, (c) an
+-- inventory admin adjusts. (a) and (b) are done by admins of OTHER teams (budgeting, troops,
+-- purchases), who must not edit product_variants directly. This function lets them do ONLY these
+-- two things, with checks, and writes the audit row. Delivery/handover does not change stock.
+create or replace function public.apply_stock_change(p_variant_id text, p_delta integer, p_kind text, p_ref text)
+returns integer language plpgsql security definer set search_path = public as $$
+declare v_new integer; v_ok boolean := false; v_allowed integer;
+begin
+  if not public.app_is_staff_or_above() then raise exception 'Not allowed.' using errcode = '42501'; end if;
+  if p_delta is null or p_delta = 0 then raise exception 'Nothing to change.'; end if;
+  if p_kind = 'order_deduction' then
+    -- caller is a full_admin or team_admin of budgeting / troops / inventory, delta is negative,
+    -- and the order really contains that variant with at least that quantity.
+    if p_delta > 0 or not public.app_admin_of_any(array['budgeting','troops','inventory']) then
+      raise exception 'Only an admin of the orders team can take stock for an order.' using errcode = '42501';
+    end if;
+    -- If the order's items are already saved, the amount must fit them. (A brand-new order is
+    -- saved a moment AFTER its stock is taken, so with no items yet we accept it.)
+    if exists (select 1 from public.booking_items where booking_id = p_ref) then
+      select coalesce(sum(quantity), 0) into v_allowed from public.booking_items where booking_id = p_ref and variant_id = p_variant_id;
+      if v_allowed < -p_delta then raise exception 'That order does not contain that much of this item.' using errcode = '42501'; end if;
+    end if;
+    v_ok := true;
+  elsif p_kind = 'batch_stock_in' then
+    if p_delta < 0 or not public.app_admin_of_any(array['purchases','inventory']) then
+      raise exception 'Only an admin of the purchases team can add received stock.' using errcode = '42501';
+    end if;
+    if to_regclass('public.production_batches') is null
+       or not exists (select 1 from public.production_batches where id = p_ref) then
+      raise exception 'Unknown purchase/production batch.' using errcode = '42501';
+    end if;
+    v_ok := true;
+  elsif p_kind = 'inventory_adjust' then
+    if not public.app_admin_of_any(array['inventory']) then
+      raise exception 'Only inventory admins can adjust stock.' using errcode = '42501';
+    end if;
+    v_ok := true;
+  end if;
+  if not v_ok then raise exception 'Unknown stock change type.'; end if;
+  perform set_config('app.stock_fn', 'on', true);
+  update public.product_variants set quantity = greatest(0, quantity + p_delta), updated_at = now()
+   where id = p_variant_id returning quantity into v_new;
+  perform set_config('app.stock_fn', 'off', true);
+  if v_new is null then raise exception 'Unknown item.'; end if;
+  return v_new;
+end $$;
+revoke all on function public.apply_stock_change(text, integer, text, text) from public, anon;
+grant execute on function public.apply_stock_change(text, integer, text, text) to authenticated;
+
 -- 1.5 Copy existing accounts into Supabase Auth ---------------------------------
 -- Same id as the profile, same email (or a made-up @noemail.sps.local one), and the
 -- SAME bcrypt password hash, so everybody logs in with the password they already have.
@@ -813,6 +863,8 @@ declare
   v_keys text[] := array['name','sku','price','category','category_id','status','target_audience','quantity','min_threshold','product_id'];
 begin
   if auth.uid() is null then return new; end if;
+  -- apply_stock_change() (below) sets this flag for its own checked stock writes only.
+  if coalesce(current_setting('app.stock_fn', true), '') = 'on' then return new; end if;
   if public.app_admin_of_any(array['inventory']) then return new; end if;
   if (select jsonb_object_agg(k, to_jsonb(new)->k) from unnest(v_keys) k)
      is distinct from (select jsonb_object_agg(k, to_jsonb(old)->k) from unnest(v_keys) k) then

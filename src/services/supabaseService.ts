@@ -666,6 +666,27 @@ export async function updateVariantQuantityInDb(variantId: string, newQuantity: 
 }
 
 /**
+ * Checked stock change done by the database (apply_stock_change). Used when an admin of the
+ * orders team takes stock for an order, or a purchases admin adds received goods.
+ * kind: 'order_deduction' | 'batch_stock_in' | 'inventory_adjust'; ref: booking id or batch id.
+ */
+export async function applyStockChangeInDb(
+  variantId: string,
+  delta: number,
+  kind: 'order_deduction' | 'batch_stock_in' | 'inventory_adjust',
+  ref: string
+): Promise<number> {
+  const { data, error } = await supabase.rpc('apply_stock_change', {
+    p_variant_id: variantId,
+    p_delta: delta,
+    p_kind: kind,
+    p_ref: ref,
+  });
+  if (error) throw error;
+  return Number(data);
+}
+
+/**
  * ADJUSTMENT REQUESTS
  */
 

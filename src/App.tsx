@@ -60,6 +60,7 @@ import {
   deleteUserFromDb,
   updateUserRoleInDb,
   updateVariantQuantityInDb,
+  applyStockChangeInDb,
   fetchAdjustmentRequestsFromDb,
   createAdjustmentRequestInDb,
   updateAdjustmentRequestInDb,
@@ -2500,7 +2501,7 @@ export default function App() {
     }
 
     let nextProducts = [...products];
-    const variantDbUpdates: { variantId: string; newQty: number }[] = [];
+    const variantDbUpdates: { variantId: string; newQty: number; delta: number }[] = [];
 
     // INVENTORY RULE: If created directly in preparing (deposit confirmed upfront), reserve & deduct available stock!
     // Otherwise, booking remains in 'pending' and inventory stock is NOT touched.
@@ -2514,7 +2515,7 @@ export default function App() {
               const deductUnits = Math.min(item.quantity, Math.max(0, v.quantity));
               const updatedQty = Math.max(0, v.quantity - deductUnits);
               if (deductUnits > 0) {
-                variantDbUpdates.push({ variantId: v.id, newQty: updatedQty });
+                variantDbUpdates.push({ variantId: v.id, newQty: updatedQty, delta: -deductUnits });
               }
               return {
                 ...v,
@@ -2534,8 +2535,8 @@ export default function App() {
       });
       setProducts(nextProducts);
       variantDbUpdates.forEach((u) => {
-        updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
-          console.warn('Notice deducting booking stock in Supabase:', err?.message);
+        applyStockChangeInDb(u.variantId, u.delta, 'order_deduction', newBooking.id).catch((err) => {
+          showToast(`Stock was NOT saved in the database: ${err?.message || 'sync failed'}`);
         });
       });
       newBooking.inventoryDeducted = true;
@@ -2806,7 +2807,7 @@ export default function App() {
       return;
     }
     const nextProducts = [...products];
-    const variantDbUpdates: { variantId: string; newQty: number }[] = [];
+    const variantDbUpdates: { variantId: string; newQty: number; delta: number }[] = [];
     let affectedBooking: Booking | undefined;
 
     const updatedBookings = bookings.map((b) => {
@@ -2828,7 +2829,7 @@ export default function App() {
                 const deductUnits = Math.min(item.quantity, Math.max(0, v.quantity));
                 const updatedQty = Math.max(0, v.quantity - deductUnits);
                 if (deductUnits > 0) {
-                  variantDbUpdates.push({ variantId: v.id, newQty: updatedQty });
+                  variantDbUpdates.push({ variantId: v.id, newQty: updatedQty, delta: -deductUnits });
                 }
                 return {
                   ...v,
@@ -2879,8 +2880,8 @@ export default function App() {
 
       // Persist all deducted variant quantities to Supabase
       variantDbUpdates.forEach((u) => {
-        updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
-          console.warn('Notice updating reserved variant stock in Supabase:', err?.message);
+        applyStockChangeInDb(u.variantId, u.delta, 'order_deduction', bookingId).catch((err) => {
+          showToast(`Stock was NOT saved in the database: ${err?.message || 'sync failed'}`);
         });
       });
 
@@ -3628,7 +3629,7 @@ export default function App() {
 
     const nextProducts = products.map((p) => (p.id === product.id ? updatedProduct : p));
     setProducts(nextProducts);
-    updateVariantQuantityInDb(targetVariant.id, newQty).catch((err) =>
+    applyStockChangeInDb(targetVariant.id, qtyToAdd, 'batch_stock_in', batchId).catch((err) =>
       showToast(`Database stock update error: ${err?.message || 'Sync failed'}`)
     );
 

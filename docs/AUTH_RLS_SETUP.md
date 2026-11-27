@@ -54,10 +54,17 @@ Run `20261202_auth_rls_v3_ROLLBACK.sql` (restores old hashes, reopens tables), r
 | wrong password x5 | message "too many attempts" | login keeps working during the lockout window |
 | not signed in | - | read any table with the public key (should return nothing/401) |
 
+## How stock changes work (checked on a test copy)
+Stock is taken for an order when the deposit is confirmed (any %), and added when purchased goods arrive. Delivery/handover does not change stock. These steps are done by admins of other teams (budgeting, troops, purchases), who cannot edit `product_variants` directly. So the database function `apply_stock_change` does them with checks:
+- `order_deduction`: full_admin, or team_admin of budgeting / troops / inventory. Only reduces stock.
+- `batch_stock_in`: full_admin, or team_admin of purchases / inventory, for a real purchase/production batch. Only adds stock.
+- Staff, leaders and other teams are refused. Direct edits of quantity stay inventory-admin only.
+Run Part 1 BEFORE deploying the new site (the site calls this function).
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).
 - Per-team roles are supported in the database; the approval screen still assigns one role.
 - Approval queues are `team_change_requests` and `adjustment_requests` (no separate approval_requests table).
-- Staff-created bookings that deduct stock may fail for non-inventory-admins.
+- A new order's stock is taken just before its items are saved, so the per-order amount check only applies once items exist.
 - `/api/budgeting/claim` (first-run passcode) is still unauthenticated: follow-up.
