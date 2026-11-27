@@ -103,11 +103,25 @@ export async function hashPassword(plainText: string): Promise<string> {
   if (!text) {
     throw new Error('Password cannot be empty.');
   }
+  const mod = await import('bcryptjs');
+  const bcrypt = mod.default ?? mod;
+  return await bcrypt.hash(text, 10);
+}
+
+/**
+ * Legacy SHA-256 hashing. Only kept so verifyPassword can still validate
+ * hashes stored before the bcrypt migration. Never use for new passwords.
+ */
+async function hashPasswordSha256Legacy(plainText: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(text);
+  const data = encoder.encode(plainText);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function isBcryptHash(storedHash?: string | null): boolean {
+  return /^\$2[aby]\$/.test(storedHash || '');
 }
 
 export async function verifyPassword(
@@ -120,7 +134,7 @@ export async function verifyPassword(
   if (!enteredText) return false;
 
   // 1. Bcrypt hashes ($2a$, $2b$, $2y$): real verification, fail closed.
-  if (/^\$2[aby]\$/.test(storedHash)) {
+  if (isBcryptHash(storedHash)) {
     try {
       const mod = await import('bcryptjs');
       const bcrypt = mod.default ?? mod;
@@ -133,11 +147,11 @@ export async function verifyPassword(
   // 2. Legacy unhashed records
   if (storedHash === enteredText) return true;
 
-  // 3. SHA-256 hash
+  // 3. Legacy SHA-256 hash
   const cleanStored = storedHash.startsWith('$sha256$')
     ? storedHash.slice(8)
     : storedHash;
-  const computed = await hashPassword(enteredText);
+  const computed = await hashPasswordSha256Legacy(enteredText);
   return computed.toLowerCase() === cleanStored.toLowerCase();
 }
 
