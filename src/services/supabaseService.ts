@@ -908,8 +908,8 @@ export async function registerUserInDb(data: {
       });
 
   const cleanPassword = (data.password || '').trim();
-  if (cleanPassword.length < 4) {
-    throw new Error('Password must be at least 4 characters.');
+  if (cleanPassword.length < 8) {
+    throw new Error('Password must be at least 8 characters.');
   }
 
   const newUser: User = {
