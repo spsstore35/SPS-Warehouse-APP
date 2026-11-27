@@ -181,8 +181,8 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       return;
     }
 
-    if (!signUpPassword || signUpPassword.length < 4) {
-      setSignUpError('Password must be at least 4 characters');
+    if (!signUpPassword || signUpPassword.length < 8) {
+      setSignUpError('Password must be at least 8 characters');
       setIsSubmitting(false);
       return;
     }

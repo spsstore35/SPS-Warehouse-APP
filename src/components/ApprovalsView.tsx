@@ -1639,8 +1639,8 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                   setCreateError('Please enter a valid phone number.');
                   return;
                 }
-                if (!newUserPassword || newUserPassword.length < 4) {
-                  setCreateError('Password must be at least 4 characters');
+                if (!newUserPassword || newUserPassword.length < 8) {
+                  setCreateError('Password must be at least 8 characters');
                   return;
                 }
 

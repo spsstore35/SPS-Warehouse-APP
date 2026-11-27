@@ -1805,10 +1805,10 @@ export default function App() {
     }
 
     const plainPassword = data.password ? data.password.trim() : '';
-    if (plainPassword.length < 4) {
+    if (plainPassword.length < 8) {
       return {
         success: false,
-        error: 'Password must be at least 4 characters.',
+        error: 'Password must be at least 8 characters.',
       };
     }
 
