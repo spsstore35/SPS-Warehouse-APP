@@ -8,12 +8,13 @@ export interface User {
   email?: string;
   username?: string;
   phone?: string;
-  password?: string;
   status: UserStatus;
   requestedRole?: Role;
   employeeId?: string;
   avatarColor?: string;
   assignedTeams?: StoreTeamId[];
+  /** Teams where this person is team_admin (from user_teams). Staff teams are the rest of assignedTeams. */
+  adminTeams?: StoreTeamId[];
   assignedFare2?: string[];
   createdAt?: string;
   approvedAt?: string;

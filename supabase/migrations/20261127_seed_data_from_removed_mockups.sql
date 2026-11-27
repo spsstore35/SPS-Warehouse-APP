@@ -15,36 +15,8 @@ BEGIN
   END IF;
 END $$;
 
--- 1. INITIAL ADMIN ACCOUNT (Replace the placeholder password below before running, and rotate after first login!)
-INSERT INTO public.profiles (
-  id,
-  email,
-  password_hash,
-  full_name,
-  role,
-  status,
-  requested_role,
-  employee_id,
-  avatar_color,
-  assigned_teams,
-  assigned_fare2,
-  created_at
-)
-VALUES (
-  '00000000-0000-4000-8000-000000000001',
-  'admin@wearhouse.com',
-  crypt('CHANGE_ME_INITIAL_ADMIN_PASSWORD', gen_salt('bf')),
-  'Admin Boss (Owner)',
-  'full_admin',
-  'active',
-  'full_admin',
-  'WH-ADM-01',
-  '#d97706',
-  '[]'::jsonb,
-  '[]'::jsonb,
-  NOW()
-)
-ON CONFLICT (email) DO NOTHING;
+-- 1. INITIAL ADMIN ACCOUNT: removed. No password is stored in this repo anymore.
+--    Create the first full_admin with the helper in 20261202_auth_rls_v3.sql (docs/AUTH_RLS_SETUP.md).
 
 -- 2. CATEGORIES
 INSERT INTO public.categories (id, name, description, display_order, created_at)

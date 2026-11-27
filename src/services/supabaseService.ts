@@ -269,7 +269,17 @@ export async function fetchProductsFromDb(): Promise<Product[]> {
     }
   } catch (_e) {}
 
-  const { data: variantsData, error: varError } = await fetchAllRows('product_variants');
+  // Leaders never get quantities: the database gives them a view without quantity columns.
+  let isLeaderRole = false;
+  try {
+    const { data: roleData } = await supabase.rpc('app_role');
+    isLeaderRole = roleData === 'leader';
+  } catch {
+    /* function not installed yet */
+  }
+  const { data: variantsData, error: varError } = await fetchAllRows(
+    isLeaderRole ? 'leader_product_variants' : 'product_variants'
+  );
 
   if (varError) throw varError;
 
@@ -641,8 +651,9 @@ export async function deleteProductVariantFromDb(variantId: string): Promise<voi
 }
 
 export async function deleteUserFromDb(userId: string): Promise<void> {
-  const { error } = await supabase.from('profiles').delete().eq('id', userId);
-  if (error) throw error;
+  // Deleting an account needs the service key, so it goes through the admin-users Edge Function.
+  const { callAdminUsers } = await import('./authService');
+  await callAdminUsers({ action: 'delete', userId });
 }
 
 export async function updateVariantQuantityInDb(variantId: string, newQuantity: number): Promise<void> {
@@ -754,6 +765,17 @@ export async function fetchUsersFromDb(): Promise<User[]> {
   if (error) throw error;
   if (!data || data.length === 0) return [];
 
+  // Team memberships (user_teams) are the source of truth for teams and team_admin rights.
+  const teamsByUser: Record<string, Array<{ team_id: string; role: string }>> = {};
+  try {
+    const { data: teamRows } = await fetchAllRows('user_teams', { select: 'user_id, team_id, role', orderColumn: 'user_id' });
+    (teamRows || []).forEach((t: any) => {
+      (teamsByUser[t.user_id] = teamsByUser[t.user_id] || []).push({ team_id: t.team_id, role: t.role });
+    });
+  } catch {
+    /* user_teams not visible to this role: fall back to profiles.assigned_teams */
+  }
+
   return data.map((u: any) => {
     const normalizedRole: Role = normalizeRole(u.role || u.requested_role);
     const normalizedReqRole: Role = normalizeRole(u.requested_role || u.role);
@@ -769,251 +791,23 @@ export async function fetchUsersFromDb(): Promise<User[]> {
       email: getPublicUserEmail(u.email),
       username: u.username || undefined,
       phone: u.phone || undefined,
-      password: u.password_plain || u.password_hash || undefined,
       role: normalizedRole,
       status: (u.status || 'active') as UserStatus,
       requestedRole: normalizedReqRole,
       employeeId: u.employee_id || undefined,
       avatarColor: u.avatar_color || undefined,
-      assignedTeams: parseStringArray(u.assigned_teams) as StoreTeamId[] | undefined,
+      assignedTeams: (teamsByUser[u.id]
+        ? Array.from(new Set(teamsByUser[u.id].map((t) => t.team_id)))
+        : parseStringArray(u.assigned_teams)) as StoreTeamId[] | undefined,
+      adminTeams: teamsByUser[u.id]
+        ? (teamsByUser[u.id].filter((t) => t.role === 'team_admin').map((t) => t.team_id) as StoreTeamId[])
+        : undefined,
       assignedFare2: parseStringArray(u.assigned_fare2),
       createdAt: u.created_at,
       approvedAt: u.approved_at || undefined,
       approvedBy: u.approved_by_name || undefined,
     };
   });
-}
-
-export async function lookupProfileForLogin(identifier: string): Promise<any | null> {
-  const cleanInput = identifier.trim();
-  if (!cleanInput) return null;
-
-  // 1. Prefer database RPC (works seamlessly even under strict profiles RLS and handles phone normalization)
-  try {
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('login_lookup_profile', {
-      p_identifier: cleanInput,
-    });
-    if (!rpcErr) {
-      if (Array.isArray(rpcData)) return rpcData[0] || null;
-      return rpcData || null;
-    }
-    const msg = String(rpcErr.message || '');
-    const isMissingFn =
-      rpcErr.code === 'PGRST202' ||
-      rpcErr.code === '42883' ||
-      msg.includes('login_lookup_profile');
-    if (!isMissingFn) {
-      throw rpcErr;
-    }
-  } catch (err: any) {
-    const msg = String(err?.message || '');
-    const isMissingFn =
-      err?.code === 'PGRST202' ||
-      err?.code === '42883' ||
-      msg.includes('login_lookup_profile');
-    if (!isMissingFn) throw err;
-  }
-
-  // 2. Fallback: parameterized lookups directly on profiles table
-  if (cleanInput.includes('@')) {
-    const { data: emailMatch, error: emailErr } = await supabase
-      .from('profiles')
-      .select('*')
-      .ilike('email', cleanInput.toLowerCase())
-      .limit(1)
-      .maybeSingle();
-    if (emailErr) throw emailErr;
-    if (emailMatch) return emailMatch;
-  }
-
-  const normUser = normalizeUsername(cleanInput);
-  if (normUser) {
-    const { data: userMatch, error: userErr } = await supabase
-      .from('profiles')
-      .select('*')
-      .ilike('username', normUser)
-      .limit(1)
-      .maybeSingle();
-    if (!userErr && userMatch) return userMatch;
-    if (
-      userErr &&
-      userErr.code !== '42703' &&
-      userErr.code !== 'PGRST204' &&
-      !String(userErr.message || '').includes('username')
-    ) {
-      throw userErr;
-    }
-  }
-
-  const phoneVariants = getPhoneSearchVariants(cleanInput);
-  if (phoneVariants.length > 0) {
-    const { data: phoneMatches, error: phoneErr } = await supabase
-      .from('profiles')
-      .select('*')
-      .in('phone', phoneVariants)
-      .limit(1);
-    if (!phoneErr && phoneMatches && phoneMatches.length > 0) {
-      return phoneMatches[0];
-    }
-
-    // Handle stored phone numbers that contain spaces or dashes
-    if (!phoneErr) {
-      const { data: allWithPhones } = await supabase
-        .from('profiles')
-        .select('*')
-        .not('phone', 'is', null);
-      if (allWithPhones && allWithPhones.length > 0) {
-        const inputDigits = normalizePhoneNumber(cleanInput).replace(/\D/g, '');
-        const found = allWithPhones.find((row: any) => {
-          const rowDigits = normalizePhoneNumber(row.phone).replace(/\D/g, '');
-          return Boolean(inputDigits && rowDigits && rowDigits === inputDigits);
-        });
-        if (found) return found;
-      }
-    } else if (
-      phoneErr.code !== '42703' &&
-      phoneErr.code !== 'PGRST204' &&
-      !String(phoneErr.message || '').includes('phone')
-    ) {
-      throw phoneErr;
-    }
-  }
-
-  return null;
-}
-
-export async function registerUserInDb(data: {
-  name: string;
-  email?: string;
-  username?: string;
-  phone?: string;
-  password?: string;
-  requestedRole: Role;
-}): Promise<User> {
-  const cleanEmail = (data.email || '').trim().toLowerCase() || undefined;
-  const cleanUsername = normalizeUsername(data.username) || undefined;
-  const cleanPhone = normalizePhoneNumber(data.phone) || undefined;
-
-  if (!cleanEmail && !cleanUsername && !cleanPhone) {
-    throw new Error('Please provide at least an email address, username, or phone number.');
-  }
-
-  // Generate a valid RFC4122 v4 UUID so PostgreSQL UUID primary key accepts it without syntax error (22P02)
-  const validUuid = typeof crypto !== 'undefined' && crypto.randomUUID 
-    ? crypto.randomUUID() 
-    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === 'x' ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      });
-
-  const cleanPassword = (data.password || '').trim();
-  if (cleanPassword.length < 8) {
-    throw new Error('Password must be at least 8 characters.');
-  }
-
-  const newUser: User = {
-    id: validUuid,
-    name: data.name.trim(),
-    email: cleanEmail,
-    username: cleanUsername,
-    phone: cleanPhone,
-    role: data.requestedRole,
-    requestedRole: data.requestedRole,
-    status: 'pending', // Awaiting Admin Approval
-    employeeId: `WH-REG-${Math.floor(100 + Math.random() * 900)}`,
-    avatarColor:
-      data.requestedRole === 'full_admin'
-        ? '#b45309'
-        : data.requestedRole === 'admin'
-        ? '#d97706'
-        : data.requestedRole === 'leader'
-        ? '#059669'
-        : '#0284c7',
-    createdAt: new Date().toISOString(),
-  };
-
-  const { hashPassword } = await import('../utils/security');
-  const securePasswordHash = await hashPassword(cleanPassword);
-
-  const payload: Record<string, any> = {
-    id: newUser.id,
-    email: cleanEmail || null,
-    username: cleanUsername || null,
-    phone: cleanPhone || null,
-    password_hash: securePasswordHash,
-    full_name: newUser.name,
-    role: newUser.role,
-    status: newUser.status,
-    requested_role: newUser.requestedRole,
-    employee_id: newUser.employeeId,
-    avatar_color: newUser.avatarColor,
-    created_at: newUser.createdAt,
-  };
-
-  let error: any = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await supabase.from('profiles').insert(payload);
-    error = res.error;
-    if (!error) break;
-    if (
-      !cleanEmail &&
-      (error.code === '23502' || String(error.message || '').toLowerCase().includes('null value in column "email"'))
-    ) {
-      payload.email = buildSyntheticNoEmail(cleanUsername, cleanPhone, newUser.id);
-      continue;
-    }
-    if (error.code === 'PGRST204' || error.code === '42703') {
-      const missingCol = extractMissingColumnName(error);
-      if (missingCol && missingCol in payload) {
-        delete payload[missingCol];
-        continue;
-      }
-      delete payload.username;
-      delete payload.phone;
-      continue;
-    }
-    break;
-  }
-
-  if (error) {
-    if (error.message?.includes('profiles_email_key') || error.message?.includes('profiles_email_unique_idx')) {
-      throw new Error('An account with this email already exists.');
-    }
-    if (error.message?.includes('profiles_username_unique_idx') || error.message?.includes('username')) {
-      throw new Error('An account with this username already exists.');
-    }
-    if (error.message?.includes('profiles_phone_unique_idx') || error.message?.includes('phone')) {
-      throw new Error('An account with this phone number already exists.');
-    }
-    if (error.message?.includes('enum user_role') || error.message?.includes('"leader"') || error.message?.includes('"full_admin"')) {
-      throw new Error(
-        `Database enum "user_role" must include 'leader' and 'full_admin'. Run: ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'leader'; ALTER TYPE public.user_role ADD VALUE IF NOT EXISTS 'full_admin'; in Supabase SQL Editor.`
-      );
-    }
-    throw error;
-  }
-
-  const contactLabel = [cleanEmail, cleanUsername ? `@${cleanUsername}` : '', cleanPhone]
-    .filter(Boolean)
-    .join(', ');
-
-  try {
-    await insertAuditLogInDb({
-      id: `audit-reg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      timestamp: new Date().toISOString(),
-      action: 'account_updated',
-      actorName: newUser.name,
-      actorRole: newUser.requestedRole === 'full_admin' ? 'admin' : newUser.requestedRole || 'worker',
-      summary: `New account registration: "${newUser.name}" (${contactLabel}).`,
-      details: `New staff member "${newUser.name}" (${contactLabel}) registered and requires administrator approval.`,
-      reason: 'New Account Registration',
-    });
-  } catch {
-    // Non-fatal if audit log logging fails
-  }
-
-  return newUser;
 }
 
 export async function updateUserContactInDb(
@@ -1132,17 +926,14 @@ export async function updateUserTeamAssignmentsInDb(
   assignedFare2: string[]
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        assigned_teams: assignedTeams,
-        assigned_fare2: assignedFare2,
-      })
-      .eq('id', userId);
-
-    if (error) {
-      return { ok: false, error: error.message };
-    }
+    // Only a full_admin can change memberships (and never their own): enforced by the
+    // database function admin_set_user_teams and by RLS on user_teams.
+    const { error } = await supabase.rpc('admin_set_user_teams', {
+      p_user: userId,
+      p_teams: assignedTeams,
+      p_fare2: assignedFare2,
+    });
+    if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Sync error' };

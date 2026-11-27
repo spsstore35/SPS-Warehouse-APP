@@ -1,3 +1,4 @@
+import { loadSessionUser, signOutUser } from './services/authService';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Product,
@@ -31,8 +32,6 @@ import {
   WorkflowTemplateApplication,
 } from './types/inventory';
 import {
-  getStoredUser,
-  saveStoredUser,
   clearLegacyLocalEntityCaches,
 } from './utils/storage';
 import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType } from './utils/sourcing';
@@ -155,7 +154,8 @@ import {
 
 export default function App() {
   // State (strictly DB-driven; only signed-in user session persists locally)
-  const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [requests, setRequests] = useState<AdjustmentRequest[]>([]);
@@ -485,10 +485,30 @@ export default function App() {
     setSelectedActivityLog(null);
   };
 
-  // Keep only active user login session in localStorage
+  // The session lives in Supabase Auth (not in a home-made localStorage record).
   useEffect(() => {
-    saveStoredUser(currentUser);
-  }, [currentUser]);
+    let alive = true;
+    (async () => {
+      const u = await loadSessionUser().catch(() => null);
+      if (alive) {
+        setCurrentUser(u);
+        setAuthReady(true);
+      }
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') setCurrentUser(null);
+    });
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  // RLS needs a signed-in session, so reload data whenever the signed-in person changes.
+  useEffect(() => {
+    if (authReady) refreshFromSupabase(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady, currentUser?.id]);
 
   // Category handlers
   const executeAddCategory = async (name: string, description?: string) => {
@@ -999,7 +1019,6 @@ export default function App() {
   // Load all data ONCE when the app opens and clear any legacy client-only entity caches.
   useEffect(() => {
     clearLegacyLocalEntityCaches();
-    refreshFromSupabase(false);
   }, []);
 
   // Auth Handlers
@@ -1011,6 +1030,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    signOutUser().catch(() => {});
     setIsBudgetingUnlocked(false);
     setCurrentUser(null);
     setActiveView('inventory');
@@ -1813,119 +1833,21 @@ export default function App() {
     }
 
     try {
-      const { supabase } = await import('./services/supabaseClient');
-      const { hashPassword, getPhoneSearchVariants, buildSyntheticNoEmail } = await import('./utils/security');
-      const securePasswordHash = await hashPassword(plainPassword);
-
-      // 2. Check if user already exists in remote Supabase profiles table (when matching by email/username/phone)
-      let existingProfile: any = null;
-      if (cleanEmail) {
-        const { data: emailMatch, error: existingErr } = await supabase
-          .from('profiles')
-          .select('id, email, status')
-          .ilike('email', cleanEmail)
-          .maybeSingle();
-        if (existingErr) throw existingErr;
-        existingProfile = emailMatch;
-      }
-
-      if (!existingProfile && cleanUsername) {
-        const { data: userMatch, error: userErr } = await supabase
-          .from('profiles')
-          .select('id, email, status')
-          .ilike('username', cleanUsername)
-          .maybeSingle();
-        if (!userErr && userMatch) {
-          if (userMatch.status === 'active') {
-            return { success: false, error: 'An account with this username already exists.' };
-          }
-          existingProfile = userMatch;
-        }
-      }
-
-      if (!existingProfile && cleanPhone) {
-        const variants = getPhoneSearchVariants(cleanPhone);
-        if (variants.length > 0) {
-          const { data: phoneMatch, error: phoneErr } = await supabase
-            .from('profiles')
-            .select('id, email, status')
-            .in('phone', variants)
-            .limit(1);
-          if (!phoneErr && phoneMatch && phoneMatch.length > 0) {
-            if (phoneMatch[0].status === 'active') {
-              return { success: false, error: 'An account with this phone number already exists.' };
-            }
-            existingProfile = phoneMatch[0];
-          }
-        }
-      }
-
-      if (existingProfile) {
-        const updatePayload: Record<string, any> = {
-          full_name: data.name.trim(),
-          username: cleanUsername || null,
-          phone: cleanPhone || null,
-          role: data.role,
-          status: 'active',
-          requested_role: data.role,
-          assigned_teams: initialTeams,
-          approved_at: new Date().toISOString(),
-          approved_by_name: currentUser?.name || 'Admin',
-        };
-        if (cleanEmail) {
-          updatePayload.email = cleanEmail;
-        }
-        if (data.password && data.password.trim().length >= 4) {
-          updatePayload.password_hash = securePasswordHash;
-        }
-
-        let { error: updateErr } = await supabase
-          .from('profiles')
-          .update(updatePayload)
-          .eq('id', existingProfile.id);
-
-        if (updateErr && (updateErr.code === 'PGRST204' || updateErr.code === '42703')) {
-          delete updatePayload.username;
-          delete updatePayload.phone;
-          const retryUpd = await supabase
-            .from('profiles')
-            .update(updatePayload)
-            .eq('id', existingProfile.id);
-          updateErr = retryUpd.error;
-        }
-
-        if (updateErr) throw updateErr;
-
-        if (initialTeams.length > 0) {
-          handleUserTeamsChange(existingProfile.id, initialTeams, []);
-        }
-
-        setUsers((prev) =>
-          prev.map((u) =>
-            u.id === existingProfile.id ||
-            (cleanEmail && (u.email || '').toLowerCase() === cleanEmail)
-              ? {
-                  ...u,
-                  status: 'active',
-                  role: data.role,
-                  name: data.name.trim(),
-                  email: cleanEmail || u.email,
-                  username: cleanUsername,
-                  phone: cleanPhone,
-                  assignedTeams: initialTeams,
-                }
-              : u
-          )
-        );
-
-        showToast(`Account for ${primaryContact} updated to Active.`);
-        return { success: true };
-      }
-
-      // 3. Insert new user profile with secure password hash
-      const newId = crypto.randomUUID();
+      // The account is created on the server (Edge Function admin-users, full_admin only).
+      // The browser never sees or stores a password hash.
+      const { callAdminUsers } = await import('./services/authService');
+      const created = await callAdminUsers({
+        action: 'create',
+        name: data.name.trim(),
+        email: cleanEmail,
+        username: cleanUsername,
+        phone: cleanPhone,
+        password: plainPassword,
+        role: data.role,
+        teams: initialTeams,
+      });
       const newUser: User = {
-        id: newId,
+        id: created?.id || `new_${Date.now()}`,
         name: data.name.trim(),
         email: cleanEmail,
         username: cleanUsername,
@@ -1934,6 +1856,7 @@ export default function App() {
         status: 'active',
         requestedRole: data.role,
         assignedTeams: initialTeams,
+        adminTeams: data.role === 'admin' ? initialTeams : [],
         createdAt: new Date().toISOString(),
         avatarColor:
           data.role === 'full_admin'
@@ -1944,81 +1867,6 @@ export default function App() {
             ? '#059669'
             : '#0284c7',
       };
-
-      const insertPayload: Record<string, any> = {
-        id: newUser.id,
-        full_name: newUser.name,
-        email: cleanEmail || null,
-        username: cleanUsername || null,
-        phone: cleanPhone || null,
-        password_hash: securePasswordHash,
-        role: newUser.role,
-        status: 'active',
-        requested_role: newUser.role,
-        assigned_teams: initialTeams,
-        avatar_color: newUser.avatarColor,
-        approved_at: new Date().toISOString(),
-        approved_by_name: currentUser?.name || 'Admin',
-        created_at: newUser.createdAt,
-      };
-
-      let insertErr: any = null;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const res = await supabase.from('profiles').insert(insertPayload);
-        insertErr = res.error;
-        if (!insertErr) break;
-        if (
-          !cleanEmail &&
-          (insertErr.code === '23502' ||
-            String(insertErr.message || '').toLowerCase().includes('null value in column "email"'))
-        ) {
-          insertPayload.email = buildSyntheticNoEmail(cleanUsername, cleanPhone, newId);
-          continue;
-        }
-        if (insertErr.code === 'PGRST204' || insertErr.code === '42703') {
-          delete insertPayload.username;
-          delete insertPayload.phone;
-          continue;
-        }
-        break;
-      }
-
-      if (insertErr) {
-        if (insertErr.message?.includes('profiles_username_unique_idx')) {
-          return { success: false, error: 'An account with this username already exists.' };
-        }
-        if (insertErr.message?.includes('profiles_phone_unique_idx')) {
-          return { success: false, error: 'An account with this phone number already exists.' };
-        }
-        // If unique constraint on email was hit, update existing row instead
-        if (
-          cleanEmail &&
-          (insertErr.code === '23505' ||
-            insertErr.message?.includes('profiles_email_key') ||
-            insertErr.message?.includes('profiles_email_unique_idx') ||
-            insertErr.message?.includes('duplicate key'))
-        ) {
-          const { error: dupRetryErr } = await supabase
-            .from('profiles')
-            .update({
-              status: 'active',
-              role: newUser.role,
-              requested_role: newUser.role,
-              assigned_teams: initialTeams,
-              full_name: newUser.name,
-              password_hash: securePasswordHash,
-              approved_at: new Date().toISOString(),
-              approved_by_name: currentUser?.name || 'Admin',
-            })
-            .ilike('email', cleanEmail);
-          if (dupRetryErr) throw dupRetryErr;
-
-          refreshFromSupabase();
-          showToast(`Account for ${cleanEmail} activated.`);
-          return { success: true };
-        }
-        throw insertErr;
-      }
 
       setUsers((prev) => [newUser, ...prev]);
 

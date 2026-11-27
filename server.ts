@@ -281,8 +281,27 @@ async function startServer() {
     res.json({ success: true, count: subscriptions.length });
   });
 
+
+  // Only a signed-in full_admin / admin (team_admin) may trigger pushes from this server.
+  const requireStaffAdmin: express.RequestHandler = async (req, res, next) => {
+    try {
+      const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      if (!token) return res.status(401).json({ error: 'Sign in required' });
+      const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+      const { data: u, error } = await userClient.auth.getUser(token);
+      if (error || !u?.user) return res.status(401).json({ error: 'Invalid session' });
+      const { data: role } = await userClient.rpc('app_role');
+      if (role !== 'full_admin' && role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+      next();
+    } catch {
+      res.status(401).json({ error: 'Invalid session' });
+    }
+  };
+
   // API 3: Send Test Web Push to verify background notifications
-  app.post('/api/push/test', async (req, res) => {
+  app.post('/api/push/test', requireStaffAdmin, async (req, res) => {
     if (!isVapidConfigured) {
       return res.status(503).json({ error: VAPID_CONFIG_ERROR });
     }
@@ -297,7 +316,7 @@ async function startServer() {
   });
 
   // API 4: Trigger Web Push from application actions
-  app.post('/api/push/send', async (req, res) => {
+  app.post('/api/push/send', requireStaffAdmin, async (req, res) => {
     if (!isVapidConfigured) {
       return res.status(503).json({ error: VAPID_CONFIG_ERROR });
     }

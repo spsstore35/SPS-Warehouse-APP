@@ -1,5 +1,6 @@
 /**
- * Security, Role & Permission Utilities (Strict DB-backed State)
+ * Role & permission helpers for the UI. These only decide what to SHOW. The database (RLS) is
+ * what actually enforces access.
  */
 
 import type { CalendarItem, Role, StoreTeamId, User } from '../types/inventory';
@@ -98,63 +99,6 @@ export function getPhoneSearchVariants(raw?: string | null): string[] {
   return Array.from(set).filter((v) => v.length >= 4);
 }
 
-export async function hashPassword(plainText: string): Promise<string> {
-  const text = (plainText || '').trim();
-  if (!text) {
-    throw new Error('Password cannot be empty.');
-  }
-  const mod = await import('bcryptjs');
-  const bcrypt = mod.default ?? mod;
-  return await bcrypt.hash(text, 10);
-}
-
-/**
- * Legacy SHA-256 hashing. Only kept so verifyPassword can still validate
- * hashes stored before the bcrypt migration. Never use for new passwords.
- */
-async function hashPasswordSha256Legacy(plainText: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plainText);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-export function isBcryptHash(storedHash?: string | null): boolean {
-  return /^\$2[aby]\$/.test(storedHash || '');
-}
-
-export async function verifyPassword(
-  plainText: string,
-  storedHash?: string | null
-): Promise<boolean> {
-  if (!storedHash) return false;
-
-  const enteredText = (plainText || '').trim();
-  if (!enteredText) return false;
-
-  // 1. Bcrypt hashes ($2a$, $2b$, $2y$): real verification, fail closed.
-  if (isBcryptHash(storedHash)) {
-    try {
-      const mod = await import('bcryptjs');
-      const bcrypt = mod.default ?? mod;
-      return await bcrypt.compare(enteredText, storedHash);
-    } catch {
-      return false;
-    }
-  }
-
-  // 2. Legacy unhashed records
-  if (storedHash === enteredText) return true;
-
-  // 3. Legacy SHA-256 hash
-  const cleanStored = storedHash.startsWith('$sha256$')
-    ? storedHash.slice(8)
-    : storedHash;
-  const computed = await hashPasswordSha256Legacy(enteredText);
-  return computed.toLowerCase() === cleanStored.toLowerCase();
-}
-
 /**
  * Normalize raw role strings from DB into strict Role union
  */
@@ -219,19 +163,11 @@ export function isExplicitFullAdmin(user?: User | null): boolean {
  * Regular Admins ('admin') and Staff ('worker') see pages strictly according to their assigned team(s).
  * Includes bootstrap safety when database has no explicit 'full_admin' yet.
  */
-export function isFullAccessAdmin(user?: User | null, allUsers?: User[]): boolean {
-  if (!user || !isUserAdmin(user)) return false;
-  if (isExplicitFullAdmin(user)) return true;
-
-  const teams = getUserAssignedTeams(user);
-  if (teams.length > 0) return false;
-
-  if (Array.isArray(allUsers) && allUsers.length > 0) {
-    const hasExplicitLiveFullAdmin = allUsers.some((u) => isExplicitFullAdmin(u));
-    return !hasExplicitLiveFullAdmin;
-  }
-
-  return false;
+export function isFullAccessAdmin(user?: User | null, _allUsers?: User[]): boolean {
+  // Only an explicit full_admin role from the database counts. (The old "no full_admin exists yet,
+  // so any admin without teams is promoted" shortcut was removed: the first full_admin is created
+  // with the SQL helper in the migration.) The real protection is RLS in the database.
+  return isExplicitFullAdmin(user);
 }
 
 export function getEffectiveUserRole(user?: User | null, allUsers?: User[]): Role {
@@ -400,6 +336,8 @@ export function canUserManageTeamScope(
 ): boolean {
   if (!user || !isUserAdmin(user)) return false;
   if (isFullAccessAdmin(user, allUsers)) return true;
+  // user_teams decides: team_admin only for the teams where this person has that role.
+  if (Array.isArray(user.adminTeams)) return user.adminTeams.includes(teamScope);
   return getUserAssignedTeams(user).includes(teamScope);
 }
 

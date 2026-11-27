@@ -113,7 +113,6 @@ CREATE TABLE IF NOT EXISTS public.categories (
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
-    password_hash TEXT,
     full_name TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'worker',
     status TEXT NOT NULL DEFAULT 'pending',
@@ -287,3 +286,7 @@ CREATE POLICY "Allow delete stock_audit_logs" ON public.stock_audit_logs FOR DEL
 
 ## 📄 License
 This project is proprietary and built for SPS Warehouse operations.
+
+
+## Security (Auth + RLS)
+Login uses Supabase Auth. All access rules are enforced in the database (RLS). Setup steps: `docs/AUTH_RLS_SETUP.md`. SQL: `supabase/migrations/20261202_auth_rls_v3.sql`.
