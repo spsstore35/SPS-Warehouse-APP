@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { KeyRound, X, Loader2, CheckCircle2 } from 'lucide-react';
 import { User } from '../types/inventory';
 
@@ -79,7 +80,12 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
     setIsSubmitting(false);
   };
 
-  return (
+  // Render in a portal: the modal is mounted inside the bottom nav and the
+  // sticky header, both of which use backdrop-blur. A backdrop-filter (or
+  // transform/filter) on an ancestor makes it the containing block for
+  // fixed-position descendants, so without a portal this "fixed" overlay
+  // would be trapped inside that bar and appear inline at the page edge.
+  return createPortal(
     <div className="fixed inset-0 z-[110] overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
       <div
         className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col"
@@ -183,6 +189,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
           </form>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
