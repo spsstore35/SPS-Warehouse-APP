@@ -376,6 +376,28 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     return digits;
   };
 
+  // Step 1 of "Send on WhatsApp" for normal orders: a warm first message. The quotation PDF is step 2.
+  const getWhatsAppGreetingUrl = (phone: string, clientName: string, lang: 'en' | 'ar', booking: Booking) => {
+    const cleanPhone = formatPhoneForWhatsApp(phone);
+    if (!cleanPhone) return '#';
+    const name = (clientName || '').trim();
+    const textEn = `Hello ${name} 👋
+
+This is SPS Store. This number is your contact number for order ${booking.bookingNumber}.
+
+We will send you your quotation here in a moment, and we will confirm the payment with you. Once it is confirmed, we will move forward together, step by step, until your order is delivered.
+
+Please send us any details or questions right here. We are happy to help. 🌟`;
+    const textAr = `أهلاً ${name} 👋
+
+معاك SPS Store. الرقم ده هو رقم التواصل الخاص بطلبك رقم ${booking.bookingNumber}.
+
+هنبعتلك عرض السعر هنا حالاً، وهنأكد معاك الدفع. وأول ما يتأكد هنكمّل سوا خطوة بخطوة لحد ما الطلب يوصلك.
+
+ابعتلنا هنا أي تفاصيل أو أسئلة، ويسعدنا نساعدك. 🌟`;
+    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(lang === 'ar' ? textAr : textEn)}`;
+  };
+
   const getWhatsAppUrl = (
     phone: string,
     clientName: string,
@@ -1387,7 +1409,7 @@ This is our official Scout Store number. Through this chat, you can:
 
                     {/* WhatsApp Action Link with Quotation Details & auto-open PDF */}
                     <a
-                      href={getWhatsAppUrl(
+                      href={getWhatsAppGreetingUrl(
                         activeBooking.clientPhone,
                         activeBooking.clientName,
                         waLanguage,
@@ -1396,6 +1418,8 @@ This is our official Scout Store number. Through this chat, you can:
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={() => {
+                        // Step 2: the quotation opens with its PDF getting ready, plus a big "Now send the PDF" button.
+                        (window as any).__spsAutoPrepareWhatsAppPdf = true;
                         onOpenPrintModal(activeBooking, 'quotation');
                       }}
                       className="px-4 py-2 bg-green-600 hover:bg-green-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"

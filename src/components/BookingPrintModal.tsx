@@ -37,9 +37,23 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   }, [isOpen, booking?.id]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const handleDownloadPdfRef = React.useRef<((mode: 'save' | 'share') => void) | null>(null);
   const [pendingPdf, setPendingPdf] = useState<{ file: File; pdf: any; filename: string } | null>(null);
   useEffect(() => {
     if (!isOpen) setPendingPdf(null);
+  }, [isOpen, booking?.id]);
+
+  // "Send on WhatsApp" on the order screen (normal orders) opens this modal with the flag set:
+  // build the PDF in the background so the big "Step 2" button appears.
+  useEffect(() => {
+    if (!isOpen || !booking) return;
+    const flag = (window as any).__spsAutoPrepareWhatsAppPdf;
+    if (!flag) return;
+    (window as any).__spsAutoPrepareWhatsAppPdf = false;
+    const t = setTimeout(() => {
+      handleDownloadPdfRef.current?.('share');
+    }, 900);
+    return () => clearTimeout(t);
   }, [isOpen, booking?.id]);
 
   if (!isOpen || !booking) return null;
@@ -172,6 +186,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
       setIsSharing(false);
     }
   };
+
+  handleDownloadPdfRef.current = handleDownloadPdf;
 
   const totalUnits = booking.items.reduce((acc, it) => acc + it.quantity, 0);
   const totalDeficit = booking.items.reduce((acc, it) => acc + it.deficitQuantity, 0);
