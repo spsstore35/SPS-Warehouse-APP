@@ -182,6 +182,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorTagFilter, setVendorTagFilter] = useState<VendorBehaviorTag | 'all'>('all');
   const [vendorProductFilter, setVendorProductFilter] = useState<string>('all');
+  const [vendorCategoryFilter, setVendorCategoryFilter] = useState<string>('all');
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [linkAfterCreateTarget, setLinkAfterCreateTarget] = useState<{
@@ -260,13 +261,14 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     const q = vendorSearch.trim().toLowerCase();
     return vendors.filter((v) => {
       if (vendorTagFilter !== 'all' && !v.tags.includes(vendorTagFilter)) return false;
+      if (vendorCategoryFilter !== 'all' && !stageVendors.some((psv) => psv.vendorId === v.id && products.find((pr) => pr.id === psv.productId)?.category === vendorCategoryFilter)) return false;
       if (vendorProductFilter !== 'all' && !stageVendors.some((psv) => psv.vendorId === v.id && psv.productId === vendorProductFilter)) return false;
       if (!q) return true;
       const items = stageVendors.filter((psv) => psv.vendorId === v.id).map((psv) => products.find((pr) => pr.id === psv.productId)?.name || '').join(' ');
       const hay = `${v.name} ${v.contactPerson || ''} ${v.location || ''} ${v.phone || ''} ${v.generalNotes || ''} ${items}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [vendors, vendorSearch, vendorTagFilter, vendorProductFilter, stageVendors, products]);
+  }, [vendors, vendorSearch, vendorTagFilter, vendorProductFilter, vendorCategoryFilter, stageVendors, products]);
 
   const getLatestPriceForPsv = (psvId: string): VendorPriceEntry | undefined => {
     return priceHistory
@@ -2704,7 +2706,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
           </div>
 
           {/* Filter by what the vendor makes/supplies */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs font-semibold text-slate-600 shrink-0" htmlFor="vendor-category-filter">Category:</label>
+            <select
+              id="vendor-category-filter"
+              value={vendorCategoryFilter}
+              onChange={(e) => { setVendorCategoryFilter(e.target.value); setVendorProductFilter('all'); }}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 min-h-[36px] max-w-full"
+            >
+              <option value="all">All categories</option>
+              {Array.from(new Set(products.filter((p) => stageVendors.some((psv) => psv.productId === p.id)).map((p) => String(p.category)))).sort().map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
             <label className="text-xs font-semibold text-slate-600 shrink-0" htmlFor="vendor-product-filter">Makes / supplies:</label>
             <select
               id="vendor-product-filter"
@@ -2714,7 +2728,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
             >
               <option value="all">All products</option>
               {products
-                .filter((p) => stageVendors.some((psv) => psv.productId === p.id))
+                .filter((p) => stageVendors.some((psv) => psv.productId === p.id) && (vendorCategoryFilter === 'all' || String(p.category) === vendorCategoryFilter))
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
