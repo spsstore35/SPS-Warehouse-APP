@@ -140,7 +140,7 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
-import ShortageNeedsPanel from './components/ShortageNeedsPanel';
+import ShortageNeedsPanel, { type LowStockNote } from './components/ShortageNeedsPanel';
 import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
@@ -2150,6 +2150,64 @@ export default function App() {
     const t = setInterval(refreshShortageNotes, 60000);
     return () => clearInterval(t);
   }, [currentUser?.id, bookings.length, productionBatches.length]);
+
+  // Low-stock items (variant stock at or below its own minimum) that have no purchase running yet.
+  const [lowToStart, setLowToStart] = useState<LowStockNote | null>(null);
+  const lowStockNotes: LowStockNote[] = useMemo(() => {
+    const out: LowStockNote[] = [];
+    products.forEach((p) => {
+      p.variants.forEach((v) => {
+        if (v.minThreshold === undefined || v.minThreshold === null) return;
+        if (!(v.minThreshold > 0) || v.quantity > v.minThreshold) return;
+        if (shortageNotes.some((n) => n.variantId === v.id)) return;
+        out.push({
+          productId: p.id,
+          variantId: v.id,
+          productName: p.name,
+          size: String(v.size),
+          colorName: v.colorName,
+          quantity: v.quantity,
+          minThreshold: v.minThreshold,
+          hasBatch: productionBatches.some(
+            (b) => b.status === 'in_progress' && b.variantId === v.id
+          ),
+        });
+      });
+    });
+    return out.sort((a, b) => Number(a.hasBatch) - Number(b.hasBatch) || a.quantity - b.quantity);
+  }, [products, shortageNotes, productionBatches]);
+
+  const handleStartLowStockPurchase = (n: LowStockNote, quantity: number, targetDate: string, vendorId?: string) => {
+    const wf = productWorkflows.find((w) => w.productId === n.productId);
+    const stageKey: OperationStageKey =
+      wf?.activeStages?.find((st) => st !== 'stock_in') ||
+      (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+    const batchId = `batch_low_${n.variantId}_${Date.now()}`;
+    const batchCode = `PO-LOW-${Date.now().toString().slice(-6)}`;
+    const newBatch: ProductionBatch = {
+      id: batchId,
+      productId: n.productId,
+      variantId: n.variantId,
+      batchCode,
+      quantity: Math.max(1, Math.round(quantity)),
+      currentStageKey: stageKey,
+      status: 'in_progress',
+      targetDate,
+      stageAssignments: {
+        [stageKey]: {
+          ...(vendorId ? { vendorId } : {}),
+          notes: `Restock: ${n.productName} (${n.size} / ${n.colorName}) was low (${n.quantity} left).`,
+        },
+      } as Record<string, BatchStageAssignment>,
+      requestedByTeam: 'inventory',
+      createdAt: new Date().toISOString(),
+    };
+    setProductionBatches((prev) => [newBatch, ...prev]);
+    upsertProductionBatchToDb(newBatch).catch((err) =>
+      showToast(`Database batch sync error: ${err?.message || 'Sync error'}`)
+    );
+    showToast(`Restock batch ${batchCode} created for ${n.productName} (${quantity} pcs).`);
+  };
 
   const handleSendShortageToPurchases = (
     booking: Booking,
@@ -4377,6 +4435,8 @@ export default function App() {
           <div className="space-y-6">
             {!isLeader && (
               <ShortageNeedsPanel
+                lowNotes={lowStockNotes}
+                onStartLow={(n) => setLowToStart(n)}
                 notes={shortageNotes}
                 canAct={canUserStartShortagePurchase(currentUser, users)}
                 onStart={(n) => setShortageToStart(n)}
@@ -5065,6 +5125,35 @@ export default function App() {
           />
         )}
 
+        {lowToStart && (
+          <ShortageStartModal
+            mode="low"
+            leftInStock={lowToStart.quantity}
+            suggestedQty={Math.max(1, lowToStart.minThreshold * 2 - lowToStart.quantity)}
+            note={{
+              bookingId: '',
+              bookingNumber: '',
+              clientName: '',
+              productId: lowToStart.productId,
+              variantId: lowToStart.variantId,
+              productName: lowToStart.productName,
+              size: lowToStart.size,
+              colorName: lowToStart.colorName,
+              owed: 1,
+              hasBatch: false,
+            }}
+            vendors={vendors}
+            canManageVendors={canUserManageVendors(currentUser, users)}
+            onAddVendor={handleSaveVendor}
+            onCancel={() => setLowToStart(null)}
+            onConfirm={(quantity, targetDate, vendorId) => {
+              const n = lowToStart;
+              setLowToStart(null);
+              handleStartLowStockPurchase(n, quantity, targetDate, vendorId);
+            }}
+          />
+        )}
+
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
         {effectiveView === 'bookings' && canUserAccessView(currentUser, 'bookings', users) && (
           <BookingsView
@@ -5177,6 +5266,8 @@ export default function App() {
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <div className="space-y-4">
           <ShortageNeedsPanel
+            lowNotes={lowStockNotes}
+            onStartLow={(n) => setLowToStart(n)}
             notes={shortageNotes}
             canAct={canUserStartShortagePurchase(currentUser, users)}
             onStart={(n) => setShortageToStart(n)}

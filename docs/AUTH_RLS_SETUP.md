@@ -76,6 +76,8 @@ Run Part 1 BEFORE deploying the new site (the site calls this function).
 
 - "Needs action" box: paid orders still waiting for stock are listed on the home screen and the Sourcing screen (`list_order_shortages()`), e.g. "Order #12 (client) needs 20 x Shirt (S)". Full admin, Fera2 admin and purchases admin get a "Start purchase" button that opens a form with item, size and the quantity prefilled (minimum = amount owed). Other members of troops/budgeting/inventory/purchases see it read-only.
 
+- Low stock in the same box: a variant whose stock is at or below its own minimum (the existing `minThreshold`) is listed, with a "Start purchase" button (any quantity, vendor picker as above) until a purchase for it is running.
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).

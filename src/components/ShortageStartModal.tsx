@@ -4,6 +4,9 @@ import type { Vendor } from '../types/inventory';
 
 interface Props {
   note: OrderShortageNote;
+  mode?: 'order' | 'low';
+  suggestedQty?: number;
+  leftInStock?: number;
   vendors: Vendor[];
   canManageVendors: boolean;
   onAddVendor: (vendor: Vendor) => void;
@@ -11,7 +14,7 @@ interface Props {
   onConfirm: (quantity: number, targetDate: string, vendorId?: string) => void;
 }
 
-export default function ShortageStartModal({ note, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
+export default function ShortageStartModal({ note, mode = 'order', suggestedQty, leftInStock, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
   const [vendorId, setVendorId] = useState<string>('');
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -35,30 +38,34 @@ export default function ShortageStartModal({ note, vendors, canManageVendors, on
     setNewPhone('');
     setNewLocation('');
   };
-  const [qty, setQty] = useState<number>(note.owed);
+  const [qty, setQty] = useState<number>(suggestedQty ?? note.owed);
   const [date, setDate] = useState<string>(new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
-  const tooLow = !qty || qty < note.owed;
+  const minQty = mode === 'low' ? 1 : note.owed;
+  const tooLow = !qty || qty < minQty;
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4">
       <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-4 shadow-2xl">
         <div>
           <div className="text-base font-black text-slate-900">Start purchase / production</div>
           <div className="text-xs text-slate-600 mt-1">
-            Order #{note.bookingNumber}
-            {note.clientName ? ` (${note.clientName})` : ''}
+            {mode === 'low'
+              ? 'Low stock: restock'
+              : `Order #${note.bookingNumber}${note.clientName ? ` (${note.clientName})` : ''}`}
           </div>
         </div>
         <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-sm font-bold text-slate-900">
           {note.productName} ({note.size}
           {note.colorName ? ` / ${note.colorName}` : ''})
-          <div className="text-[11px] font-mono text-rose-700 mt-1">Still needed: {note.owed} pcs (cannot order less)</div>
+          <div className="text-[11px] font-mono text-rose-700 mt-1">
+            {mode === 'low' ? `Only ${leftInStock ?? 0} left in stock. Choose any quantity.` : `Still needed: ${note.owed} pcs (cannot order less)`}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="text-xs font-bold text-slate-700">
             Quantity (pcs)
             <input
               type="number"
-              min={note.owed}
+              min={minQty}
               value={qty || ''}
               onChange={(e) => setQty(Math.max(0, Number(e.target.value) || 0))}
               className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-mono font-black text-center"
@@ -117,7 +124,7 @@ export default function ShortageStartModal({ note, vendors, canManageVendors, on
             </div>
           )}
         </div>
-        {tooLow && <div className="text-[11px] font-bold text-rose-700">Quantity must be at least {note.owed}.</div>}
+        {tooLow && <div className="text-[11px] font-bold text-rose-700">Quantity must be at least {minQty}.</div>}
         <div className="grid grid-cols-2 gap-2.5">
           <button type="button" onClick={onCancel} className="py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs min-h-[44px]">
             Cancel
