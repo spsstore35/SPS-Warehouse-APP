@@ -447,9 +447,7 @@ export function isBookingInMySubTeam(
 
 /**
  * People who can be picked in an order's "Assign" dropdown: only members of the Scout Fera2 (troops)
- * team, not everybody in the app. If some of them have a sub-team set (Ashbal, Kashafeen...) and the
- * order has a sub-team, only that sub-team's people show. The sub-team leader and the person already
- * assigned always stay in the list, so nothing breaks.
+ * team, not everybody in the app. People already assigned always stay in the list.
  */
 export function getAssignableMembers(
   users: User[],
@@ -463,13 +461,6 @@ export function getAssignableMembers(
       u.role !== 'leader' &&
       (keep.has(u.id) || isExplicitFullAdmin(u) || getUserAssignedTeams(u).includes('troops'))
   );
-  const sub = String(subTeamId || '').trim().toLowerCase();
-  let list = troopsPeople;
-  if (sub) {
-    const inSub = troopsPeople.filter((u) => getUserSubTeams(u).includes(sub));
-    if (inSub.length > 0) {
-      list = troopsPeople.filter((u) => keep.has(u.id) || inSub.includes(u));
-    }
-  }
-  return list.sort((a, b) => a.name.localeCompare(b.name));
+  void subTeamId; // everybody in the troops team can be picked, whatever their sub-team
+  return troopsPeople.sort((a, b) => a.name.localeCompare(b.name));
 }

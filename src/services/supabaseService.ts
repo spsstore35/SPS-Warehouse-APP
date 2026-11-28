@@ -1400,6 +1400,8 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
       assignedFare2: b.assigned_fare2 || undefined,
       assignedToId: b.assigned_to_id || undefined,
       assignedToName: b.assigned_to_name || undefined,
+      sharedWithId: b.shared_with_id || undefined,
+      sharedWithName: b.shared_with_name || undefined,
       clientPhone: b.client_phone || 'N/A',
       notes: b.notes || undefined,
       items: lineItems,
@@ -2707,4 +2709,21 @@ export async function previewStockAdjustInDb(variantId: string, newPhysical: num
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   return { missing: Number(row?.missing || 0), orders: String(row?.orders || '') };
+}
+
+/**
+ * Share an order task with one more person (or remove them with userId = null).
+ * The database function decides who may do it: the assigned person adds, only admins remove.
+ */
+export async function shareBookingTaskInDb(
+  bookingId: string,
+  userId: string | null
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { error } = await supabase.rpc('booking_share_task', { p_booking: bookingId, p_user: userId });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Sync error' };
+  }
 }

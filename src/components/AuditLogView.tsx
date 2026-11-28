@@ -199,6 +199,18 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
     }
   };
 
+  // Same rule as the pending counter: deposit-% change OR a staff payment-verification request.
+  const openPendingRequest = () => {
+    const pendingBooking = bookings.find(
+      (b) =>
+        Boolean(b.pendingDepositPercentage) ||
+        Boolean(b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending')
+    );
+    if (pendingBooking && onViewBooking) {
+      onViewBooking(pendingBooking.bookingNumber || pendingBooking.id);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -215,7 +227,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
 
       {/* Pending Approval Alert Banner: Staff Requested Deposit Percentage Change */}
       {pendingAuditNotificationsCount > 0 && (
-        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-rose-500/10 to-amber-500/15 border-2 border-amber-400 text-slate-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+        <div onClick={(e) => { if ((e.target as HTMLElement).closest('button')) return; openPendingRequest(); }} role="button" className="cursor-pointer p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-rose-500/10 to-amber-500/15 border-2 border-amber-400 text-slate-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="flex items-start sm:items-center gap-3">
             <span className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center text-sm font-black shrink-0 animate-pulse shadow-xs">
               {pendingAuditNotificationsCount}
@@ -228,7 +240,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
-                Staff member requested changing the upfront deposit percentage on a client order. Review and approve or decline in Bookings.
+                Staff member sent a request on a client order (deposit percentage change or payment check). Tap to open it in Bookings and approve or decline.
               </p>
             </div>
           </div>
@@ -254,12 +266,7 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => {
-                const pendingBooking = bookings.find((b) => Boolean(b.pendingDepositPercentage));
-                if (pendingBooking && onViewBooking) {
-                  onViewBooking(pendingBooking.bookingNumber || pendingBooking.id);
-                }
-              }}
+              onClick={openPendingRequest}
               className="flex-1 sm:flex-none px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors text-center cursor-pointer"
             >
               Review in Bookings &rarr;

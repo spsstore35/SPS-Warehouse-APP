@@ -202,6 +202,8 @@ export interface Booking {
   assignedFare2?: string; // Resolved Scout Fera2 sub-team (Ashbal..3ashera 2) for Afrad / Unassigned or specific orders
   assignedToId?: string;
   assignedToName?: string;
+  sharedWithId?: string; // one extra person sharing the order task (booking only)
+  sharedWithName?: string;
   clientPhone: string;
   notes?: string;
   items: BookingItem[];

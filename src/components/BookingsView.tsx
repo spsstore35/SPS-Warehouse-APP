@@ -78,6 +78,7 @@ interface BookingsViewProps {
   onSubmitTeamRequest?: (
     req: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>
   ) => void;
+  onShareTask?: (booking: Booking, userId: string | null) => void;
   onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onOpenNewBookingModal: () => void;
@@ -117,6 +118,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   teamRequests = [],
   onSubmitTeamRequest,
   onApproveTeamRequest,
+  onShareTask,
   onRejectTeamRequest,
   onOpenNewBookingModal,
   onEditBooking,
@@ -182,6 +184,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const [showRequestPaymentModal, setShowRequestPaymentModal] = useState<boolean>(false);
   const [paymentRequestNote, setPaymentRequestNote] = useState<string>('');
   const [bookingToDelete, setBookingToDelete] = useState<Booking | null>(null);
+  const [shareUserId, setShareUserId] = useState('');
   const [bookingToConfirmEdit, setBookingToConfirmEdit] = useState<Booking | null>(null);
   const [pendingStatusConfirm, setPendingStatusConfirm] = useState<{
     booking: Booking;
@@ -1508,7 +1511,7 @@ This is our official Scout Store number. Through this chat, you can:
                       )}
                     </div>
 
-                    {allowEditBookings && (
+                    {directFor(activeBooking) && (
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                         {!isSpecific && (
                           <select
@@ -1561,6 +1564,59 @@ This is our official Scout Store number. Through this chat, you can:
                           {isAdmin ? 'Save Task Assignment' : 'Request Assignment'}
                         </button>
                       </div>
+                    )}
+
+                    {/* Share this task with ONE more person: the assigned person adds, only the team admin / full admin removes */}
+                    {onShareTask && (directFor(activeBooking) || (currentUser.id === activeBooking.assignedToId && isOwnTeam(activeBooking))) && (
+                      <div className="pt-2 border-t border-slate-200 space-y-2">
+                        <div className="text-[11px] font-black uppercase tracking-wider text-slate-500">Share this task</div>
+                        {activeBooking.sharedWithName ? (
+                          <div className="flex items-center justify-between gap-2 text-xs font-bold text-slate-800">
+                            <span>Shared with: <strong>{activeBooking.sharedWithName}</strong></span>
+                            {directFor(activeBooking) && (
+                              <button
+                                type="button"
+                                onClick={() => onShareTask(activeBooking, null)}
+                                className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
+                        {(!activeBooking.sharedWithName || directFor(activeBooking)) && (
+                          <div className="flex flex-col sm:flex-row items-stretch gap-2">
+                            <select
+                              value={shareUserId}
+                              onChange={(e) => setShareUserId(e.target.value)}
+                              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
+                            >
+                              <option value="">-- Pick one person to share with --</option>
+                              {getAssignableMembers(users, undefined, [])
+                                .filter((u) => u.id !== activeBooking.assignedToId)
+                                .map((u) => (
+                                  <option key={u.id} value={u.id}>
+                                    {u.name}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={!shareUserId}
+                              onClick={() => {
+                                onShareTask(activeBooking, shareUserId);
+                                setShareUserId('');
+                              }}
+                              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold min-h-[40px] shrink-0"
+                            >
+                              {activeBooking.sharedWithName ? 'Change shared person' : 'Share task'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!directFor(activeBooking) && activeBooking.sharedWithName && currentUser.id !== activeBooking.assignedToId && (
+                      <div className="text-xs font-bold text-slate-700">Shared with: <strong>{activeBooking.sharedWithName}</strong></div>
                     )}
                   </div>
                 );

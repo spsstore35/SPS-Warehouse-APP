@@ -122,6 +122,7 @@ import {
   upsertTeamRequestToDb,
   CATEGORY_MAP,
   DbConnectionStatus,
+  shareBookingTaskInDb,
 } from './services/supabaseService';
 import { supabase } from './services/supabaseClient';
 import { Header } from './components/Header';
@@ -2744,6 +2745,23 @@ export default function App() {
       newLog
     );
   };
+  const handleShareBookingTask = async (booking: Booking, userId: string | null) => {
+    const res = await shareBookingTaskInDb(booking.id, userId);
+    if (!res.ok) {
+      showToast(res.error || 'Could not share the task.');
+      return;
+    }
+    const person = userId ? users.find((u) => u.id === userId) : undefined;
+    setBookings((prev) =>
+      prev.map((b) =>
+        b.id === booking.id
+          ? { ...b, sharedWithId: userId || undefined, sharedWithName: userId ? person?.name : undefined }
+          : b
+      )
+    );
+    showToast(userId ? `Task shared with ${person?.name || 'the selected person'}.` : 'Shared person removed.');
+  };
+
   const handleUpdateBooking = (updatedBooking: Booking) => {
     const prevBooking = bookings.find((b) => b.id === updatedBooking.id);
     const safeBooking: Booking =
@@ -5535,6 +5553,7 @@ export default function App() {
             stageVendors={productStageVendors}
             priceHistory={vendorPriceHistory}
             currentUser={currentUser}
+            onShareTask={handleShareBookingTask}
             canEditBookings={canUserEditBookings(currentUser, users)}
             teamRequests={teamChangeRequests}
             onSubmitTeamRequest={handleSubmitTeamRequest}
