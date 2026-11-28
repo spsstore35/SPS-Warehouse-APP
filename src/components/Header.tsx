@@ -26,6 +26,7 @@ interface HeaderProps {
   pendingAccountsCount?: number;
   pendingBookingsCount?: number;
   pendingAuditNotificationsCount?: number;
+  pendingShortageCount?: number;
   approvalsTab?: 'stock' | 'staff';
   users?: User[];
 }
@@ -40,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   pendingAccountsCount = 0,
   pendingBookingsCount = 0,
   pendingAuditNotificationsCount = 0,
+  pendingShortageCount = 0,
   approvalsTab = 'stock',
   users = [],
 }) => {
@@ -250,6 +252,9 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Factory className="w-4 h-4 text-amber-600" />
                   <span>Sourcing &amp; Operations</span>
+                  {pendingShortageCount > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingShortageCount}</span>
+                  )}
                 </button>
               )}
 
@@ -571,6 +576,9 @@ export const Header: React.FC<HeaderProps> = ({
                           <Factory className="w-3.5 h-3.5 text-amber-600" />
                           <span>Sourcing &amp; Operations</span>
                         </span>
+                        {pendingShortageCount > 0 && (
+                          <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingShortageCount}</span>
+                        )}
                       </button>
                     )}
 

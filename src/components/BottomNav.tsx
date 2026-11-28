@@ -26,6 +26,7 @@ interface BottomNavProps {
   pendingStockCount?: number;
   pendingAccountsCount?: number;
   pendingAuditNotificationsCount?: number;
+  pendingShortageCount?: number; // shortage requests waiting for Purchases (0 unless the user may start them)
   approvalsTab?: 'stock' | 'staff';
   users?: User[];
   onOpenAddProduct?: () => void;
@@ -41,6 +42,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   pendingStockCount = 0,
   pendingAccountsCount = 0,
   pendingAuditNotificationsCount = 0,
+  pendingShortageCount = 0,
   approvalsTab = 'stock',
   users = [],
   onOpenAddProduct,
@@ -141,7 +143,14 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           >
             {primaryTab.icon === 'analytics' && <BarChart3 className="w-5 h-5 mb-1" />}
             {primaryTab.icon === 'bookings' && <CalendarCheck className="w-5 h-5 mb-1" />}
-            {primaryTab.icon === 'sourcing' && <Factory className="w-5 h-5 mb-1" />}
+            {primaryTab.icon === 'sourcing' && (
+              <span className="relative inline-block">
+                <Factory className="w-5 h-5 mb-1" />
+                {pendingShortageCount > 0 && (
+                  <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-[15px] flex items-center justify-center bg-rose-600 text-white font-black text-[9px] rounded-full animate-pulse">{pendingShortageCount}</span>
+                )}
+              </span>
+            )}
             {primaryTab.icon === 'marketing' && <Megaphone className="w-5 h-5 mb-1" />}
             {primaryTab.icon === 'budgeting' && <Wallet className="w-5 h-5 mb-1" />}
             {primaryTab.icon === 'calendar' && <CalendarDays className="w-5 h-5 mb-1" />}
@@ -193,10 +202,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
               </div>
               {((canAccountApprovals && pendingAccountsCount > 0) ||
-                (canAudit && pendingAuditNotificationsCount > 0)) && (
+                (canAudit && pendingAuditNotificationsCount > 0) ||
+                (canSourcing && pendingShortageCount > 0)) && (
                 <span className="absolute -top-1 -right-1.5 w-3.5 h-3.5 flex items-center justify-center bg-rose-600 text-white font-black text-[8px] rounded-full">
                   {(canAccountApprovals ? pendingAccountsCount : 0) +
-                    (canAudit ? pendingAuditNotificationsCount : 0)}
+                    (canAudit ? pendingAuditNotificationsCount : 0) +
+                    (canSourcing ? pendingShortageCount : 0)}
                 </span>
               )}
             </div>
@@ -387,6 +398,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                         <Factory className="w-4 h-4 text-amber-600" />
                         <span>Sourcing &amp; Operations</span>
                       </span>
+                      {pendingShortageCount > 0 && (
+                        <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingShortageCount}</span>
+                      )}
                     </button>
                   )}
 

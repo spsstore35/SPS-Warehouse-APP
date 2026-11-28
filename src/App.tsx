@@ -4577,6 +4577,11 @@ export default function App() {
       Boolean(b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending')
   ).length;
 
+  // Order shortages still waiting for Purchases to start a batch; only shown to people who may start them.
+  const pendingShortageRequestsCount = canUserStartShortagePurchase(currentUser, users)
+    ? shortageNotes.filter((n) => !n.hasBatch).length
+    : 0;
+
   // Navigation handler supporting direct routing & RBAC enforcement
   const handleNavigate = (view: string) => {
     if (isUserLeader(currentUser)) {
@@ -4729,6 +4734,7 @@ export default function App() {
         pendingAccountsCount={pendingUsersCount}
         pendingBookingsCount={bookings.filter((b) => b.status === 'pending' || Boolean(b.pendingDepositPercentage) || Boolean(b.paymentVerificationRequested && !b.depositPaid)).length}
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
+        pendingShortageCount={pendingShortageRequestsCount}
         approvalsTab={approvalsTab}
       />
 
@@ -5787,6 +5793,7 @@ export default function App() {
         pendingStockCount={pendingRequestsCount}
         pendingAccountsCount={pendingUsersCount}
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
+        pendingShortageCount={pendingShortageRequestsCount}
         approvalsTab={approvalsTab}
         onOpenAddProduct={() => {
           if (!canUserAccessView(currentUser, 'add-product', users)) return;
