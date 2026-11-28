@@ -57,7 +57,7 @@ const Lightbox: React.FC<{ images: string[]; start?: number; title?: string; onC
         <button className="w-10 h-10 rounded-full bg-white/20 text-2xl leading-none" onClick={onClose} aria-label="Close">×</button>
       </div>
       <div className="relative flex-1 min-h-0" onClick={(e) => e.stopPropagation()}>
-        <div ref={sc} className="h-full flex overflow-x-auto snap-x snap-mandatory"
+        <div ref={sc} className="h-full flex overflow-x-auto snap-x snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           onScroll={(e) => setI(Math.round(e.currentTarget.scrollLeft / e.currentTarget.clientWidth))}>
           {images.map((src, k) => (
             <div key={k} className="w-full h-full shrink-0 snap-center flex items-center justify-center p-2">
