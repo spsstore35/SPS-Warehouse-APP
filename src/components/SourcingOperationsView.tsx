@@ -66,6 +66,7 @@ interface SourcingOperationsViewProps {
   needsTiles?: React.ReactNode;
   needsProductIds?: Set<string> | null;
   needsDetail?: (productId: string) => React.ReactNode;
+  onClearNeeds?: () => void;
   products: Product[];
   vendors: Vendor[];
   workflows: ProductWorkflow[];
@@ -104,6 +105,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   needsTiles,
   needsProductIds,
   needsDetail,
+  onClearNeeds,
   products,
   vendors,
   workflows,
@@ -214,6 +216,10 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     });
     return map;
   }, [batches]);
+
+  React.useEffect(() => {
+    if (needsProductIds) setCatalogFilter('all');
+  }, [needsProductIds]);
 
   const filteredCatalogProducts = useMemo(() => {
     const q = catalogSearch.trim().toLowerCase();
@@ -743,12 +749,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 {vendors.length}
               </div>
             </div>
-            <div className="p-4 rounded-xl bg-white border border-slate-200">
+            <button
+              type="button"
+              onClick={() => {
+                onClearNeeds?.();
+                setCatalogFilter((f) => (f === 'active_batches' ? 'all' : 'active_batches'));
+              }}
+              className={`p-4 rounded-xl border text-left ${catalogFilter === 'active_batches' ? 'bg-emerald-50 border-emerald-500' : 'bg-white border-slate-200 hover:bg-emerald-50'}`}
+            >
               <div className="text-xs font-medium text-slate-500">Active Batches</div>
               <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700 mt-1">
                 {totalActiveBatches}
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Search & Filter Controls */}

@@ -2145,6 +2145,8 @@ export async function fetchSourcingDataFromDb(): Promise<{
         r.stage_assignments && typeof r.stage_assignments === 'object' ? r.stage_assignments : {},
       linkedBookingId: r.linked_booking_id || undefined,
       linkedBookingNumber: r.linked_booking_number || undefined,
+      extraBookingIds: Array.isArray(r.extra_booking_ids) && r.extra_booking_ids.length ? r.extra_booking_ids.map(String) : undefined,
+      extraBookingNumbers: undefined,
       requestedByTeam: r.requested_by_team || undefined,
       createdAt: String(r.created_at || new Date().toISOString()),
       completedAt: r.completed_at || undefined,
@@ -2291,11 +2293,14 @@ export async function upsertProductionBatchToDb(batch: ProductionBatch): Promise
     ...corePayload,
     linked_booking_id: batch.linkedBookingId || null,
     linked_booking_number: batch.linkedBookingNumber || null,
+    extra_booking_ids: batch.extraBookingIds || [],
     requested_by_team: batch.requestedByTeam || null,
   });
   if (
     error &&
+    !(batch.extraBookingIds && batch.extraBookingIds.length) &&
     (error.message?.includes('linked_booking') ||
+      error.message?.includes('extra_booking') ||
       error.message?.includes('requested_by_team') ||
       (error as any).code === 'PGRST204' ||
       (error as any).code === '42703')

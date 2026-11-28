@@ -4,6 +4,8 @@ import type { Vendor } from '../types/inventory';
 
 interface Props {
   note: OrderShortageNote;
+  /** Several orders for the same item: one batch covers all of them. */
+  groupOrders?: OrderShortageNote[];
   mode?: 'order' | 'low';
   suggestedQty?: number;
   leftInStock?: number;
@@ -14,7 +16,7 @@ interface Props {
   onConfirm: (quantity: number, targetDate: string, vendorId?: string) => void;
 }
 
-export default function ShortageStartModal({ note, mode = 'order', suggestedQty, leftInStock, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
+export default function ShortageStartModal({ groupOrders, note, mode = 'order', suggestedQty, leftInStock, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
   const [vendorId, setVendorId] = useState<string>('');
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -50,6 +52,8 @@ export default function ShortageStartModal({ note, mode = 'order', suggestedQty,
           <div className="text-xs text-slate-600 mt-1">
             {mode === 'low'
               ? 'Low stock: restock'
+              : groupOrders && groupOrders.length > 1
+              ? `${groupOrders.length} orders: ` + groupOrders.map((o) => `#${o.bookingNumber} (${o.owed})`).join(', ')
               : `Order #${note.bookingNumber}${note.clientName ? ` (${note.clientName})` : ''}`}
           </div>
         </div>
@@ -57,7 +61,7 @@ export default function ShortageStartModal({ note, mode = 'order', suggestedQty,
           {note.productName} ({note.size}
           {note.colorName ? ` / ${note.colorName}` : ''})
           <div className="text-[11px] font-mono text-rose-700 mt-1">
-            {mode === 'low' ? `Only ${leftInStock ?? 0} left in stock. Choose any quantity.` : `Still needed: ${note.owed} pcs (cannot order less)`}
+            {mode === 'low' ? `Only ${leftInStock ?? 0} left in stock. Choose any quantity.` : `Still needed: ${note.owed} pcs in total (cannot order less; you can order more)`}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">

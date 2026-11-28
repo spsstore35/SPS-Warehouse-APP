@@ -302,7 +302,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         });
       }
     });
-    const linkedBatches = batches.filter((bt) => bt.linkedBookingId === b.id);
+    const linkedBatches = batches.filter((bt) => bt.linkedBookingId === b.id || (bt.extraBookingIds || []).includes(b.id));
     const activeBatches = linkedBatches.filter((bt) => bt.status === 'in_progress');
     const resolvedState =
       b.stockCheckStatus ||

@@ -389,6 +389,9 @@ export interface ProductionBatch {
   stageAssignments: Record<string, BatchStageAssignment>;
   linkedBookingId?: string;
   linkedBookingNumber?: string;
+  /** Other orders (same item) covered by this one batch. */
+  extraBookingIds?: string[];
+  extraBookingNumbers?: string[];
   requestedByTeam?: string;
   createdAt: string;
   completedAt?: string;
@@ -477,6 +480,8 @@ export interface ShortageBatchConfig {
   quantity: number;
   stageAssignments: Record<string, BatchStageAssignment>;
   targetDate?: string;
+  extraBookingIds?: string[];
+  extraBookingNumbers?: string[];
 }
 
 export type TeamRequestEntityType =

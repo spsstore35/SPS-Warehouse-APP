@@ -157,27 +157,59 @@ export function NeedsTiles({ notes, lowNotes, open, setOpen }: { notes: OrderSho
 }
 
 /** Plain list shown under the stat row when a tile is open. */
-export function NeedsList({ kind, productId, notes: allNotes, lowNotes: allLow, canAct, onStart, onStartLow }: {
-  kind: NeedsKind; productId?: string; notes: OrderShortageNote[]; lowNotes: LowStockNote[]; canAct: boolean;
+export function NeedsList({ kind, productId, notes: allNotes, lowNotes: allLow, canAct, onStart, onStartGroup, onStartLow }: {
+  kind: NeedsKind; productId?: string; onStartGroup?: (g: OrderShortageNote[]) => void; notes: OrderShortageNote[]; lowNotes: LowStockNote[]; canAct: boolean;
   onStart: (n: OrderShortageNote) => void; onStartLow?: (n: LowStockNote) => void;
 }) {
+  const [picked, setPicked] = useState<string[]>([]);
   if (!kind) return null;
   const notes = productId ? allNotes.filter((x) => x.productId === productId) : allNotes;
   const lowNotes = productId ? allLow.filter((x) => x.productId === productId) : allLow;
   const btn = 'shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs min-h-[40px]';
-  const rows = kind === 'order' ? notes.filter((x) => !x.hasBatch) : lowNotes.filter((x) => !x.hasBatch);
+  const rows = kind === 'order' ? notes.filter((x) => !x.hasBatch).sort((a, b) => a.variantId.localeCompare(b.variantId)) : lowNotes.filter((x) => !x.hasBatch);
+  const keyOf = (n: OrderShortageNote) => `${n.bookingId}|${n.variantId}`;
+  const chosen = (rows as OrderShortageNote[]).filter((n) => kind === 'order' && picked.includes(keyOf(n)));
+  const sameItem = chosen.length > 0 && chosen.every((n) => n.variantId === chosen[0].variantId);
   return (
     <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
       {rows.length === 0 && <div className="p-3 text-xs text-slate-500">Nothing needs a batch here.</div>}
       {kind === 'order' && (rows as OrderShortageNote[]).map((n) => (
-        <div key={`${n.bookingId}|${n.variantId}`} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-900">
-          <div>
+        <div key={keyOf(n)} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-900">
+          <div className="flex items-start gap-2">
+            {canAct && onStartGroup && (
+              <input
+                type="checkbox"
+                className="mt-0.5 w-4 h-4"
+                checked={picked.includes(keyOf(n))}
+                onChange={(e) => setPicked((p) => (e.target.checked ? [...p, keyOf(n)] : p.filter((k) => k !== keyOf(n))))}
+                aria-label="Select for one combined batch"
+              />
+            )}
+            <div>
             <span className="font-black">{n.productName}</span> ({n.size}{n.colorName ? ` / ${n.colorName}` : ''}): short <span className="font-black font-mono">{n.owed}</span>
             <div className="text-slate-600">Order #{n.bookingNumber}{n.clientName ? ` (${n.clientName})` : ''}</div>
+            </div>
           </div>
           {canAct ? <button type="button" onClick={() => onStart(n)} className={btn}><ShoppingCart className="w-4 h-4" /> Start batch</button> : <span className="text-[11px] font-bold text-slate-500">View only</span>}
         </div>
       ))}
+      {kind === 'order' && chosen.length > 0 && (
+        <div className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs bg-rose-50">
+          <div className="font-bold text-slate-900">
+            {sameItem
+              ? `${chosen.length} order(s) selected: ${chosen.reduce((s, n) => s + n.owed, 0)} pcs in total, one combined batch`
+              : 'Select orders of the same item and size to combine them.'}
+          </div>
+          <button
+            type="button"
+            disabled={!sameItem}
+            onClick={() => { onStartGroup?.(chosen); setPicked([]); }}
+            className={`${btn} disabled:opacity-40`}
+          >
+            <ShoppingCart className="w-4 h-4" /> Start batch (selected)
+          </button>
+        </div>
+      )}
       {kind === 'low' && (rows as LowStockNote[]).map((n) => (
         <div key={n.variantId} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-900">
           <div>

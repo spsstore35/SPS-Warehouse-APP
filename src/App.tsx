@@ -2142,6 +2142,7 @@ export default function App() {
   const [shortageNotes, setShortageNotes] = useState<OrderShortageNote[]>([]);
   const [needsOpen, setNeedsOpen] = useState<NeedsKind>(null);
   const [shortageToStart, setShortageToStart] = useState<OrderShortageNote | null>(null);
+  const [shortageGroup, setShortageGroup] = useState<OrderShortageNote[] | null>(null);
   const refreshShortageNotes = () => {
     if (!currentUser) return;
     fetchOrderShortagesFromDb().then(setShortageNotes).catch(() => setShortageNotes([]));
@@ -2265,6 +2266,8 @@ export default function App() {
             size: item?.size || 'Std',
             colorName: item?.colorName || 'Default',
             quantity: Math.max(1, Math.round(cfg.quantity || minShort)),
+            extraBookingIds: cfg.extraBookingIds,
+            extraBookingNumbers: cfg.extraBookingNumbers,
             minShort,
             stageAssignments: (cfg.stageAssignments || {}) as Record<string, BatchStageAssignment>,
             targetDate: cfg.targetDate || expectedDate,
@@ -2277,6 +2280,8 @@ export default function App() {
           size: entry.item.size || 'Std',
           colorName: entry.item.colorName || 'Default',
           quantity: entry.shortQty,
+          extraBookingIds: undefined as string[] | undefined,
+          extraBookingNumbers: undefined as string[] | undefined,
           minShort: entry.shortQty,
           stageAssignments: {} as Record<string, BatchStageAssignment>,
           targetDate: expectedDate,
@@ -2285,7 +2290,7 @@ export default function App() {
     entriesToProcess.forEach((entry, idx) => {
       const wf = productWorkflows.find((w) => w.productId === entry.productId);
       const batchId = `batch_ord_${booking.id}_${entry.variantId}_${Date.now()}_${idx}`;
-      const batchCode = `PO-#${booking.bookingNumber}-${idx + 1}`;
+      const batchCode = `PO-#${[booking.bookingNumber, ...(entry.extraBookingNumbers || [])].join('+')}-${idx + 1}`;
       const firstNonStockStage = wf?.activeStages?.find((s) => s !== 'stock_in');
       const stageKey: OperationStageKey =
         firstNonStockStage ||
@@ -2323,6 +2328,8 @@ export default function App() {
         stageAssignments: mergedStageAssignments,
         linkedBookingId: booking.id,
         linkedBookingNumber: booking.bookingNumber,
+        extraBookingIds: entry.extraBookingIds && entry.extraBookingIds.length ? entry.extraBookingIds : undefined,
+        extraBookingNumbers: entry.extraBookingNumbers,
         requestedByTeam: 'inventory',
         createdAt: new Date().toISOString(),
       };
@@ -2330,7 +2337,7 @@ export default function App() {
 
       createdCalendarTasks.push({
         id: `task_purchase_${batchId}`,
-        title: `[Purchases] ${entry.productName} (${entry.quantity} pcs) — Order #${booking.bookingNumber}`,
+        title: `[Purchases] ${entry.productName} (${entry.quantity} pcs) — Order #${[booking.bookingNumber, ...(entry.extraBookingNumbers || [])].join(', #')}`,
         itemType: 'task',
         startDate: entry.targetDate,
         endDate: entry.targetDate,
@@ -3932,11 +3939,11 @@ export default function App() {
     }
 
     // If batch was triggered by an Order shortage & all batches for that booking are completed -> Ready for Scout Fera2 Delivery!
-    if (batch.linkedBookingId) {
+    [batch.linkedBookingId, ...(batch.extraBookingIds || [])].filter(Boolean).forEach((orderId) => {
       const stillOpenForOrder = nextBatches.some(
-        (b) => b.linkedBookingId === batch.linkedBookingId && b.status !== 'completed'
+        (b) => (b.linkedBookingId === orderId || (b.extraBookingIds || []).includes(orderId as string)) && b.status !== 'completed'
       );
-      const linkedOrder = bookings.find((b) => b.id === batch.linkedBookingId);
+      const linkedOrder = bookings.find((b) => b.id === orderId);
       if (linkedOrder && !stillOpenForOrder) {
         lastBookingMutationAtRef.current = Date.now();
         const readyOrder: Booking = {
@@ -3950,11 +3957,11 @@ export default function App() {
       }
       if (!linkedOrder && !stillOpenForOrder) {
         // This person cannot read orders (e.g. purchases admin), so the database marks it ready.
-        supabase.rpc('mark_booking_ready', { p_booking_id: batch.linkedBookingId }).then(({ error }) => {
+        supabase.rpc('mark_booking_ready', { p_booking_id: orderId }).then(({ error }) => {
           if (error) showToast(`Could not mark the order ready: ${error.message}`);
         });
       }
-    }
+    });
 
     showToast(
       batch.linkedBookingNumber
@@ -5154,6 +5161,45 @@ export default function App() {
           />
         )}
 
+        {shortageGroup && shortageGroup.length > 0 && (
+          <ShortageStartModal
+            note={{ ...shortageGroup[0], owed: shortageGroup.reduce((sum, x) => sum + x.owed, 0) }}
+            groupOrders={shortageGroup}
+            vendors={vendors}
+            canManageVendors={canUserManageVendors(currentUser, users)}
+            onAddVendor={handleSaveVendor}
+            onCancel={() => setShortageGroup(null)}
+            onConfirm={(quantity, targetDate, vendorId) => {
+              const g = shortageGroup;
+              const n = g[0];
+              setShortageGroup(null);
+              const total = g.reduce((sum, x) => sum + x.owed, 0);
+              const stub = {
+                id: n.bookingId,
+                bookingNumber: n.bookingNumber,
+                clientName: g.map((x) => x.clientName).filter(Boolean).join(', '),
+                items: [{ productId: n.productId, variantId: n.variantId, productName: n.productName, size: n.size, colorName: n.colorName, quantity: total }],
+              } as unknown as Booking;
+              const wf = productWorkflows.find((w) => w.productId === n.productId);
+              const firstStage =
+                wf?.activeStages?.find((st) => st !== 'stock_in') ||
+                (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+              const stageAssignments: Record<string, BatchStageAssignment> = vendorId ? { [firstStage]: { vendorId } } : {};
+              handleSendShortageToPurchases(bookings.find((b) => b.id === n.bookingId) || stub, targetDate, [
+                {
+                  productId: n.productId,
+                  variantId: n.variantId,
+                  quantity,
+                  stageAssignments,
+                  targetDate,
+                  extraBookingIds: g.slice(1).map((x) => x.bookingId),
+                  extraBookingNumbers: g.slice(1).map((x) => x.bookingNumber),
+                },
+              ]);
+            }}
+          />
+        )}
+
         {lowToStart && (
           <ShortageStartModal
             mode="low"
@@ -5303,9 +5349,10 @@ export default function App() {
                 ? new Set(lowStockNotes.filter((n) => !n.hasBatch).map((n) => n.productId))
                 : null
             }
+            onClearNeeds={() => setNeedsOpen(null)}
             needsDetail={(pid) =>
               needsOpen ? (
-                <NeedsList kind={needsOpen} productId={pid} notes={shortageNotes} lowNotes={lowStockNotes} canAct={canUserStartShortagePurchase(currentUser, users)} onStart={(n) => setShortageToStart(n)} onStartLow={(n) => setLowToStart(n)} />
+                <NeedsList kind={needsOpen} productId={pid} notes={shortageNotes} lowNotes={lowStockNotes} canAct={canUserStartShortagePurchase(currentUser, users)} onStart={(n) => setShortageToStart(n)} onStartGroup={(g) => setShortageGroup(g)} onStartLow={(n) => setLowToStart(n)} />
               ) : null
             }
             products={products}

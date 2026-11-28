@@ -988,6 +988,10 @@ end $$;
 revoke all on function public.record_order_shortfall(text, text, integer) from public, anon;
 grant execute on function public.record_order_shortfall(text, text, integer) to authenticated;
 
+-- One purchase batch can cover several orders (same item): the first order is linked_booking_id,
+-- the others are listed in extra_booking_ids. Receiving covers every linked order.
+alter table public.production_batches add column if not exists extra_booking_ids text[] not null default '{}';
+
 -- What would be reserved for the waiting order if p_qty of this variant arrive in this batch?
 drop function if exists public.batch_receive_preview(text, text, integer);
 create or replace function public.batch_receive_preview(p_batch_id text, p_variant_id text, p_qty integer)
@@ -998,11 +1002,16 @@ begin
     raise exception 'Not allowed.' using errcode = '42501';
   end if;
   return query
-    select least(o.owed, greatest(p_qty, 0))::integer, b.booking_number::text, b.client_name::text, o.owed::integer
+    select least(sum(o.owed), greatest(p_qty, 0))::integer,
+           string_agg(b.booking_number::text, ', ' order by b.booking_number)::text,
+           string_agg(b.client_name::text, ', ' order by b.booking_number)::text,
+           sum(o.owed)::integer
       from public.production_batches pb
-      join public.order_stock_owed o on o.booking_id = pb.linked_booking_id and o.variant_id = p_variant_id
+      join public.order_stock_owed o on o.variant_id = p_variant_id
+           and (o.booking_id = pb.linked_booking_id or o.booking_id = any(pb.extra_booking_ids))
       join public.bookings b on b.id = o.booking_id
-     where pb.id = p_batch_id;
+     where pb.id = p_batch_id
+    having count(*) > 0;
 end $$;
 revoke all on function public.batch_receive_preview(text, text, integer) from public, anon;
 grant execute on function public.batch_receive_preview(text, text, integer) to authenticated;
@@ -1011,28 +1020,30 @@ grant execute on function public.batch_receive_preview(text, text, integer) to a
 create or replace function public.receive_batch_stock(p_batch_id text, p_variant_id text, p_qty integer)
 returns table (new_quantity integer, reserved integer)
 language plpgsql security definer set search_path = public as $$
-declare v_booking text; v_owed integer; v_take integer := 0; v_new integer;
+declare v_primary text; v_extra text[]; v_total integer := 0; v_take integer := 0; v_new integer;
 begin
   if not public.app_is_staff_or_above() or not public.app_admin_of_any(array['purchases','inventory']) then
     raise exception 'Only an admin of the purchases team can add received stock.' using errcode = '42501';
   end if;
   if p_qty is null or p_qty <= 0 then raise exception 'Nothing to receive.'; end if;
-  select linked_booking_id into v_booking from public.production_batches where id = p_batch_id;
+  select linked_booking_id, extra_booking_ids into v_primary, v_extra from public.production_batches where id = p_batch_id;
   if not found then raise exception 'Unknown purchase/production batch.' using errcode = '42501'; end if;
-  if v_booking is not null then
-    select owed into v_owed from public.order_stock_owed where booking_id = v_booking and variant_id = p_variant_id for update;
-    if v_owed is not null then
-      if p_qty < v_owed then
-        raise exception 'This purchase is for an order that still needs % pcs: the quantity made must be at least that (you entered %).', v_owed, p_qty
-          using errcode = '42501';
-      end if;
-      v_take := least(v_owed, p_qty);
-      if v_take >= v_owed then
-        delete from public.order_stock_owed where booking_id = v_booking and variant_id = p_variant_id;
-      else
-        update public.order_stock_owed set owed = owed - v_take where booking_id = v_booking and variant_id = p_variant_id;
-      end if;
+  perform 1 from public.order_stock_owed
+   where variant_id = p_variant_id
+     and (booking_id = v_primary or booking_id = any(coalesce(v_extra, '{}')))
+   for update;
+  select coalesce(sum(owed), 0) into v_total from public.order_stock_owed
+   where variant_id = p_variant_id
+     and (booking_id = v_primary or booking_id = any(coalesce(v_extra, '{}')));
+  if v_total > 0 then
+    if p_qty < v_total then
+      raise exception 'This purchase is for orders that still need % pcs in total: the quantity made must be at least that (you entered %).', v_total, p_qty
+        using errcode = '42501';
     end if;
+    v_take := v_total;
+    delete from public.order_stock_owed
+     where variant_id = p_variant_id
+       and (booking_id = v_primary or booking_id = any(coalesce(v_extra, '{}')));
   end if;
   perform set_config('app.stock_fn', 'on', true);
   update public.product_variants set quantity = greatest(0, quantity + p_qty - v_take), updated_at = now()
@@ -1056,15 +1067,17 @@ language plpgsql security definer set search_path = public as $$
 declare v_owed integer;
 begin
   if auth.uid() is null or new.linked_booking_id is null or new.variant_id is null then return new; end if;
-  select owed into v_owed from public.order_stock_owed where booking_id = new.linked_booking_id and variant_id = new.variant_id;
-  if v_owed is not null and new.quantity < v_owed then
-    raise exception 'This item is still needed by the order: the quantity must be at least % (you entered %).', v_owed, new.quantity
+  select coalesce(sum(owed), 0) into v_owed from public.order_stock_owed
+   where variant_id = new.variant_id
+     and (booking_id = new.linked_booking_id or booking_id = any(coalesce(new.extra_booking_ids, '{}')));
+  if v_owed > 0 and new.quantity < v_owed then
+    raise exception 'These orders still need % pcs in total: the quantity must be at least that (you entered %).', v_owed, new.quantity
       using errcode = '42501';
   end if;
   return new;
 end $$;
 drop trigger if exists guard_batch_min_quantity on public.production_batches;
-create trigger guard_batch_min_quantity before insert or update of quantity, status, linked_booking_id, variant_id on public.production_batches
+create trigger guard_batch_min_quantity before insert or update of quantity, status, linked_booking_id, extra_booking_ids, variant_id on public.production_batches
   for each row execute function public.guard_batch_min_quantity();
 
 -- "Needs action" list: every paid order still waiting for stock, with the item/size and whether a
@@ -1082,7 +1095,7 @@ begin
     select o.booking_id::text, b.booking_number::text, b.client_name::text, bi.product_id::text, o.variant_id::text,
            bi.product_name::text, bi.size::text, bi.color_name::text, o.owed::integer,
            exists (select 1 from public.production_batches pb
-                    where pb.linked_booking_id = o.booking_id and pb.variant_id = o.variant_id and pb.status = 'in_progress')
+                    where (pb.linked_booking_id = o.booking_id or o.booking_id = any(pb.extra_booking_ids)) and pb.variant_id = o.variant_id and pb.status = 'in_progress')
       from public.order_stock_owed o
       join public.bookings b on b.id = o.booking_id
       join lateral (select * from public.booking_items i where i.booking_id = o.booking_id and i.variant_id = o.variant_id limit 1) bi on true
