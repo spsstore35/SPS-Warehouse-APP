@@ -70,28 +70,46 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
     document.body.appendChild(container);
 
     try {
-      const html2pdfModule = await import('html2pdf.js');
-      const html2pdf = (html2pdfModule as any).default || html2pdfModule;
-
-      const opt = {
-        margin: [6, 8, 6, 8] as [number, number, number, number],
-        filename: `${docType === 'quotation' ? 'Quotation' : 'Workshop_Sheet'}_${booking.bookingNumber}.pdf`,
-        image: { type: 'jpeg' as const, quality: 0.98 },
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          scrollY: 0,
-          scrollX: 0,
-          backgroundColor: '#ffffff',
-        },
-        jsPDF: { unit: 'mm' as const, format: 'a4' as const, orientation: 'portrait' as const },
-      };
-
-      await html2pdf().set(opt).from(clone).save();
+      // html2canvas-pro understands modern CSS colors (oklch) that the old html2canvas crashed on.
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas-pro'),
+        import('jspdf'),
+      ]);
+      const canvas = await html2canvas(clone, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        backgroundColor: '#ffffff',
+      });
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const m = 6;
+      const imgW = pageW - m * 2;
+      const pxPerMm = canvas.width / imgW;
+      const sliceHpx = Math.floor((pageH - m * 2) * pxPerMm);
+      let y = 0;
+      let first = true;
+      while (y < canvas.height) {
+        const h = Math.min(sliceHpx, canvas.height - y);
+        const part = document.createElement('canvas');
+        part.width = canvas.width;
+        part.height = h;
+        const ctx = part.getContext('2d')!;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, part.width, part.height);
+        ctx.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
+        if (!first) pdf.addPage();
+        pdf.addImage(part.toDataURL('image/jpeg', 0.95), 'JPEG', m, m, imgW, h / pxPerMm);
+        first = false;
+        y += h;
+      }
+      pdf.save(`${docType === 'quotation' ? 'Quotation' : 'Workshop_Sheet'}_${booking.bookingNumber}.pdf`);
     } catch (err) {
-      console.warn('Direct PDF export error, falling back to print dialog:', err);
-      window.print();
+      console.warn('PDF export failed:', err);
+      alert('Could not create the PDF file. Please try again, or use the Print button.');
     } finally {
       if (document.body.contains(container)) {
         document.body.removeChild(container);
