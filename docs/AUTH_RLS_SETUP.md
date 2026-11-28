@@ -56,7 +56,7 @@ Run `20261202_auth_rls_v3_ROLLBACK.sql` (restores old hashes, reopens tables), r
 
 ## Order rules (Client Bookings)
 - Create / edit / delete an order directly: full_admin or the team_admin of Scout Fera2 (`troops`). Nobody else.
-- ONLY staff of Scout Fera2 (`troops`) may SEND requests (create/edit order, deposit/payment check). Budgeting staff and all other staff cannot.
+- ORDER requests (create/edit/delete): ONLY staff of Scout Fera2 (`troops`). DEPOSIT/PAYMENT-check requests: staff of Scout Fera2 AND staff of budgeting. No other staff. Any of the three admins (full_admin, Fera2 admin, budgeting admin) can confirm directly or approve a payment request.
 - Approve a staff order request: troops team_admin or full_admin.
 - Confirm a deposit/payment (this also takes stock): full_admin, troops team_admin, or budgeting team_admin. Admins of other teams cannot.
 - Budgeting members see Orders read-only.

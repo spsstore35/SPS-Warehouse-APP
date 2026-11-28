@@ -906,7 +906,7 @@ begin
   if public.app_admin_of_any(array['troops']) then return new; end if;            -- full_admin / Scout Fera2 team_admin
   if public.app_admin_of_any(array['budgeting']) then v_allowed := v_payment;      -- payment confirmation only
   elsif public.app_admin_of_any(array['inventory']) then v_allowed := array['stock_check_status','updated_at'];
-  elsif public.app_member_of_any(array['troops']) then v_allowed := v_request;     -- Fera2 staff only: ask for deposit/payment checks
+  elsif public.app_member_of_any(array['troops','budgeting']) then v_allowed := v_request;  -- Fera2 + budgeting staff: may only ASK for a deposit/payment check
   else v_allowed := array['updated_at'];
   end if;
   if not (v_diff <@ v_allowed) then

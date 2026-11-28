@@ -56,7 +56,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import { canUserManageOrders, canUserConfirmPayments } from '../utils/security';
+import { canUserManageOrders, canUserConfirmPayments, canUserRequestPayments } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 
 interface BookingsViewProps {
@@ -134,6 +134,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 }) => {
   const isAdmin = canUserManageOrders(currentUser);
   const canPay = canUserConfirmPayments(currentUser);
+  const canAskPay = canUserRequestPayments(currentUser);
   const allowEditBookings = canEditBookings ?? isAdmin;
   const activeMembers = useMemo(
     () =>
@@ -1859,8 +1860,8 @@ This is our official Scout Store number. Through this chat, you can:
                   </div>
                 )}
 
-                {allowEditBookings && activeBooking.status === 'pending' && (
-                  isAdmin ? (
+                {(allowEditBookings || canPay || canAskPay) && activeBooking.status === 'pending' && (
+                  canPay ? (
                     <button
                       type="button"
                       onClick={() => setShowConfirmDepositModal(true)}

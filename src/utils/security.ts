@@ -358,6 +358,15 @@ export function canUserConfirmPayments(
  * Who can create / edit / delete an order directly (no request):
  * full_admin, or the team_admin of Scout Fera2 ('troops'). Same people approve staff requests.
  */
+// Who may SEND a deposit/payment confirmation request: Scout Fera2 staff or budgeting staff
+// (admins confirm directly, so they never need to send one).
+export function canUserRequestPayments(user?: User | null, allUsers?: User[]): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  const t = getUserAssignedTeams(user);
+  return t.includes('troops') || t.includes('budgeting');
+}
+
 export function canUserManageOrders(
   user?: User | null,
   allUsers?: User[]
