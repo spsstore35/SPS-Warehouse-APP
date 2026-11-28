@@ -138,8 +138,8 @@ export default function ShortageStartModal({ currentStock = 0, minStock, groupOr
           {mode !== 'low' && <div>Needed: <span className="font-black font-mono">{note.owed}</span></div>}
           {suggested !== undefined && suggested > note.owed && (
             <div>
-              Suggested: <span className="font-black font-mono">{suggested}</span> so you keep {suggested - note.owed} in stock (minimum is {minStock}).{' '}
-              <button type="button" onClick={() => setQty(suggested)} className="font-black text-sky-700 underline">Use suggested</button>
+              Suggestion only: <span className="font-black font-mono">{suggested}</span>. You need {note.owed} for the orders, plus {suggested - note.owed} more so your stock stays at the safe minimum ({minStock}) after receiving and you don't run out right away.{' '}
+              <button type="button" onClick={() => setQty(suggested)} className="font-black text-sky-700 underline">Use {suggested}</button>
             </div>
           )}
           <div>Stock after receiving: <span className="font-black font-mono">{stockAfter}</span>{minStock && minStock > 0 && stockAfter < minStock ? ` (below the minimum of ${minStock})` : ''}</div>
