@@ -183,8 +183,22 @@ export function batchJoinBlockReason(batch: ProductionBatch, firstStage: Operati
   if (batch.status !== 'in_progress') return 'it is already completed';
   if (batch.currentStageKey !== firstStage) return 'it already moved past its first stage (it is with the factory or further)';
   const spent = Object.values(batch.stageAssignments || {}).some(
-    (a) => a && (a.completedAt || (a.totalCost ?? a.cost) || (a.costLines && a.costLines.length > 0))
+    (a) => a && (a.completedAt || a.totalCost || (a.costLines && a.costLines.length > 0))
   );
   if (spent) return 'work or costs are already recorded on it';
   return null;
+}
+
+/** Money of one stage: price x units bought (+ extra lines such as transport). Old data: total, or price x batch quantity. */
+export function stageCostTotal(
+  a: { cost?: number; unitQty?: number; totalCost?: number; costLines?: { amount: number }[] } | undefined,
+  batchQty: number
+): number {
+  if (!a) return 0;
+  const material = typeof a.cost === 'number' && (a.unitQty || 0) > 0 ? a.cost * (a.unitQty as number) : 0;
+  const lines = (a.costLines || []).reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  if (material > 0 || lines > 0) return material + lines;
+  if (typeof a.totalCost === 'number' && a.totalCost >= 0) return a.totalCost;
+  if (typeof a.cost === 'number') return a.cost * Math.max(1, batchQty);
+  return 0;
 }

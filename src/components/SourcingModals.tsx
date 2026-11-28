@@ -679,11 +679,46 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
                         </span>
                       </div>
                     </div>
+                    <div className="sm:col-span-12 flex flex-wrap items-center gap-2 text-[11px] text-slate-700">
+                      <label className="inline-flex items-center gap-1">
+                        {meta.defaultUnit}s
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={current.unitQty ?? ''}
+                          onChange={(e) =>
+                            setAssignments((prev) => ({
+                              ...prev,
+                              [stageKey]: { ...prev[stageKey], unitQty: e.target.value === '' ? undefined : Number(e.target.value) },
+                            }))
+                          }
+                          className="w-20 px-2 py-1 border border-slate-300 rounded-lg font-mono"
+                        />
+                      </label>
+                      {typeof current.cost === 'number' && (current.unitQty || 0) > 0 && (
+                        <span className="font-mono font-bold text-slate-900">
+                          {current.cost.toLocaleString()} EGP x {(current.unitQty as number).toLocaleString()} {meta.defaultUnit} = {(current.cost * (current.unitQty as number)).toLocaleString()} EGP
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
+
+          {(() => {
+            const total = productionStages.reduce((sum, k) => {
+              const a = assignments[k];
+              return sum + (a && typeof a.cost === 'number' && (a.unitQty || 0) > 0 ? a.cost * (a.unitQty as number) : 0);
+            }, 0);
+            return total > 0 ? (
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-black text-emerald-900">
+                Batch total so far: {total.toLocaleString()} EGP
+              </div>
+            ) : null;
+          })()}
 
           {error && (
             <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">

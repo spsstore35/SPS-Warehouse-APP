@@ -7,7 +7,7 @@ import type {
   OperationStageKey,
   Vendor,
 } from '../types/inventory';
-import { getStageMeta } from '../utils/sourcing';
+import { getStageMeta, stageCostTotal } from '../utils/sourcing';
 
 interface Props {
   batch: ProductionBatch;
@@ -29,11 +29,7 @@ const daysBetween = (a?: string, b?: string): number | null => {
 const fmt = (n: number) => (Math.round(n * 100) / 100).toLocaleString();
 
 export function stageTotal(a: BatchStageAssignment | undefined, qty: number): number {
-  if (!a) return 0;
-  if (a.costLines && a.costLines.length > 0) return a.costLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
-  if (typeof a.totalCost === 'number' && a.totalCost >= 0) return a.totalCost;
-  if (typeof a.cost === 'number') return a.cost * Math.max(1, qty);
-  return 0;
+  return stageCostTotal(a, qty);
 }
 
 export function batchSummary(b: ProductionBatch, stages: OperationStageKey[]) {
@@ -91,9 +87,14 @@ export default function BatchCostModal({ batch, allBatches, stages, customStages
     Object.entries(draft).forEach(([k, a]) => {
       const lines = (a.costLines || []).filter((l) => (l.label || '').trim() || Number(l.amount) > 0);
       const next: BatchStageAssignment = { ...a, costLines: lines };
-      if (lines.length > 0) {
-        next.totalCost = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
-        delete next.cost; // the stage total is now the sum of its lines
+      if (lines.length > 0 || (next.unitQty || 0) > 0) {
+        const linesSum = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+        if ((next.unitQty || 0) > 0 && typeof next.cost === 'number') {
+          next.totalCost = next.cost * (next.unitQty as number) + linesSum; // price x units + extras
+        } else {
+          next.totalCost = linesSum;
+          delete next.cost; // the stage total is now the sum of its lines
+        }
       }
       out[k] = next;
     });
@@ -210,6 +211,22 @@ export default function BatchCostModal({ batch, allBatches, stages, customStages
                   <div>
                     Took
                     <div className="mt-1 font-mono text-xs text-slate-900">{dur === null ? '-' : `${dur} day(s)`}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-bold text-slate-700 items-end">
+                  <label>
+                    Price per {meta.defaultUnit} (EGP)
+                    <input type="number" min={0} step="0.01" disabled={!canEdit} value={a.cost ?? ''} onChange={(e) => setStage(k, { cost: e.target.value === '' ? undefined : Number(e.target.value) })} className={`${inp} w-full mt-0.5 font-mono font-normal`} />
+                  </label>
+                  <label>
+                    {meta.defaultUnit}s bought
+                    <input type="number" min={0} step="0.01" disabled={!canEdit} value={a.unitQty ?? ''} onChange={(e) => setStage(k, { unitQty: e.target.value === '' ? undefined : Number(e.target.value) })} className={`${inp} w-full mt-0.5 font-mono font-normal`} />
+                  </label>
+                  <div className="col-span-2 font-mono text-xs text-slate-900">
+                    {typeof a.cost === 'number' && (a.unitQty || 0) > 0
+                      ? `${fmt(a.cost)} EGP x ${fmt(a.unitQty as number)} ${meta.defaultUnit} = ${fmt(a.cost * (a.unitQty as number))} EGP`
+                      : ''}
+                    {lines.length > 0 ? ` + extras ${fmt(lines.reduce((s, l) => s + (Number(l.amount) || 0), 0))}` : ''}
                   </div>
                 </div>
                 <input

@@ -1,3 +1,4 @@
+import { batchActualDays } from '../utils/deliveryEstimate';
 import React, { useMemo, useState } from 'react';
 import {
   BatchStageAssignment,
@@ -23,6 +24,7 @@ import {
   batchJoinBlockReason,
   firstWorkingStage,
   getStageMeta,
+  stageCostTotal,
   getVendorTagInfo,
   inferDefaultWorkflowType,
 } from '../utils/sourcing';
@@ -1587,6 +1589,39 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 </div>
               </div>
 
+              {batchTab === 'completed' && visibleBatches.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto">
+                  <div className="px-3 pt-2.5 text-xs font-black text-slate-900">History of finished batches (days and cost kept per batch)</div>
+                  <table className="w-full text-[11px] mt-1.5">
+                    <thead>
+                      <tr className="text-left text-slate-500">
+                        <th className="px-3 py-1">Batch</th>
+                        <th className="px-3 py-1">Size</th>
+                        <th className="px-3 py-1 text-right">Pieces</th>
+                        <th className="px-3 py-1 text-right">Days</th>
+                        <th className="px-3 py-1 text-right">Total EGP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleBatches.map((hb) => {
+                        const act = batchActualDays(hb);
+                        const tot = workflow.activeStages.reduce((sum, k) => sum + stageCostTotal(hb.stageAssignments?.[k], hb.quantity), 0);
+                        const hv = selectedProduct.variants.find((v) => v.id === hb.variantId);
+                        return (
+                          <tr key={hb.id} className="border-t border-slate-100 text-slate-900">
+                            <td className="px-3 py-1 font-mono font-bold">{hb.batchCode}</td>
+                            <td className="px-3 py-1">{hv ? `${hv.size} / ${hv.colorName}` : '-'}</td>
+                            <td className="px-3 py-1 text-right font-mono">{hb.quantity}</td>
+                            <td className="px-3 py-1 text-right font-mono">{act ? act.days : '-'}</td>
+                            <td className="px-3 py-1 text-right font-mono">{tot > 0 ? tot.toLocaleString() : '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {visibleBatches.length === 0 ? (
                 <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-2">
                   <p className="text-sm font-semibold text-slate-700">
@@ -1639,17 +1674,20 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                         const vName = a.vendorId
                           ? vendors.find((v) => v.id === a.vendorId)?.name || 'Vendor'
                           : a.customVendorName || 'Vendor';
-                        const totalStageEgp =
-                          typeof a.totalCost === 'number' && a.totalCost >= 0
-                            ? a.totalCost
-                            : typeof a.cost === 'number'
-                            ? Math.round(a.cost * Math.max(1, batch.quantity) * 100) / 100
-                            : 0;
+                        const totalStageEgp = Math.round(stageCostTotal(a, batch.quantity) * 100) / 100;
+                        const stDays =
+                          a.startedAt && (a.endedAt || a.completedAt)
+                            ? Math.round((new Date(a.endedAt || (a.completedAt as string).slice(0, 10)).getTime() - new Date(a.startedAt).getTime()) / 86400000)
+                            : null;
                         return {
                           stageKey: stKey,
                           label: getStageMeta(stKey, workflow.customStages).shortLabel,
                           vendorName: vName,
                           totalEgp: totalStageEgp,
+                          unitCost: a.cost,
+                          unitQty: a.unitQty,
+                          unitName: getStageMeta(stKey, workflow.customStages).defaultUnit,
+                          days: stDays,
                           completed: Boolean(a.completedAt),
                         };
                       });
@@ -1721,13 +1759,20 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                 const others = batches.filter(
                                   (o) => o.id !== batch.id && o.productId === batch.productId && o.variantId === batch.variantId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
                                 );
-                                const why = own ? `Cannot merge: ${own}.` : others.length === 0 ? 'Cannot merge: no other early batch of the same size/color.' : 'Merge with another early batch';
+                                const why = own ? `Cannot merge ${batch.batchCode}: ${own}.` : others.length === 0 ? `Cannot merge ${batch.batchCode}: there is no other open batch of the same size/color that is still at its first stage with no costs.` : 'Merge with another early batch';
                                 return (
                                   <button
                                     type="button"
-                                    disabled={Boolean(own) || others.length === 0}
-                                    onClick={() => setMergeBatchId(batch.id)}
-                                    className="px-2 py-1 rounded-lg text-[11px] font-bold text-indigo-800 hover:bg-indigo-50 disabled:opacity-40 disabled:hover:bg-transparent inline-flex items-center gap-1"
+                                    onClick={() => {
+                                      if (!isAdmin) {
+                                        onShowToast?.('Only the Purchases admin or the owner can merge batches.');
+                                      } else if (own || others.length === 0) {
+                                        onShowToast?.(why);
+                                      } else {
+                                        setMergeBatchId(batch.id);
+                                      }
+                                    }}
+                                    className={`px-2 py-1 rounded-lg text-[11px] font-bold hover:bg-indigo-50 inline-flex items-center gap-1 ${own || others.length === 0 ? 'text-slate-400' : 'text-indigo-800'}`}
                                     title={why}
                                   >
                                     <span>Merge</span>
@@ -1774,21 +1819,26 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                           </div>
 
                           {/* Completed / Logged Stages Cost & Vendor Trail */}
-                          {loggedStages.some((st) => st.completed) && (
+                          {loggedStages.length > 0 && (
                             <div className="flex flex-wrap gap-1.5">
                               {loggedStages
-                                .filter((st) => st.completed)
                                 .map((st) => (
                                   <span
                                     key={st.stageKey}
                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-semibold text-slate-700"
                                   >
-                                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                    {st.completed && <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
                                     <span>{st.label}:</span>
                                     <span className="text-slate-900">{st.vendorName}</span>
+                                    {typeof st.unitCost === 'number' && (st.unitQty || 0) > 0 && (
+                                      <span className="font-mono text-slate-600">
+                                        {st.unitCost.toLocaleString()}/{st.unitName} x {(st.unitQty as number).toLocaleString()}
+                                      </span>
+                                    )}
                                     <span className="font-mono text-emerald-700">
                                       ({st.totalEgp.toLocaleString()} EGP)
                                     </span>
+                                    {st.days !== null && st.days >= 0 && <span className="text-slate-500">{st.days}d</span>}
                                   </span>
                                 ))}
                             </div>

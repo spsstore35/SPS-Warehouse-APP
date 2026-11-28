@@ -371,7 +371,8 @@ export interface BatchStageAssignment {
   costLines?: BatchCostLine[];
   vendorId?: string;
   customVendorName?: string;
-  cost?: number;
+  cost?: number; // price per unit (meter / piece ...)
+  unitQty?: number; // how many units were bought (e.g. 14 meters)
   totalCost?: number;
   notes?: string;
   completedAt?: string;
