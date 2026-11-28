@@ -20,6 +20,8 @@ import {
   DEFAULT_STAGE_KEYS,
   VENDOR_TAG_GROUPS,
   buildWhatsAppUrl,
+  batchJoinBlockReason,
+  firstWorkingStage,
   getStageMeta,
   getVendorTagInfo,
   inferDefaultWorkflowType,
@@ -90,6 +92,7 @@ interface SourcingOperationsViewProps {
   onAddPriceEntry: (entry: VendorPriceEntry) => void;
   onSaveBatch: (batch: ProductionBatch) => void;
   onDeleteBatch: (batchId: string) => void;
+  onMergeBatches?: (keep: ProductionBatch, absorbed: ProductionBatch) => void;
   onCompleteBatchStockIn: (payload: {
     batchId: string;
     finalQuantity: number;
@@ -127,6 +130,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onAddPriceEntry,
   onSaveBatch,
   onDeleteBatch,
+  onMergeBatches,
   onCompleteBatchStockIn,
   onShowToast,
 }) => {
@@ -155,6 +159,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
+  const [mergeBatchId, setMergeBatchId] = useState<string | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [stockInBatch, setStockInBatch] = useState<ProductionBatch | null>(null);
   const [costBatchId, setCostBatchId] = useState<string | null>(null);
@@ -1708,6 +1713,25 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                               >
                                 <span>Steps &amp; costs</span>
                               </button>
+                              {batch.status === 'in_progress' && onMergeBatches && (() => {
+                                const first = firstWorkingStage(workflow);
+                                const own = batchJoinBlockReason(batch, first);
+                                const others = batches.filter(
+                                  (o) => o.id !== batch.id && o.productId === batch.productId && o.variantId === batch.variantId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
+                                );
+                                const why = own ? `Cannot merge: ${own}.` : others.length === 0 ? 'Cannot merge: no other early batch of the same size/color.' : 'Merge with another early batch';
+                                return (
+                                  <button
+                                    type="button"
+                                    disabled={Boolean(own) || others.length === 0}
+                                    onClick={() => setMergeBatchId(batch.id)}
+                                    className="px-2 py-1 rounded-lg text-[11px] font-bold text-indigo-800 hover:bg-indigo-50 disabled:opacity-40 disabled:hover:bg-transparent inline-flex items-center gap-1"
+                                    title={why}
+                                  >
+                                    <span>Merge</span>
+                                  </button>
+                                );
+                              })()}
                               {batch.status === 'in_progress' && (
                                 <button
                                   type="button"
@@ -2480,6 +2504,34 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 );
               }}
             />
+
+            {mergeBatchId && (() => {
+              const keep = batches.find((b) => b.id === mergeBatchId);
+              if (!keep) return null;
+              const first = firstWorkingStage(workflow);
+              const cands = batches.filter(
+                (o) => o.id !== keep.id && o.productId === keep.productId && o.variantId === keep.variantId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
+              );
+              return (
+                <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4">
+                  <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-3 shadow-2xl">
+                    <div className="text-base font-black text-slate-900">Merge into {keep.batchCode} ({keep.quantity} pcs)</div>
+                    <div className="text-xs text-slate-600">Quantities are added and the orders of both batches are linked to one batch. The other batch is removed. Pick the batch to add:</div>
+                    {cands.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => { onMergeBatches?.(keep, c); setMergeBatchId(null); }}
+                        className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-900"
+                      >
+                        Add {c.batchCode} ({c.quantity} pcs) = {keep.quantity + c.quantity} pcs
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => setMergeBatchId(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Mandatory Cost + Vendor Gate When Advancing Stage */}
             <AdvanceStageModal

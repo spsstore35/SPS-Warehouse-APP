@@ -1,6 +1,7 @@
 import {
   CustomStageDefinition,
   OperationStageKey,
+  ProductionBatch,
   Product,
   VendorBehaviorTag,
   WorkflowType,
@@ -165,3 +166,25 @@ export function inferDefaultWorkflowType(product: Product): WorkflowType {
   return 'manufactured';
 }
 
+
+/** The first working stage of a product's workflow (where a batch starts). */
+export function firstWorkingStage(wf?: { activeStages?: OperationStageKey[]; workflowType?: WorkflowType } | null): OperationStageKey {
+  return (
+    wf?.activeStages?.find((st) => st !== 'stock_in') ||
+    (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material')
+  );
+}
+
+/**
+ * A batch can take more quantity / be merged only while it is still at its first stage and no
+ * work or money is recorded on it. Returns the reason in plain words, or null when it is open.
+ */
+export function batchJoinBlockReason(batch: ProductionBatch, firstStage: OperationStageKey): string | null {
+  if (batch.status !== 'in_progress') return 'it is already completed';
+  if (batch.currentStageKey !== firstStage) return 'it already moved past its first stage (it is with the factory or further)';
+  const spent = Object.values(batch.stageAssignments || {}).some(
+    (a) => a && (a.completedAt || (a.totalCost ?? a.cost) || (a.costLines && a.costLines.length > 0))
+  );
+  if (spent) return 'work or costs are already recorded on it';
+  return null;
+}

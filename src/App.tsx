@@ -34,7 +34,7 @@ import {
 import {
   clearLegacyLocalEntityCaches,
 } from './utils/storage';
-import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType } from './utils/sourcing';
+import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType, batchJoinBlockReason, firstWorkingStage } from './utils/sourcing';
 import { getEffectiveProductOffer } from './utils/offers';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import {
@@ -3689,6 +3689,98 @@ export default function App() {
     );
   };
 
+  // Merge two early batches of the same item: quantities add up, linked orders are combined.
+  const handleMergeBatches = (keep: ProductionBatch, absorbed: ProductionBatch) => {
+    const primary = keep.linkedBookingId || absorbed.linkedBookingId;
+    const pairs: { id: string; num: string }[] = [];
+    const add = (id?: string, num?: string) => {
+      if (id && id !== primary && !pairs.some((p) => p.id === id)) pairs.push({ id, num: num || '' });
+    };
+    add(keep.linkedBookingId, keep.linkedBookingNumber);
+    (keep.extraBookingIds || []).forEach((id, i) => add(id, keep.extraBookingNumbers?.[i]));
+    add(absorbed.linkedBookingId, absorbed.linkedBookingNumber);
+    (absorbed.extraBookingIds || []).forEach((id, i) => add(id, absorbed.extraBookingNumbers?.[i]));
+    const merged: ProductionBatch = {
+      ...keep,
+      quantity: keep.quantity + absorbed.quantity,
+      linkedBookingId: primary,
+      linkedBookingNumber: keep.linkedBookingId ? keep.linkedBookingNumber : absorbed.linkedBookingNumber,
+      extraBookingIds: pairs.length ? pairs.map((p) => p.id) : undefined,
+      extraBookingNumbers: pairs.length ? pairs.map((p) => p.num) : undefined,
+    };
+    // Save the merged batch first, then remove the other one.
+    setProductionBatches((prev) => prev.map((b) => (b.id === keep.id ? merged : b)));
+    upsertProductionBatchToDb(merged)
+      .then(() => {
+        handleDeleteBatch(absorbed.id);
+        showToast(`Merged ${absorbed.batchCode} into ${keep.batchCode}: now ${merged.quantity} pcs.`);
+        setTimeout(refreshShortageNotes, 1000);
+      })
+      .catch((err) => {
+        setProductionBatches((prev) => prev.map((b) => (b.id === keep.id ? keep : b)));
+        showToast(`Could not merge: ${err?.message || 'sync failed'}`);
+      });
+  };
+
+  // Before starting a NEW batch: is there an open batch of the same item still at its first stage?
+  type JoinPrompt = {
+    batch: ProductionBatch;
+    blockedReason?: string;
+    quantity: number;
+    orders: { id: string; num: string }[];
+    startNew: () => void;
+  };
+  const [joinPrompt, setJoinPrompt] = useState<JoinPrompt | null>(null);
+  const askJoinOrStartNew = (
+    productId: string,
+    variantId: string,
+    quantity: number,
+    orders: { id: string; num: string }[],
+    startNew: () => void
+  ) => {
+    const open = productionBatches.filter(
+      (b) => b.productId === productId && b.variantId === variantId && b.status === 'in_progress'
+    );
+    if (open.length === 0) return startNew();
+    const first = firstWorkingStage(productWorkflows.find((w) => w.productId === productId));
+    const joinable = open.find((b) => !batchJoinBlockReason(b, first));
+    if (joinable) return setJoinPrompt({ batch: joinable, quantity, orders, startNew });
+    setJoinPrompt({ batch: open[0], blockedReason: batchJoinBlockReason(open[0], first) || undefined, quantity, orders, startNew });
+  };
+  const joinExistingBatch = (p: JoinPrompt) => {
+    const b = p.batch;
+    const have = new Set([b.linkedBookingId, ...(b.extraBookingIds || [])].filter(Boolean) as string[]);
+    const newOnes = p.orders.filter((o) => !have.has(o.id));
+    let primary = b.linkedBookingId;
+    let primaryNum = b.linkedBookingNumber;
+    let list = newOnes;
+    if (!primary && newOnes.length > 0) {
+      primary = newOnes[0].id;
+      primaryNum = newOnes[0].num;
+      list = newOnes.slice(1);
+    }
+    const extraIds = [...(b.extraBookingIds || []), ...list.map((o) => o.id)];
+    const extraNums = [...(b.extraBookingNumbers || (b.extraBookingIds || []).map(() => '')), ...list.map((o) => o.num)];
+    const updated: ProductionBatch = {
+      ...b,
+      quantity: b.quantity + p.quantity,
+      linkedBookingId: primary,
+      linkedBookingNumber: primaryNum,
+      extraBookingIds: extraIds.length ? extraIds : undefined,
+      extraBookingNumbers: extraIds.length ? extraNums : undefined,
+    };
+    setProductionBatches((prev) => prev.map((x) => (x.id === b.id ? updated : x)));
+    upsertProductionBatchToDb(updated)
+      .then(() => {
+        showToast(`Added ${p.quantity} pcs to ${b.batchCode}: now ${updated.quantity} pcs.`);
+        setTimeout(refreshShortageNotes, 1000);
+      })
+      .catch((err) => {
+        setProductionBatches((prev) => prev.map((x) => (x.id === b.id ? b : x)));
+        showToast(`Could not add to the batch: ${err?.message || 'sync failed'}`);
+      });
+  };
+
   const handleDeleteBatch = (batchId: string) => {
     const target = productionBatches.find((b) => b.id === batchId);
     setProductionBatches((prev) => prev.filter((b) => b.id !== batchId));
@@ -5156,9 +5248,11 @@ export default function App() {
               const stageAssignments: Record<string, BatchStageAssignment> = vendorId
                 ? { [firstStage]: { vendorId } }
                 : {};
-              handleSendShortageToPurchases(real || stub, targetDate, [
-                { productId: n.productId, variantId: n.variantId, quantity, stageAssignments, targetDate },
-              ]);
+              askJoinOrStartNew(n.productId, n.variantId, quantity, [{ id: n.bookingId, num: n.bookingNumber }], () =>
+                handleSendShortageToPurchases(real || stub, targetDate, [
+                  { productId: n.productId, variantId: n.variantId, quantity, stageAssignments, targetDate },
+                ])
+              );
             }}
           />
         )}
@@ -5189,19 +5283,48 @@ export default function App() {
                 wf?.activeStages?.find((st) => st !== 'stock_in') ||
                 (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
               const stageAssignments: Record<string, BatchStageAssignment> = vendorId ? { [firstStage]: { vendorId } } : {};
-              handleSendShortageToPurchases(bookings.find((b) => b.id === n.bookingId) || stub, targetDate, [
-                {
-                  productId: n.productId,
-                  variantId: n.variantId,
-                  quantity,
-                  stageAssignments,
-                  targetDate,
-                  extraBookingIds: g.slice(1).map((x) => x.bookingId),
-                  extraBookingNumbers: g.slice(1).map((x) => x.bookingNumber),
-                },
-              ]);
+              askJoinOrStartNew(n.productId, n.variantId, quantity, g.map((x) => ({ id: x.bookingId, num: x.bookingNumber })), () =>
+                handleSendShortageToPurchases(bookings.find((b) => b.id === n.bookingId) || stub, targetDate, [
+                  {
+                    productId: n.productId,
+                    variantId: n.variantId,
+                    quantity,
+                    stageAssignments,
+                    targetDate,
+                    extraBookingIds: g.slice(1).map((x) => x.bookingId),
+                    extraBookingNumbers: g.slice(1).map((x) => x.bookingNumber),
+                  },
+                ])
+              );
             }}
           />
+        )}
+
+        {joinPrompt && (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/60 p-4">
+            <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-3 shadow-2xl">
+              {joinPrompt.blockedReason ? (
+                <>
+                  <div className="text-base font-black text-slate-900">An open batch already exists</div>
+                  <div className="text-xs text-slate-700">
+                    {joinPrompt.batch.batchCode} ({joinPrompt.batch.quantity} pcs) cannot take this quantity: {joinPrompt.blockedReason}. A new batch will be started.
+                  </div>
+                  <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Start a new batch</button>
+                  <button type="button" onClick={() => setJoinPrompt(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
+                </>
+              ) : (
+                <>
+                  <div className="text-base font-black text-slate-900">Add to the open batch?</div>
+                  <div className="text-xs text-slate-700">
+                    {joinPrompt.batch.batchCode} ({joinPrompt.batch.quantity} pcs) for this item is still at its first stage, not sent to the factory and no money spent. Add {joinPrompt.quantity} pcs to it (total {joinPrompt.batch.quantity + joinPrompt.quantity}), or start a new batch?
+                  </div>
+                  <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); joinExistingBatch(p); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Add to {joinPrompt.batch.batchCode}</button>
+                  <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-slate-800 text-white font-black text-xs">Start a new batch</button>
+                  <button type="button" onClick={() => setJoinPrompt(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
+                </>
+              )}
+            </div>
+          </div>
         )}
 
         {lowToStart && (
@@ -5230,7 +5353,7 @@ export default function App() {
             onConfirm={(quantity, targetDate, vendorId) => {
               const n = lowToStart;
               setLowToStart(null);
-              handleStartLowStockPurchase(n, quantity, targetDate, vendorId);
+              askJoinOrStartNew(n.productId, n.variantId, quantity, [], () => handleStartLowStockPurchase(n, quantity, targetDate, vendorId));
             }}
           />
         )}
@@ -5382,6 +5505,7 @@ export default function App() {
             onAddPriceEntry={handleAddPriceEntry}
             onSaveBatch={handleSaveBatch}
             onDeleteBatch={handleDeleteBatch}
+            onMergeBatches={handleMergeBatches}
             onCompleteBatchStockIn={handleCompleteBatchStockIn}
             onShowToast={(msg) => showToast(msg)}
           />
