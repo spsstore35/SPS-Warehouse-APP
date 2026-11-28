@@ -162,7 +162,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
                     {b.clientName} <span className="text-slate-500 font-normal">· {b.clientPhone}</span>
                   </div>
                   <div className="text-xs text-slate-600">
-                    {b.bookingNumber} · {b.troopGroup === '3ashera 1' ? 'Ashira 1' : b.troopGroup === '3ashera 2' ? 'Ashira 2' : b.troopGroup} · Team: {b.teamName || '-'}
+                    {b.bookingNumber} · {b.troopGroup === '3ashera 1' ? 'Ashira 1' : b.troopGroup === '3ashera 2' ? 'Ashira 2' : b.troopGroup} · Raht: {b.teamName || '-'}
                   </div>
                   <div className="text-xs text-slate-600 mt-1">
                     {b.items.map((i) => `${i.quantity}× ${i.productName}${i.size && i.size !== 'One Size' ? ` (${i.size})` : ''}`).join(', ')}
