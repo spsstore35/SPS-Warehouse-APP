@@ -1,3 +1,4 @@
+import { appConfirm } from './AppConfirm';
 import React, { useState, useEffect } from 'react';
 import { Product, ProductVariant, AdjustmentReason, User } from '../types/inventory';
 import { X, SlidersHorizontal, AlertCircle, ArrowRight, CheckCircle, Plus, Minus } from 'lucide-react';
@@ -186,7 +187,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
       } catch {
         /* keep the general message */
       }
-      if (!window.confirm(`${msg}\n\nContinue?`)) return;
+      if (!(await appConfirm({ title: 'Count is lower than reserved', message: msg, facts: [{ label: 'Counted', value: String(effectiveNewCount) }, { label: 'Reserved for paid orders', value: String(reservedNow) }], confirmLabel: 'Continue' }))) return;
     }
     if (isAdmin) {
       onAdminDirectAdjust({

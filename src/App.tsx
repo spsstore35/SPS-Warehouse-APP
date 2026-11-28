@@ -142,6 +142,7 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
+import { appConfirm, AppConfirmHost } from './components/AppConfirm';
 import ShortageNeedsPanel, { NeedsTiles, NeedsList, type NeedsKind, type LowStockNote } from './components/ShortageNeedsPanel';
 import { estimateProductionDays, readSafetyDays } from './utils/deliveryEstimate';
 import ShortageStartModal from './components/ShortageStartModal';
@@ -1622,15 +1623,22 @@ export default function App() {
   };
 
   // Admin Approves a Worker Request (Persisted to Supabase)
-  const handleApproveRequest = (requestId: string, adminNote?: string) => {
+  const handleApproveRequest = (requestId: string, adminNote?: string, skipConfirm?: boolean) => {
     const targetReq = requests.find((r) => r.id === requestId);
     if (!targetReq) return;
     const reservedNow = reservedMap[targetReq.variantId] || 0;
-    if (targetReq.requestedQuantity < reservedNow) {
-      const ok = window.confirm(
-        `Counted ${targetReq.requestedQuantity} but ${reservedNow} are reserved for paid orders: ${reservedNow - targetReq.requestedQuantity} will be marked missing on the latest paid orders (they will wait for a new batch). Continue?`
-      );
-      if (!ok) return;
+    if (targetReq.requestedQuantity < reservedNow && !skipConfirm) {
+      appConfirm({
+        title: 'Counted less than reserved',
+        message: 'The count is lower than what paid orders are holding. The difference will be marked missing on the latest paid orders, and they will wait for a new batch.',
+        facts: [
+          { label: 'Counted', value: String(targetReq.requestedQuantity) },
+          { label: 'Reserved for paid orders', value: String(reservedNow) },
+          { label: 'Marked missing', value: String(reservedNow - targetReq.requestedQuantity) },
+        ],
+        confirmLabel: 'Approve anyway',
+      }).then((ok) => { if (ok) handleApproveRequest(requestId, adminNote, true); });
+      return;
     }
 
     // 1. Update the actual product variant quantity
@@ -3939,8 +3947,18 @@ export default function App() {
         }
         const totalReserved = Object.values(reservedBy).reduce((s, n) => s + n, 0);
         if (totalReserved > 0) {
-          const ok = window.confirm(`Heads up: ${totalReserved} pcs in total will be DEDUCTED for waiting orders and the rest goes to stock, per size.\n\nContinue?`);
-          if (!ok) return;
+          const totalQty = parts.reduce((sum, x) => sum + x.qty, 0);
+          appConfirm({
+            title: 'Some pieces go to waiting orders',
+            message: 'Part of the received goods is deducted for orders that are waiting. The rest goes to stock, per size.',
+            facts: [
+              { label: 'Received', value: `${totalQty} pcs` },
+              { label: 'Deducted for waiting orders', value: `${totalReserved} pcs` },
+              { label: 'Added to stock', value: `${totalQty - totalReserved} pcs` },
+            ],
+            confirmLabel: 'Complete & Stock In',
+          }).then((ok) => { if (ok) finishBatchStockIn({ ...args, parts }, reservedBy); });
+          return;
         }
         finishBatchStockIn({ ...args, parts }, reservedBy);
       });
@@ -3957,10 +3975,17 @@ export default function App() {
           return;
         }
         if (pv && pv.reserved > 0) {
-          const ok = window.confirm(
-            `Heads up: ${pv.reserved} of these ${qty} will be DEDUCTED for Order #${pv.bookingNumber} (${pv.clientName}), which is waiting for stock.\n\nStock will go up by ${qty - pv.reserved} (not ${qty}).\n\nContinue?`
-          );
-          if (!ok) return;
+          appConfirm({
+            title: `Pieces go to Order #${pv.bookingNumber}`,
+            message: `${pv.clientName} is waiting for stock. Part of this batch is deducted for the order, the rest goes to stock.`,
+            facts: [
+              { label: 'Received', value: `${qty} pcs` },
+              { label: 'Deducted for the order', value: `${pv.reserved} pcs` },
+              { label: 'Added to stock', value: `${qty - pv.reserved} pcs` },
+            ],
+            confirmLabel: 'Complete & Stock In',
+          }).then((ok) => { if (ok) finishBatchStockIn(args, { [args.variantId]: pv?.reserved || 0 }); });
+          return;
         }
         finishBatchStockIn(args, { [args.variantId]: pv?.reserved || 0 });
       });
@@ -5803,6 +5828,7 @@ export default function App() {
       )}
 
       {/* Confirmation Modal for Direct Product Deletion from Catalog */}
+      <AppConfirmHost />
       <ConfirmDeleteModal
         isOpen={!!productToDelete}
         title="Delete Item"
