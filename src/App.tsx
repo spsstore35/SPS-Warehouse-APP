@@ -47,6 +47,7 @@ import {
   canUserManageOrders,
   canUserConfirmPayments,
   canUserStartShortagePurchase,
+  canUserManageVendors,
   canUserManageTeamScope,
   isFullAccessAdmin,
   normalizeRole,
@@ -3658,9 +3659,15 @@ export default function App() {
     previewBatchReceiveInDb(args.batchId, args.variantId, qty)
       .catch(() => null)
       .then((pv) => {
+        if (pv && pv.owed > 0 && qty < pv.owed) {
+          showToast(
+            `Cannot complete: this purchase is for Order #${pv.bookingNumber} (${pv.clientName}), which still needs ${pv.owed} pcs. The quantity made must be at least ${pv.owed}.`
+          );
+          return;
+        }
         if (pv && pv.reserved > 0) {
           const ok = window.confirm(
-            `Heads up: ${pv.reserved} of these ${qty} will be taken automatically for order #${pv.bookingNumber} (${pv.clientName}), which is waiting for stock.\n\nStock will go up by ${qty - pv.reserved} (not ${qty}).\n\nContinue?`
+            `Heads up: ${pv.reserved} of these ${qty} will be DEDUCTED for Order #${pv.bookingNumber} (${pv.clientName}), which is waiting for stock.\n\nStock will go up by ${qty - pv.reserved} (not ${qty}).\n\nContinue?`
           );
           if (!ok) return;
         }
@@ -5020,8 +5027,11 @@ export default function App() {
         {shortageToStart && (
           <ShortageStartModal
             note={shortageToStart}
+            vendors={vendors}
+            canManageVendors={canUserManageVendors(currentUser, users)}
+            onAddVendor={handleSaveVendor}
             onCancel={() => setShortageToStart(null)}
-            onConfirm={(quantity, targetDate) => {
+            onConfirm={(quantity, targetDate, vendorId) => {
               const n = shortageToStart;
               setShortageToStart(null);
               const stub = {
@@ -5040,8 +5050,16 @@ export default function App() {
                 ],
               } as unknown as Booking;
               const real = bookings.find((b) => b.id === n.bookingId);
+              // The vendor goes on the first working stage of this product's workflow (same stage the batch opens in).
+              const wf = productWorkflows.find((w) => w.productId === n.productId);
+              const firstStage =
+                wf?.activeStages?.find((st) => st !== 'stock_in') ||
+                (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+              const stageAssignments: Record<string, BatchStageAssignment> = vendorId
+                ? { [firstStage]: { vendorId } }
+                : {};
               handleSendShortageToPurchases(real || stub, targetDate, [
-                { productId: n.productId, variantId: n.variantId, quantity, stageAssignments: {}, targetDate },
+                { productId: n.productId, variantId: n.variantId, quantity, stageAssignments, targetDate },
               ]);
             }}
           />

@@ -1,13 +1,40 @@
 import React, { useState } from 'react';
 import type { OrderShortageNote } from '../services/supabaseService';
+import type { Vendor } from '../types/inventory';
 
 interface Props {
   note: OrderShortageNote;
+  vendors: Vendor[];
+  canManageVendors: boolean;
+  onAddVendor: (vendor: Vendor) => void;
   onCancel: () => void;
-  onConfirm: (quantity: number, targetDate: string) => void;
+  onConfirm: (quantity: number, targetDate: string, vendorId?: string) => void;
 }
 
-export default function ShortageStartModal({ note, onCancel, onConfirm }: Props) {
+export default function ShortageStartModal({ note, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
+  const [vendorId, setVendorId] = useState<string>('');
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newLocation, setNewLocation] = useState('');
+  const addVendor = () => {
+    const name = newName.trim();
+    if (!name) return;
+    const v: Vendor = {
+      id: `vendor_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      location: newLocation.trim(),
+      phone: newPhone.trim() || undefined,
+      tags: [],
+      createdAt: new Date().toISOString(),
+    };
+    onAddVendor(v);
+    setVendorId(v.id);
+    setAdding(false);
+    setNewName('');
+    setNewPhone('');
+    setNewLocation('');
+  };
   const [qty, setQty] = useState<number>(note.owed);
   const [date, setDate] = useState<string>(new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
   const tooLow = !qty || qty < note.owed;
@@ -47,8 +74,50 @@ export default function ShortageStartModal({ note, onCancel, onConfirm }: Props)
             />
           </label>
         </div>
+        <div className="space-y-1.5">
+          <label className="block text-xs font-bold text-slate-700">
+            Vendor / supplier
+            <select
+              value={vendorId}
+              onChange={(e) => setVendorId(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
+            >
+              <option value="">Not chosen yet (assign later in Sourcing)</option>
+              {vendors.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                  {v.location ? ` - ${v.location}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {vendors.length === 0 && !canManageVendors && (
+            <div className="text-[11px] text-slate-500">The vendor list is managed by the Purchases admin. Leave it open and they assign it in Sourcing.</div>
+          )}
+          {canManageVendors && !adding && (
+            <button type="button" onClick={() => setAdding(true)} className="text-[11px] font-black text-emerald-700 underline">
+              + Add a new vendor
+            </button>
+          )}
+          {canManageVendors && adding && (
+            <div className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Vendor name" className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs" />
+              <div className="grid grid-cols-2 gap-2">
+                <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="Phone (optional)" className="px-3 py-2 rounded-lg border border-slate-300 text-xs" />
+                <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Location (optional)" className="px-3 py-2 rounded-lg border border-slate-300 text-xs" />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={addVendor} disabled={!newName.trim()} className="px-3 py-1.5 rounded-lg bg-emerald-600 disabled:opacity-40 text-white text-xs font-black">
+                  Save vendor
+                </button>
+                <button type="button" onClick={() => setAdding(false)} className="px-3 py-1.5 rounded-lg bg-slate-200 text-xs font-black text-slate-900">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
         {tooLow && <div className="text-[11px] font-bold text-rose-700">Quantity must be at least {note.owed}.</div>}
-        <div className="text-[11px] text-slate-500">Vendors can be assigned later in Sourcing &amp; Operations.</div>
         <div className="grid grid-cols-2 gap-2.5">
           <button type="button" onClick={onCancel} className="py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs min-h-[44px]">
             Cancel
@@ -56,7 +125,7 @@ export default function ShortageStartModal({ note, onCancel, onConfirm }: Props)
           <button
             type="button"
             disabled={tooLow}
-            onClick={() => onConfirm(qty, date)}
+            onClick={() => onConfirm(qty, date, vendorId || undefined)}
             className="py-2.5 rounded-xl bg-emerald-600 disabled:opacity-40 text-white font-black text-xs min-h-[44px]"
           >
             Create purchase batch

@@ -387,6 +387,15 @@ export function canUserStartShortagePurchase(user?: User | null, allUsers?: User
   return teams.includes('troops') || teams.includes('purchases');
 }
 
+// Vendors (suppliers): full_admin or purchases admin (same as the database rule).
+export function canUserManageVendors(user?: User | null, allUsers?: User[]): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  const teams = Array.isArray(user.adminTeams) ? user.adminTeams : getUserAssignedTeams(user);
+  return teams.includes('purchases');
+}
+
 export function canUserManageTeamScope(
   user: User | null | undefined,
   teamScope: StoreTeamId,

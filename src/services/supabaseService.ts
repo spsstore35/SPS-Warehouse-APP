@@ -743,7 +743,7 @@ export async function previewBatchReceiveInDb(
   batchId: string,
   variantId: string,
   qty: number
-): Promise<{ reserved: number; bookingNumber: string; clientName: string } | null> {
+): Promise<{ reserved: number; bookingNumber: string; clientName: string; owed: number } | null> {
   const { data, error } = await supabase.rpc('batch_receive_preview', {
     p_batch_id: batchId,
     p_variant_id: variantId,
@@ -752,7 +752,7 @@ export async function previewBatchReceiveInDb(
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
   if (!row || !row.reserved) return null;
-  return { reserved: Number(row.reserved), bookingNumber: String(row.booking_number), clientName: String(row.client_name) };
+  return { reserved: Number(row.reserved), bookingNumber: String(row.booking_number), clientName: String(row.client_name), owed: Number(row.owed) };
 }
 
 /** Receive goods and take what the linked waiting order is still owed. */

@@ -989,15 +989,16 @@ revoke all on function public.record_order_shortfall(text, text, integer) from p
 grant execute on function public.record_order_shortfall(text, text, integer) to authenticated;
 
 -- What would be reserved for the waiting order if p_qty of this variant arrive in this batch?
+drop function if exists public.batch_receive_preview(text, text, integer);
 create or replace function public.batch_receive_preview(p_batch_id text, p_variant_id text, p_qty integer)
-returns table (reserved integer, booking_number text, client_name text)
+returns table (reserved integer, booking_number text, client_name text, owed integer)
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.app_admin_of_any(array['purchases','inventory']) then
     raise exception 'Not allowed.' using errcode = '42501';
   end if;
   return query
-    select least(o.owed, greatest(p_qty, 0))::integer, b.booking_number::text, b.client_name::text
+    select least(o.owed, greatest(p_qty, 0))::integer, b.booking_number::text, b.client_name::text, o.owed::integer
       from public.production_batches pb
       join public.order_stock_owed o on o.booking_id = pb.linked_booking_id and o.variant_id = p_variant_id
       join public.bookings b on b.id = o.booking_id
@@ -1021,6 +1022,10 @@ begin
   if v_booking is not null then
     select owed into v_owed from public.order_stock_owed where booking_id = v_booking and variant_id = p_variant_id for update;
     if v_owed is not null then
+      if p_qty < v_owed then
+        raise exception 'This purchase is for an order that still needs % pcs: the quantity made must be at least that (you entered %).', v_owed, p_qty
+          using errcode = '42501';
+      end if;
       v_take := least(v_owed, p_qty);
       if v_take >= v_owed then
         delete from public.order_stock_owed where booking_id = v_booking and variant_id = p_variant_id;
@@ -1059,7 +1064,7 @@ begin
   return new;
 end $$;
 drop trigger if exists guard_batch_min_quantity on public.production_batches;
-create trigger guard_batch_min_quantity before insert or update of quantity on public.production_batches
+create trigger guard_batch_min_quantity before insert or update of quantity, status, linked_booking_id, variant_id on public.production_batches
   for each row execute function public.guard_batch_min_quantity();
 
 -- "Needs action" list: every paid order still waiting for stock, with the item/size and whether a
