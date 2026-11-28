@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Booking } from '../types/inventory';
 import { getScoutFare2Meta } from '../utils/scoutFera2';
 import {
   Printer,
   Download,
+  Send,
   X,
   FileText,
   Factory,
@@ -29,10 +30,13 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
 }) => {
   const [docType, setDocType] = useState<'quotation' | 'production'>(defaultDocType);
   const previewScale = '0.75';
-  const [includeNotes, setIncludeNotes] = useState<boolean>(
-    Boolean(booking?.notes && booking.notes.trim().length > 0)
-  );
+  // Notes are always OFF when an invoice opens. He turns them on only when he wants them.
+  const [includeNotes, setIncludeNotes] = useState<boolean>(false);
+  useEffect(() => {
+    if (isOpen) setIncludeNotes(false);
+  }, [isOpen, booking?.id]);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
 
   if (!isOpen || !booking) return null;
 
@@ -40,13 +44,23 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
     window.print();
   };
 
-  const handleDownloadPdf = async () => {
+  // Egyptian numbers: 01xxxxxxxxx -> 201xxxxxxxxx (WhatsApp format, digits only)
+  const whatsappNumber = (raw: string | undefined): string => {
+    let d = (raw || '').replace(/\D/g, '');
+    if (d.startsWith('00')) d = d.slice(2);
+    if (d.length === 11 && d.startsWith('0')) return '20' + d.slice(1);
+    if (d.length === 10 && d.startsWith('1')) return '20' + d;
+    return d.length >= 8 ? d : '';
+  };
+
+  const handleDownloadPdf = async (mode: 'save' | 'share' = 'save') => {
     const element = document.getElementById('printable-a4-area');
     if (!element) {
       window.print();
       return;
     }
-    setIsDownloading(true);
+    if (mode === 'share') setIsSharing(true);
+    else setIsDownloading(true);
 
     // Create a pristine cloned copy without zoom or scale artifacts
     const clone = element.cloneNode(true) as HTMLElement;
@@ -106,7 +120,30 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
         first = false;
         y += h;
       }
-      pdf.save(`${docType === 'quotation' ? 'Quotation' : 'Workshop_Sheet'}_${booking.bookingNumber}.pdf`);
+      const filename = `${docType === 'quotation' ? 'Quotation' : 'Workshop_Sheet'}_${booking.bookingNumber}.pdf`;
+      if (mode === 'save') {
+        pdf.save(filename);
+      } else {
+        const file = new File([pdf.output('blob')], filename, { type: 'application/pdf' });
+        const text = `Hello ${booking.clientName}, here is your ${docType === 'quotation' ? 'quotation' : 'sheet'} ${booking.bookingNumber}.`;
+        const nav: any = navigator;
+        let shared = false;
+        if (nav.canShare && nav.canShare({ files: [file] })) {
+          try {
+            await nav.share({ files: [file], text, title: filename });
+            shared = true;
+          } catch (e: any) {
+            if (e && e.name === 'AbortError') return; // he closed the share sheet
+          }
+        }
+        if (!shared) {
+          // This device cannot attach a file straight from the browser: download it and open the customer's chat.
+          pdf.save(filename);
+          const num = whatsappNumber(booking.clientPhone);
+          window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank');
+          alert('The PDF was downloaded and the WhatsApp chat was opened. Tap the paperclip in WhatsApp and attach the PDF.');
+        }
+      }
     } catch (err) {
       console.warn('PDF export failed:', err);
       alert('Could not create the PDF file. Please try again, or use the Print button.');
@@ -115,6 +152,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
         document.body.removeChild(container);
       }
       setIsDownloading(false);
+      setIsSharing(false);
     }
   };
 
@@ -219,7 +257,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
             <button
               type="button"
               disabled={isDownloading}
-              onClick={handleDownloadPdf}
+              onClick={() => handleDownloadPdf('save')}
               className="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
               title="Download PDF Document File"
             >
@@ -229,6 +267,22 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                 <Download className="w-4 h-4 stroke-[2.5]" />
               )}
               <span>{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
+            </button>
+
+            {/* Send on WhatsApp: opens the phone's share sheet with the PDF attached */}
+            <button
+              type="button"
+              disabled={isSharing || isDownloading}
+              onClick={() => handleDownloadPdf('share')}
+              className="flex-1 sm:flex-none px-4 py-2 bg-green-600 hover:bg-green-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              title="Share this invoice PDF on WhatsApp"
+            >
+              {isSharing ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Send className="w-4 h-4 stroke-[2.5]" />
+              )}
+              <span>{isSharing ? 'Preparing...' : 'Send on WhatsApp'}</span>
             </button>
 
             {/* Primary Print Action */}
