@@ -26,7 +26,10 @@ interface Props {
   collapsible?: boolean;
 }
 
-export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = [], onStartLow, batches = [], collapsible = false }: Props) {
+export default function ShortageNeedsPanel({ notes: allNotes, canAct, onStart, lowNotes: allLow = [], onStartLow, batches = [], collapsible = false }: Props) {
+  // Only things that still need a batch. Purchases already started drop out.
+  const notes = allNotes.filter((n) => !n.hasBatch);
+  const lowNotes = allLow.filter((n) => !n.hasBatch);
   const [openList, setOpenList] = useState(false);
   if (notes.length === 0 && lowNotes.length === 0) return null;
   const orderCount = new Set(notes.filter((n) => !n.hasBatch).map((n) => n.bookingId)).size;
@@ -127,7 +130,7 @@ export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = 
 /** Catalog-grid card: "a batch is needed". Tap to list what to make, per order. */
 export function ShortageCard(props: Omit<Props, 'collapsible'>) {
   const [open, setOpen] = useState(false);
-  const { notes, lowNotes = [] } = props;
+  const notes = props.notes.filter((n) => !n.hasBatch);
   if (notes.length === 0) return null;
   const orders = new Set(notes.map((n) => n.bookingId)).size;
   const items = notes.length;
@@ -161,7 +164,7 @@ export function ShortageCard(props: Omit<Props, 'collapsible'>) {
 /** Separate amber card in the catalog grid for low-stock items (not tied to any order). */
 export function LowStockCard(props: Omit<Props, 'collapsible' | 'notes'>) {
   const [open, setOpen] = useState(false);
-  const { lowNotes = [] } = props;
+  const lowNotes = (props.lowNotes || []).filter((n) => !n.hasBatch);
   if (lowNotes.length === 0) return null;
   return (
     <>
