@@ -278,7 +278,7 @@ export const PublicOrderPage: React.FC = () => {
         <div className="max-w-xl mx-auto">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <img src="/sps-logo.png" alt="SPS" className="w-16 h-16 rounded-2xl bg-white p-1.5 object-contain shrink-0" />
+              <img src="/sps-logo.png?v=4" alt="SPS" className="w-16 h-16 rounded-2xl bg-white p-1.5 object-contain shrink-0" />
               <div className="text-2xl sm:text-3xl font-black truncate">{t('brand')}</div>
             </div>
             {LangBtn}

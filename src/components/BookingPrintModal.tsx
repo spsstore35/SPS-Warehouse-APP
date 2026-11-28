@@ -429,7 +429,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   <div className="flex items-center gap-2.5 sm:gap-3">
                     <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl sm:rounded-2xl bg-white border border-slate-200/90 shadow-2xs p-1 flex items-center justify-center shrink-0 overflow-hidden">
                       <img
-                        src="/sps-logo.png"
+                        src="/sps-logo.png?v=4"
                         alt="Saint Paul Scouts"
                         className="w-full h-full object-contain"
                       />
@@ -686,7 +686,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                   <div className="flex items-center gap-3">
                     <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white border border-slate-200/90 shadow-2xs p-1 flex items-center justify-center shrink-0 overflow-hidden">
                       <img
-                        src="/sps-logo.png"
+                        src="/sps-logo.png?v=4"
                         alt="Saint Paul Scouts"
                         className="w-full h-full object-contain"
                       />

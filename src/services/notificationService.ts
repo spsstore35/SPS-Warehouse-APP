@@ -207,8 +207,8 @@ export const sendSystemNotification = async (
 
   const notificationOptions = {
     body: options.body,
-    icon: options.icon || '/sps-logo.png',
-    badge: options.badge || '/sps-logo.png',
+    icon: options.icon || '/sps-logo.png?v=4',
+    badge: options.badge || '/sps-logo.png?v=4',
     tag: options.tag || 'sps-alert',
     renotify: options.renotify ?? true,
     data: options.data || { url: '/' },

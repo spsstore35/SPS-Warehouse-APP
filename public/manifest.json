@@ -10,13 +10,13 @@
   "theme_color": "#ffffff",
   "icons": [
     {
-      "src": "/sps-logo.png",
+      "src": "/sps-logo.png?v=4",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/sps-logo.png",
+      "src": "/sps-logo.png?v=4",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

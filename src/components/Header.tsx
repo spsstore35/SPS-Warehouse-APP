@@ -119,7 +119,7 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden bg-white shadow-2xs border border-slate-200/90 flex items-center justify-center p-0.5 shrink-0">
                 <img
-                  src="/sps-logo.png"
+                  src="/sps-logo.png?v=4"
                   alt="SPS Logo"
                   className="w-full h-full object-contain"
                 />

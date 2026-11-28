@@ -14,8 +14,8 @@ self.addEventListener('push', (event) => {
   let data = {
     title: 'SPS Warehouse Alert',
     body: 'You have a new warehouse update.',
-    icon: '/sps-logo.png',
-    badge: '/sps-logo.png',
+    icon: '/sps-logo.png?v=4',
+    badge: '/sps-logo.png?v=4',
     data: { url: '/' }
   };
 
@@ -29,8 +29,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body,
-    icon: data.icon || '/sps-logo.png',
-    badge: data.badge || '/sps-logo.png',
+    icon: data.icon || '/sps-logo.png?v=4',
+    badge: data.badge || '/sps-logo.png?v=4',
     vibrate: [200, 100, 200],
     data: data.data || { url: '/' },
     tag: data.tag || 'sps-default',
