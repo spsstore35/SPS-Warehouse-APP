@@ -50,27 +50,20 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
     setIsSubmitting(true);
     try {
       const { supabase } = await import('../services/supabaseClient');
-      const { verifyPassword, hashPassword } = await import('../utils/security');
-
-      const { data: profile, error: fetchErr } = await supabase
-        .from('profiles')
-        .select('password_hash')
-        .eq('id', currentUser.id)
-        .maybeSingle();
-      if (fetchErr) throw fetchErr;
-
-      const isMatch = await verifyPassword(currentPassword, profile?.password_hash);
-      if (!isMatch) {
+      // Re-check the current password with the live account, then set the new one in Supabase Auth.
+      const { data: me } = await supabase.auth.getUser();
+      const authEmail = me?.user?.email;
+      if (!authEmail) throw new Error('You are signed out. Please sign in again.');
+      const { error: reauthErr } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: currentPassword,
+      });
+      if (reauthErr) {
         setError('Current password is incorrect.');
         setIsSubmitting(false);
         return;
       }
-
-      const newHash = await hashPassword(cleanNew);
-      const { error: updateErr } = await supabase
-        .from('profiles')
-        .update({ password_hash: newHash })
-        .eq('id', currentUser.id);
+      const { error: updateErr } = await supabase.auth.updateUser({ password: cleanNew });
       if (updateErr) throw updateErr;
 
       setIsDone(true);

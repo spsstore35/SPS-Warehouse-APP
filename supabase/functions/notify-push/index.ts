@@ -86,12 +86,28 @@ function buildAlert(table: string, record: any): Alert | null {
   return null;
 }
 
+// Who is calling?
+//  - the database trigger: sends the secret header (WEBHOOK_SECRET). Can send the automatic alerts.
+//  - a signed-in person: sends their login token. Only a full_admin or a team_admin may
+//    broadcast a manual message ({ broadcast: { title, body } }). Staff and leaders are refused.
+async function callerMayBroadcast(req: Request): Promise<boolean> {
+  const auth = req.headers.get('authorization') || '';
+  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+  if (!token) return false;
+  const { data: userData, error } = await supabase.auth.getUser(token);
+  if (error || !userData?.user) return false;
+  const { data: prof } = await supabase
+    .from('profiles')
+    .select('role, status')
+    .eq('id', userData.user.id)
+    .maybeSingle();
+  return Boolean(prof && prof.status === 'active' && (prof.role === 'full_admin' || prof.role === 'admin'));
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-  if (!WEBHOOK_SECRET || req.headers.get('x-webhook-secret') !== WEBHOOK_SECRET) {
-    return new Response('Unauthorized', { status: 401 });
-  }
 
+  const fromTrigger = Boolean(WEBHOOK_SECRET) && req.headers.get('x-webhook-secret') === WEBHOOK_SECRET;
   let payload: any;
   try {
     payload = await req.json();
@@ -99,10 +115,20 @@ Deno.serve(async (req) => {
     return new Response('Bad JSON', { status: 400 });
   }
 
-  // { test: true } sends a test alert to every device (used once after setup).
-  const alert: Alert | null = payload.test
-    ? { title: 'SPS Warehouse', body: 'Background notifications are working.', tag: `sps-test-${Date.now()}`, data: { view: 'audit-log' } }
-    : buildAlert(payload.table, payload.record);
+  let alert: Alert | null = null;
+  if (fromTrigger) {
+    // { test: true } sends a test alert to every device (used once after setup).
+    alert = payload.test
+      ? { title: 'SPS Warehouse', body: 'Background notifications are working.', tag: `sps-test-${Date.now()}`, data: { view: 'audit-log' } }
+      : buildAlert(payload.table, payload.record);
+  } else {
+    if (!(await callerMayBroadcast(req))) return new Response('Unauthorized', { status: 401 });
+    const b = payload?.broadcast;
+    const title = typeof b?.title === 'string' ? b.title.trim().slice(0, 80) : '';
+    const text = typeof b?.body === 'string' ? b.body.trim().slice(0, 240) : '';
+    if (!title) return new Response('Title is required', { status: 400 });
+    alert = { title, body: text, tag: `sps-manual-${Date.now()}`, data: { view: 'inventory' } };
+  }
   if (!alert) return Response.json({ sent: 0, skipped: 'not a notifiable change' });
 
   const { data: subs, error } = await supabase.from('push_subscriptions').select('endpoint, subscription, user_email');

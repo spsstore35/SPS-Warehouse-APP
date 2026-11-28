@@ -8,12 +8,13 @@ export interface User {
   email?: string;
   username?: string;
   phone?: string;
-  password?: string;
   status: UserStatus;
   requestedRole?: Role;
   employeeId?: string;
   avatarColor?: string;
   assignedTeams?: StoreTeamId[];
+  /** Teams where this person is team_admin (from user_teams). Staff teams are the rest of assignedTeams. */
+  adminTeams?: StoreTeamId[];
   assignedFare2?: string[];
   createdAt?: string;
   approvedAt?: string;
@@ -351,10 +352,27 @@ export interface VendorPriceEntry {
   notes?: string;
 }
 
+export interface BatchCostLine {
+  id: string;
+  kind: 'purchase' | 'transport' | 'other';
+  label: string; // what was bought / which trip
+  amount: number; // EGP
+  from?: string; // transport: from where
+  to?: string; // transport: to where
+  note?: string;
+}
+
 export interface BatchStageAssignment {
+  leadTimeDays?: number; // ready-made: days the supplier needs for THIS order (typed each time)
+  unitsPerBox?: number; // ready-made: pieces in one box/carton
+  boxes?: number; // ready-made: number of boxes ordered
+  startedAt?: string; // YYYY-MM-DD
+  endedAt?: string; // YYYY-MM-DD
+  costLines?: BatchCostLine[];
   vendorId?: string;
   customVendorName?: string;
-  cost?: number;
+  cost?: number; // price per unit (meter / piece ...)
+  unitQty?: number; // how many units were bought (e.g. 14 meters)
   totalCost?: number;
   notes?: string;
   completedAt?: string;
@@ -366,12 +384,17 @@ export interface ProductionBatch {
   productId: string;
   variantId?: string;
   quantity: number;
+  /** Pieces per size/colour when one batch covers several variants of the same item (variantId -> pcs). Adds up to quantity. */
+  variantQty?: Record<string, number>;
   targetDate?: string;
   currentStageKey: OperationStageKey;
   status: 'in_progress' | 'completed';
   stageAssignments: Record<string, BatchStageAssignment>;
   linkedBookingId?: string;
   linkedBookingNumber?: string;
+  /** Other orders (same item) covered by this one batch. */
+  extraBookingIds?: string[];
+  extraBookingNumbers?: string[];
   requestedByTeam?: string;
   createdAt: string;
   completedAt?: string;
@@ -460,6 +483,8 @@ export interface ShortageBatchConfig {
   quantity: number;
   stageAssignments: Record<string, BatchStageAssignment>;
   targetDate?: string;
+  extraBookingIds?: string[];
+  extraBookingNumbers?: string[];
 }
 
 export type TeamRequestEntityType =

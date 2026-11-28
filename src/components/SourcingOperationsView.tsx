@@ -1,3 +1,5 @@
+import { batchLabel } from '../utils/sourcing';
+import { batchActualDays } from '../utils/deliveryEstimate';
 import React, { useMemo, useState } from 'react';
 import {
   BatchStageAssignment,
@@ -20,11 +22,15 @@ import {
   DEFAULT_STAGE_KEYS,
   VENDOR_TAG_GROUPS,
   buildWhatsAppUrl,
+  batchJoinBlockReason,
+  firstWorkingStage,
   getStageMeta,
+  stageCostTotal,
   getVendorTagInfo,
   inferDefaultWorkflowType,
 } from '../utils/sourcing';
-import { isUserAdmin } from '../utils/security';
+import { canUserManageVendors } from '../utils/security';
+import BatchCostModal from './BatchCostModal';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
   AdvanceStageModal,
@@ -62,6 +68,10 @@ import {
 } from 'lucide-react';
 
 interface SourcingOperationsViewProps {
+  needsTiles?: React.ReactNode;
+  needsProductIds?: Set<string> | null;
+  needsDetail?: (productId: string) => React.ReactNode;
+  onClearNeeds?: () => void;
   products: Product[];
   vendors: Vendor[];
   workflows: ProductWorkflow[];
@@ -85,10 +95,14 @@ interface SourcingOperationsViewProps {
   onAddPriceEntry: (entry: VendorPriceEntry) => void;
   onSaveBatch: (batch: ProductionBatch) => void;
   onDeleteBatch: (batchId: string) => void;
+  onMergeBatches?: (keep: ProductionBatch, absorbed: ProductionBatch) => void;
+  /** Orders still waiting for stock (number, client, pieces), used for the "Merged: ..." line. */
+  orderInfo?: { bookingId: string; bookingNumber: string; clientName: string; owed: number; productId?: string; variantId?: string; size?: string; colorName?: string }[];
   onCompleteBatchStockIn: (payload: {
     batchId: string;
     finalQuantity: number;
     variantId: string;
+    parts?: { variantId: string; qty: number }[];
   }) => void;
   onShowToast?: (msg: string) => void;
 }
@@ -97,6 +111,10 @@ type TopTab = 'catalog' | 'vendors';
 type CatalogFilter = 'all' | 'manufactured' | 'ready_made' | 'active_batches';
 
 export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
+  needsTiles,
+  needsProductIds,
+  needsDetail,
+  onClearNeeds,
   products,
   vendors,
   workflows,
@@ -118,10 +136,14 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onAddPriceEntry,
   onSaveBatch,
   onDeleteBatch,
+  onMergeBatches,
+  orderInfo,
   onCompleteBatchStockIn,
   onShowToast,
 }) => {
-  const isAdmin = isUserAdmin(currentUser);
+  // Direct edits (vendors, prices, stages, batches): purchases admin and full admin only (same as the database).
+  // Everyone else sends a request that one of them approves.
+  const isAdmin = canUserManageVendors(currentUser, users);
   const [topTab, setTopTab] = useState<TopTab>('catalog');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [stageDrafts, setStageDrafts] = useState<Record<string, { approxOrderQty: string; orderScriptNotes: string }>>({});
@@ -143,9 +165,13 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [editingStageDays, setEditingStageDays] = useState('');
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
+  const [catalogView, setCatalogView] = useState<'items' | 'clients'>('items');
+  const [batchView, setBatchView] = useState<'items' | 'clients'>('items');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
+  const [mergeBatchId, setMergeBatchId] = useState<string | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [stockInBatch, setStockInBatch] = useState<ProductionBatch | null>(null);
+  const [costBatchId, setCostBatchId] = useState<string | null>(null);
   const [advancingBatchContext, setAdvancingBatchContext] = useState<{
     batch: ProductionBatch;
     currentStageKey: OperationStageKey;
@@ -164,6 +190,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   // Vendor Directory Controls
   const [vendorSearch, setVendorSearch] = useState('');
   const [vendorTagFilter, setVendorTagFilter] = useState<VendorBehaviorTag | 'all'>('all');
+  const [vendorProductFilter, setVendorProductFilter] = useState<string>('all');
+  const [vendorCategoryFilter, setVendorCategoryFilter] = useState<string>('all');
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null);
   const [linkAfterCreateTarget, setLinkAfterCreateTarget] = useState<{
@@ -204,12 +232,17 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     return map;
   }, [batches]);
 
+  React.useEffect(() => {
+    if (needsProductIds) setCatalogFilter('all');
+  }, [needsProductIds]);
+
   const filteredCatalogProducts = useMemo(() => {
     const q = catalogSearch.trim().toLowerCase();
     return activeCatalogProducts.filter((product) => {
       const wf = getEffectiveWorkflow(product);
       const activeBatchCount = activeBatchesCountByProduct.get(product.id) || 0;
 
+      if (needsProductIds && !needsProductIds.has(product.id)) return false;
       if (catalogFilter === 'manufactured' && wf.workflowType !== 'manufactured') return false;
       if (catalogFilter === 'ready_made' && wf.workflowType !== 'ready_made') return false;
       if (catalogFilter === 'active_batches' && activeBatchCount === 0) return false;
@@ -224,6 +257,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     });
   }, [
     activeCatalogProducts,
+    needsProductIds,
     catalogFilter,
     catalogSearch,
     workflows,
@@ -236,11 +270,14 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     const q = vendorSearch.trim().toLowerCase();
     return vendors.filter((v) => {
       if (vendorTagFilter !== 'all' && !v.tags.includes(vendorTagFilter)) return false;
+      if (vendorCategoryFilter !== 'all' && !stageVendors.some((psv) => psv.vendorId === v.id && products.find((pr) => pr.id === psv.productId)?.category === vendorCategoryFilter)) return false;
+      if (vendorProductFilter !== 'all' && !stageVendors.some((psv) => psv.vendorId === v.id && psv.productId === vendorProductFilter)) return false;
       if (!q) return true;
-      const hay = `${v.name} ${v.contactPerson || ''} ${v.location || ''} ${v.phone || ''} ${v.generalNotes || ''}`.toLowerCase();
+      const items = stageVendors.filter((psv) => psv.vendorId === v.id).map((psv) => products.find((pr) => pr.id === psv.productId)?.name || '').join(' ');
+      const hay = `${v.name} ${v.contactPerson || ''} ${v.location || ''} ${v.phone || ''} ${v.generalNotes || ''} ${items}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [vendors, vendorSearch, vendorTagFilter]);
+  }, [vendors, vendorSearch, vendorTagFilter, vendorProductFilter, vendorCategoryFilter, stageVendors, products]);
 
   const getLatestPriceForPsv = (psvId: string): VendorPriceEntry | undefined => {
     return priceHistory
@@ -627,7 +664,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         entityType: 'sourcing_batch',
         actionType: 'update',
         targetId: targetBatch.id,
-        title: `Advance Batch ${targetBatch.batchCode}`,
+        title: `Advance Batch ${batchLabel(targetBatch)}`,
         summary: `Completed ${completedMeta.shortLabel} @ ${vendorLabel} (${(
           assignment.totalCost ?? assignment.cost ?? 0
         ).toLocaleString()} EGP) -> ${nextStageMeta.shortLabel}.`,
@@ -639,9 +676,54 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     onSaveBatch(updatedBatch);
     setAdvancingBatchContext(null);
     onShowToast?.(
-      `${targetBatch.batchCode} moved to ${nextStageMeta.shortLabel} (${vendorLabel} · ${(
+      `${batchLabel(targetBatch)} moved to ${nextStageMeta.shortLabel} (${vendorLabel} · ${(
         assignment.totalCost ?? assignment.cost ?? 0
       ).toLocaleString()} EGP).`
+    );
+  };
+
+  // Clients waiting for goods: one card per client, lines per item/size with the batch code(s).
+  const renderClientCards = (batchList: ProductionBatch[], onlyProductId?: string) => {
+    const byClient = new Map<string, { name: string; orders: Set<string>; lines: Map<string, { product: string; label: string; qty: number; batches: Set<string> }> }>();
+    batchList.forEach((b) => {
+      const ids = [b.linkedBookingId, ...(b.extraBookingIds || [])].filter(Boolean) as string[];
+      const vIds = new Set<string>([b.variantId, ...Object.keys(b.variantQty || {})].filter(Boolean) as string[]);
+      ids.forEach((id) => {
+        (orderInfo || []).filter((n) => n.bookingId === id && n.owed > 0 && (!n.variantId || vIds.size === 0 || vIds.has(n.variantId)) && (!n.productId || n.productId === b.productId) && (!onlyProductId || b.productId === onlyProductId)).forEach((n) => {
+          const key = n.clientName || n.bookingNumber;
+          const c = byClient.get(key) || { name: n.clientName || `Order #${n.bookingNumber}`, orders: new Set<string>(), lines: new Map() };
+          c.orders.add(n.bookingNumber);
+          const lk = `${n.variantId}|${b.id}`;
+          const pname = products.find((x) => x.id === b.productId)?.name || 'Item';
+          const ln = c.lines.get(lk) || { product: pname, label: `${n.size || ''}${n.colorName ? ' / ' + n.colorName : ''}`.trim() || 'Std', qty: 0, batches: new Set<string>() };
+          ln.qty += n.owed;
+          ln.batches.add(batchLabel(b));
+          c.lines.set(lk, ln);
+          byClient.set(key, c);
+        });
+      });
+    });
+    const list = Array.from(byClient.values());
+    if (list.length === 0) {
+      return <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center text-sm font-semibold text-slate-700">No client is waiting for goods from the active batches{onlyProductId ? ' of this item' : ''}.</div>;
+    }
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {list.map((c) => (
+          <div key={c.name} className="rounded-xl border border-slate-200 bg-white p-3 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-bold text-slate-900">{c.name}</div>
+              <div className="text-[11px] text-slate-500">Order {Array.from(c.orders).map((o) => `#${o}`).join(', ')}</div>
+            </div>
+            {Array.from(c.lines.values()).map((ln, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 text-xs text-slate-800">
+                <span>{ln.product} · {ln.label}: <b className="font-mono">{ln.qty}</b> missing</span>
+                <span className="font-mono font-bold text-slate-600">{Array.from(ln.batches).join(', ')}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
     );
   };
 
@@ -704,7 +786,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       {topTab === 'catalog' && !selectedProduct && (
         <div className="space-y-5">
           {/* Summary KPI Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {needsTiles}
             <div className="p-4 rounded-xl bg-white border border-slate-200">
               <div className="text-xs font-medium text-slate-500">Catalog Products</div>
               <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-1">
@@ -727,12 +810,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 {vendors.length}
               </div>
             </div>
-            <div className="p-4 rounded-xl bg-white border border-slate-200">
+            <button
+              type="button"
+              onClick={() => {
+                onClearNeeds?.();
+                setCatalogFilter((f) => (f === 'active_batches' ? 'all' : 'active_batches'));
+              }}
+              className={`p-4 rounded-xl border text-left ${catalogFilter === 'active_batches' ? 'bg-emerald-50 border-emerald-500' : 'bg-white border-slate-200 hover:bg-emerald-50'}`}
+            >
               <div className="text-xs font-medium text-slate-500">Active Batches</div>
               <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700 mt-1">
                 {totalActiveBatches}
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Search & Filter Controls */}
@@ -757,6 +847,18 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               )}
             </div>
 
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 w-fit">
+              {(['items', 'clients'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setCatalogView(v)}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold min-h-[36px] ${catalogView === v ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'}`}
+                >
+                  {v === 'items' ? 'Items' : 'Clients'}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
               {(
                 [
@@ -783,7 +885,12 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
           </div>
 
           {/* Product Grid */}
-          {activeCatalogProducts.length === 0 ? (
+          {catalogView === 'clients' ? (
+            <div className="space-y-2">
+              <div className="text-xs text-slate-500">Clients waiting for goods from all active batches (paid orders, pieces still missing).</div>
+              {renderClientCards(batches.filter((b) => b.status === 'in_progress'))}
+            </div>
+          ) : activeCatalogProducts.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center space-y-3 max-w-lg mx-auto">
               <Package className="w-10 h-10 text-slate-300 mx-auto" />
               <h3 className="text-base font-bold text-slate-900">
@@ -934,6 +1041,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
         return (
           <div className="space-y-6">
+            {needsDetail?.(selectedProduct.id)}
             {/* Workspace Top Bar */}
             <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5 min-w-0">
@@ -1511,6 +1619,20 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
+                  {batchTab === 'active' && (
+                    <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                      {(['items', 'clients'] as const).map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setBatchView(v)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${batchView === v ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'}`}
+                        >
+                          {v === 'items' ? 'Items' : 'Clients'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
                     <button
                       type="button"
@@ -1550,7 +1672,40 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 </div>
               </div>
 
-              {visibleBatches.length === 0 ? (
+              {batchTab === 'completed' && visibleBatches.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto">
+                  <div className="px-3 pt-2.5 text-xs font-black text-slate-900">History of finished batches (days and cost kept per batch)</div>
+                  <table className="w-full text-[11px] mt-1.5">
+                    <thead>
+                      <tr className="text-left text-slate-500">
+                        <th className="px-3 py-1">Batch</th>
+                        <th className="px-3 py-1">Size</th>
+                        <th className="px-3 py-1 text-right">Pieces</th>
+                        <th className="px-3 py-1 text-right">Days</th>
+                        <th className="px-3 py-1 text-right">Total EGP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleBatches.map((hb) => {
+                        const act = batchActualDays(hb);
+                        const tot = workflow.activeStages.reduce((sum, k) => sum + stageCostTotal(hb.stageAssignments?.[k], hb.quantity), 0);
+                        const hv = selectedProduct.variants.find((v) => v.id === hb.variantId);
+                        return (
+                          <tr key={hb.id} className="border-t border-slate-100 text-slate-900">
+                            <td className="px-3 py-1 font-mono font-bold">{batchLabel(hb)}</td>
+                            <td className="px-3 py-1">{hv ? `${hv.size} / ${hv.colorName}` : '-'}</td>
+                            <td className="px-3 py-1 text-right font-mono">{hb.quantity}</td>
+                            <td className="px-3 py-1 text-right font-mono">{act ? act.days : '-'}</td>
+                            <td className="px-3 py-1 text-right font-mono">{tot > 0 ? tot.toLocaleString() : '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {batchTab === 'active' && batchView === 'clients' ? renderClientCards(visibleBatches, selectedProduct.id) : visibleBatches.length === 0 ? (
                 <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-2">
                   <p className="text-sm font-semibold text-slate-700">
                     {batchTab === 'active'
@@ -1602,17 +1757,20 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                         const vName = a.vendorId
                           ? vendors.find((v) => v.id === a.vendorId)?.name || 'Vendor'
                           : a.customVendorName || 'Vendor';
-                        const totalStageEgp =
-                          typeof a.totalCost === 'number' && a.totalCost >= 0
-                            ? a.totalCost
-                            : typeof a.cost === 'number'
-                            ? Math.round(a.cost * Math.max(1, batch.quantity) * 100) / 100
-                            : 0;
+                        const totalStageEgp = Math.round(stageCostTotal(a, batch.quantity) * 100) / 100;
+                        const stDays =
+                          a.startedAt && (a.endedAt || a.completedAt)
+                            ? Math.round((new Date(a.endedAt || (a.completedAt as string).slice(0, 10)).getTime() - new Date(a.startedAt).getTime()) / 86400000)
+                            : null;
                         return {
                           stageKey: stKey,
                           label: getStageMeta(stKey, workflow.customStages).shortLabel,
                           vendorName: vName,
                           totalEgp: totalStageEgp,
+                          unitCost: a.cost,
+                          unitQty: a.unitQty,
+                          unitName: getStageMeta(stKey, workflow.customStages).defaultUnit,
+                          days: stDays,
                           completed: Boolean(a.completedAt),
                         };
                       });
@@ -1635,13 +1793,25 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             <div>
                               <div className="flex items-center gap-2 text-xs text-slate-500">
                                 <span className="font-mono font-bold text-slate-900 text-sm">
-                                  {batch.batchCode}
+                                  {batchLabel(batch)}
                                 </span>
                                 <span aria-hidden="true">·</span>
                                 <span className="font-mono tabular-nums font-bold text-slate-800">
                                   {batch.quantity} pcs
                                 </span>
-                                {targetVariant && (
+                                {batch.variantQty && Object.keys(batch.variantQty).length > 1 ? (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span>
+                                      {Object.entries(batch.variantQty)
+                                        .map(([vid, q]) => {
+                                          const vv = selectedProduct.variants.find((x) => x.id === vid);
+                                          return `${vv ? `${vv.size} ${vv.colorName}` : '?'}: ${q}`;
+                                        })
+                                        .join(' · ')}
+                                    </span>
+                                  </>
+                                ) : targetVariant && (
                                   <>
                                     <span aria-hidden="true">·</span>
                                     <span>
@@ -1670,6 +1840,40 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             </div>
 
                             <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setCostBatchId(batch.id)}
+                                className="px-2 py-1 rounded-lg text-[11px] font-bold text-emerald-800 hover:bg-emerald-50 inline-flex items-center gap-1"
+                                title="Steps, durations and costs"
+                              >
+                                <span>Steps &amp; costs</span>
+                              </button>
+                              {batch.status === 'in_progress' && onMergeBatches && (() => {
+                                const first = firstWorkingStage(workflow);
+                                const own = batchJoinBlockReason(batch, first);
+                                const others = batches.filter(
+                                  (o) => o.id !== batch.id && o.productId === batch.productId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
+                                );
+                                const why = own ? `Cannot merge ${batchLabel(batch)}: ${own}.` : others.length === 0 ? `Cannot merge ${batchLabel(batch)}: there is no other open batch of the same ITEM (any size/color) that is still at its first stage with no costs.` : 'Merge with another early batch';
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!isAdmin) {
+                                        onShowToast?.('Only the Purchases admin or the owner can merge batches.');
+                                      } else if (own || others.length === 0) {
+                                        onShowToast?.(why);
+                                      } else {
+                                        setMergeBatchId(batch.id);
+                                      }
+                                    }}
+                                    className={`px-2 py-1 rounded-lg text-[11px] font-bold hover:bg-indigo-50 inline-flex items-center gap-1 ${own || others.length === 0 ? 'text-slate-400' : 'text-indigo-800'}`}
+                                    title={why}
+                                  >
+                                    <span>Merge</span>
+                                  </button>
+                                );
+                              })()}
                               {batch.status === 'in_progress' && (
                                 <button
                                   type="button"
@@ -1693,7 +1897,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                       entityType: 'sourcing_batch',
                                       actionType: 'delete',
                                       targetId: batch.id,
-                                      title: `Delete Batch ${batch.batchCode}`,
+                                      title: `Delete Batch ${batchLabel(batch)}`,
                                       summary: `${selectedProduct.name} · ${batch.quantity} pcs`,
                                       payload: { batchId: batch.id },
                                     });
@@ -1709,26 +1913,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Completed / Logged Stages Cost & Vendor Trail */}
-                          {loggedStages.some((st) => st.completed) && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {loggedStages
-                                .filter((st) => st.completed)
-                                .map((st) => (
-                                  <span
-                                    key={st.stageKey}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-semibold text-slate-700"
-                                  >
-                                    <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                                    <span>{st.label}:</span>
-                                    <span className="text-slate-900">{st.vendorName}</span>
-                                    <span className="font-mono text-emerald-700">
-                                      ({st.totalEgp.toLocaleString()} EGP)
-                                    </span>
-                                  </span>
-                                ))}
-                            </div>
-                          )}
+                          {/* Merged orders: which orders are inside this one batch */}
+                          {(() => {
+                            const ids = [batch.linkedBookingId, ...(batch.extraBookingIds || [])].filter(Boolean) as string[];
+                            if (ids.length < 2) return null;
+                            const parts = ids.map((id, i) => {
+                              const rows = (orderInfo || []).filter((n) => n.bookingId === id);
+                              const num = rows[0]?.bookingNumber || (i === 0 ? batch.linkedBookingNumber : batch.extraBookingNumbers?.[i - 1]) || '';
+                              const who = rows[0]?.clientName;
+                              const pcs = rows.reduce((sum, n) => sum + n.owed, 0);
+                              return `Order ${num ? `#${num}` : '(no.)'}${who ? ` (${who})` : ''}${pcs > 0 ? `: ${pcs} pcs` : ''}`;
+                            });
+                            return <div className="text-[11px] text-slate-600">Merged: {parts.join(' + ')}</div>;
+                          })()}
 
                           {/* Clean Progress Bar */}
                           <div className="space-y-1">
@@ -2423,7 +2620,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     entityType: 'sourcing_batch',
                     actionType: wasEdit ? 'update' : 'create',
                     targetId: batch.id,
-                    title: `${wasEdit ? 'Update' : 'Start'} Batch ${batch.batchCode}`,
+                    title: `${wasEdit ? 'Update' : 'Start'} Batch ${batchLabel(batch)}`,
                     summary: `${selectedProduct.name} · ${batch.quantity} pcs @ ${stageShort}`,
                     payload: { batch },
                   });
@@ -2437,11 +2634,39 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 setBatchTab('active');
                 onShowToast?.(
                   wasEdit
-                    ? `${batch.batchCode} updated (${batch.quantity} pcs).`
-                    : `${batch.batchCode} started at ${stageShort}.`
+                    ? `${batchLabel(batch)} updated (${batch.quantity} pcs).`
+                    : `${batchLabel(batch)} started at ${stageShort}.`
                 );
               }}
             />
+
+            {mergeBatchId && (() => {
+              const keep = batches.find((b) => b.id === mergeBatchId);
+              if (!keep) return null;
+              const first = firstWorkingStage(workflow);
+              const cands = batches.filter(
+                (o) => o.id !== keep.id && o.productId === keep.productId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
+              );
+              return (
+                <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4">
+                  <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-3 shadow-2xl">
+                    <div className="text-base font-black text-slate-900">Merge into {batchLabel(keep)} ({keep.quantity} pcs)</div>
+                    <div className="text-xs text-slate-600">Same item, any size/color. Quantities are added (kept per size), and the orders of both batches are linked to one batch. The other batch is removed. Pick the batch to add:</div>
+                    {cands.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => { onMergeBatches?.(keep, c); setMergeBatchId(null); }}
+                        className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-900"
+                      >
+                        Add {batchLabel(c)} ({c.quantity} pcs{(() => { const v = selectedProduct.variants.find((x) => x.id === c.variantId); return v && !c.variantQty ? `, ${v.size} / ${v.colorName}` : ''; })()}) = {keep.quantity + c.quantity} pcs
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => setMergeBatchId(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Mandatory Cost + Vendor Gate When Advancing Stage */}
             <AdvanceStageModal
@@ -2458,6 +2683,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               onConfirm={handleConfirmAdvanceBatchStage}
             />
 
+            {costBatchId && batches.find((b) => b.id === costBatchId) && (
+              <BatchCostModal
+                batch={batches.find((b) => b.id === costBatchId)!}
+                allBatches={batches}
+                stages={workflow.activeStages}
+                customStages={workflow.customStages}
+                vendors={vendors}
+                canEdit={canUserManageVendors(currentUser, users)}
+                onClose={() => setCostBatchId(null)}
+                onSave={(updated) => {
+                  setCostBatchId(null);
+                  onSaveBatch(updated);
+                  onShowToast?.(`Saved steps and costs for ${batchLabel(updated)}.`);
+                }}
+              />
+            )}
+
             {/* Complete & Stock In (Gard) Modal */}
             <CompleteStockInModal
               batch={stockInBatch}
@@ -2473,7 +2715,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     entityType: 'sourcing_stock_in',
                     actionType: 'update',
                     targetId: payload.batchId,
-                    title: `Complete & Stock In: ${targetBatch?.batchCode || payload.batchId}`,
+                    title: `Complete & Stock In: ${(targetBatch ? batchLabel(targetBatch) : undefined) || payload.batchId}`,
                     summary: `${selectedProduct.name} · Final Gard Qty: ${payload.finalQuantity} pcs`,
                     payload,
                   });
@@ -2594,6 +2836,37 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 {opt.label}
               </button>
             ))}
+          </div>
+
+          {/* Filter by what the vendor makes/supplies */}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs font-semibold text-slate-600 shrink-0" htmlFor="vendor-category-filter">Category:</label>
+            <select
+              id="vendor-category-filter"
+              value={vendorCategoryFilter}
+              onChange={(e) => { setVendorCategoryFilter(e.target.value); setVendorProductFilter('all'); }}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 min-h-[36px] max-w-full"
+            >
+              <option value="all">All categories</option>
+              {Array.from(new Set(products.filter((p) => stageVendors.some((psv) => psv.productId === p.id)).map((p) => String(p.category)))).sort().map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <label className="text-xs font-semibold text-slate-600 shrink-0" htmlFor="vendor-product-filter">Makes / supplies:</label>
+            <select
+              id="vendor-product-filter"
+              value={vendorProductFilter}
+              onChange={(e) => setVendorProductFilter(e.target.value)}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 min-h-[36px] max-w-full"
+            >
+              <option value="all">All products</option>
+              {products
+                .filter((p) => stageVendors.some((psv) => psv.productId === p.id) && (vendorCategoryFilter === 'all' || String(p.category) === vendorCategoryFilter))
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+            </select>
           </div>
 
           {filteredVendors.length === 0 ? (

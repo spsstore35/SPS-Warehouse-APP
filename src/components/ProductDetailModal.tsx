@@ -19,6 +19,8 @@ import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface ProductDetailModalProps {
   product: Product;
+  /** Pieces reserved for paid, not-yet-delivered orders per variant. */
+  reservedMap?: Record<string, number>;
   userRole: Role;
   canEditMedia?: boolean;
   onClose: () => void;
@@ -31,6 +33,7 @@ interface ProductDetailModalProps {
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   product,
+  reservedMap = {},
   userRole,
   canEditMedia = false,
   onClose,
@@ -423,6 +426,11 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         <div className="text-[11px] font-mono text-slate-400 mt-0.5">
                           SKU: {variant.sku}
                         </div>
+                        {!isLeader && (reservedMap[variant.id] || 0) > 0 && (
+                          <div className="text-[11px] font-mono text-slate-700 mt-0.5">
+                            In warehouse {variant.quantity + (reservedMap[variant.id] || 0)} · Reserved {reservedMap[variant.id]} · Free {variant.quantity}
+                          </div>
+                        )}
                       </div>
                     </div>
 

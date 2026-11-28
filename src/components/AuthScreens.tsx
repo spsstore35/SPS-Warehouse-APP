@@ -18,6 +18,8 @@ import {
   AtSign,
 } from 'lucide-react';
 
+import { Captcha, captchaEnabled } from './Captcha';
+
 interface AuthScreensProps {
   onLogin: (user: User) => void;
 }
@@ -43,6 +45,9 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
   const [signUpError, setSignUpError] = useState('');
   const [signUpSuccess, setSignUpSuccess] = useState<User | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState('');
+  const [captchaReset, setCaptchaReset] = useState(0);
+  const [needsCaptcha, setNeedsCaptcha] = useState(false);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,91 +62,29 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       return;
     }
 
-    // Authenticate strictly against live Supabase profiles table (Email, Phone, or Username)
+    // Login goes through the auth-gate Edge Function (rate limits, captcha, attempt log)
     try {
-      const { lookupProfileForLogin } = await import('../services/supabaseService');
-      const profile = await lookupProfileForLogin(cleanIdentifier);
-
-      if (!profile) {
-        setLoginError('No account found with this email, phone number, or username.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      const {
-        verifyPassword,
-        hashPassword,
-        isBcryptHash,
-        normalizeRole,
-        getPublicUserEmail,
-      } = await import('../utils/security');
-      if (profile.status === 'pending') {
+      const { signInWithGate } = await import('../services/authService');
+      const result = await signInWithGate(cleanIdentifier, password, captchaToken || undefined);
+      if (result.status === 'pending') {
         setPendingAccountInfo({
-          id: profile.id,
-          name: profile.full_name,
-          email: getPublicUserEmail(profile.email),
-          username: profile.username || undefined,
-          phone: profile.phone || undefined,
-          role: profile.role,
+          id: '',
+          name: result.name,
+          role: 'worker',
           status: 'pending',
-          requestedRole: profile.requested_role,
         });
-        setIsSubmitting(false);
-        return;
+      } else if (result.status === 'rejected') {
+        setLoginError(result.message || 'Your account request was declined by the administrator.');
+      } else {
+        setPassword('');
+        onLogin(result.user);
       }
-
-      if (profile.status === 'rejected') {
-        setLoginError('Your account request was declined by the administrator.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      const isMatch = await verifyPassword(password, profile.password_hash);
-      if (!isMatch) {
-        setLoginError('Invalid credentials. Please check your password.');
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Auto-upgrade any non-bcrypt stored password (plain text, null, or
-      // legacy SHA-256) to a bcrypt hash in Supabase after a successful login.
-      if (!isBcryptHash(profile.password_hash)) {
-        try {
-          const { supabase } = await import('../services/supabaseClient');
-          const newSecureHash = await hashPassword(password);
-          await supabase
-            .from('profiles')
-            .update({ password_hash: newSecureHash })
-            .eq('id', profile.id);
-        } catch {
-          // Re-hash failure must never block a successful login.
-        }
-      }
-
-      const normalizedRole: Role = normalizeRole(profile.role || profile.requested_role);
-      const normalizedReqRole: Role = normalizeRole(profile.requested_role || profile.role);
-
-      const resolvedTeams = Array.isArray(profile.assigned_teams) ? profile.assigned_teams : [];
-      const resolvedFare2 = Array.isArray(profile.assigned_fare2) ? profile.assigned_fare2 : [];
-
-      const userObj: User = {
-        id: profile.id,
-        name: profile.full_name || 'Staff User',
-        email: getPublicUserEmail(profile.email),
-        username: profile.username || undefined,
-        phone: profile.phone || undefined,
-        role: normalizedRole,
-        status: profile.status,
-        requestedRole: normalizedReqRole,
-        employeeId: profile.employee_id,
-        avatarColor: profile.avatar_color,
-        assignedTeams: resolvedTeams,
-        assignedFare2: resolvedFare2,
-      };
-      onLogin(userObj);
     } catch (err: any) {
-      setLoginError(err?.message || 'Unable to connect to the database. Please try again.');
+      if (err?.code === 'captcha_required') setNeedsCaptcha(true);
+      setLoginError(err?.message || 'Unable to connect to the server. Please try again.');
     }
+    setCaptchaToken('');
+    setCaptchaReset((n) => n + 1);
     setIsSubmitting(false);
   };
 
@@ -193,31 +136,43 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
       return;
     }
 
-    // Insert strictly into Supabase profiles
+    if (captchaEnabled && !captchaToken) {
+      setSignUpError('Please complete the check below first.');
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const { registerUserInDb } = await import('../services/supabaseService');
-      const newUser = await registerUserInDb({
-        name: signUpName,
+      const { signUpWithGate } = await import('../services/authService');
+      const res = await signUpWithGate({
+        name: signUpName.trim(),
         email: cleanEmail || undefined,
         username: cleanUserInput || undefined,
         phone: cleanPhoneInput || undefined,
         password: signUpPassword,
         requestedRole: signUpRole,
+        captchaToken: captchaToken || undefined,
       });
-
-      setSignUpSuccess(newUser);
+      setSignUpSuccess({
+        id: '',
+        name: res.name,
+        email: cleanEmail || undefined,
+        username: cleanUserInput ? cleanUserInput.toLowerCase() : undefined,
+        phone: cleanPhoneInput || undefined,
+        role: 'worker',
+        requestedRole: res.requestedRole,
+        status: 'pending',
+      });
       setSignUpName('');
       setSignUpUsername('');
       setSignUpPhone('');
       setSignUpEmail('');
       setSignUpPassword('');
     } catch (err: any) {
-      if (err?.message?.includes('duplicate key') || err?.message?.includes('profiles_email_key')) {
-        setSignUpError('An account with this email already exists.');
-      } else {
-        setSignUpError(err?.message || 'Registration failed. Check database connection.');
-      }
+      setSignUpError(err?.message || 'Registration failed. Please try again.');
     }
+    setCaptchaToken('');
+    setCaptchaReset((n) => n + 1);
     setIsSubmitting(false);
   };
 
@@ -360,6 +315,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                 </div>
               )}
 
+              {captchaEnabled && needsCaptcha && <Captcha onToken={setCaptchaToken} resetKey={captchaReset} />}
               <button
                 type="submit"
                 className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm shadow-sm transition-all min-h-[46px]"
@@ -602,6 +558,7 @@ export const AuthScreens: React.FC<AuthScreensProps> = ({ onLogin }) => {
                     <span>{signUpError}</span>
                   </div>
                 )}
+                {captchaEnabled && <Captcha onToken={setCaptchaToken} resetKey={captchaReset} />}
 
                 <button
                   type="submit"

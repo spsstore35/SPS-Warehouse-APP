@@ -1,6 +1,7 @@
 import {
   CustomStageDefinition,
   OperationStageKey,
+  ProductionBatch,
   Product,
   VendorBehaviorTag,
   WorkflowType,
@@ -61,7 +62,7 @@ export const ALL_OPERATION_STAGES: OperationStageMeta[] = [
 
 export const DEFAULT_STAGE_KEYS: Record<WorkflowType, OperationStageKey[]> = {
   manufactured: ['raw_material', 'manufacturing', 'tailor', 'packaging', 'stock_in'],
-  ready_made: ['supplier_sourcing', 'packaging', 'stock_in'],
+  ready_made: ['supplier_sourcing', 'stock_in'], // bought goods go straight to stock (add packaging per item if needed)
 };
 
 export function getStageMeta(
@@ -165,3 +166,76 @@ export function inferDefaultWorkflowType(product: Product): WorkflowType {
   return 'manufactured';
 }
 
+
+/** The first working stage of a product's workflow (where a batch starts). */
+export function firstWorkingStage(wf?: { activeStages?: OperationStageKey[]; workflowType?: WorkflowType } | null): OperationStageKey {
+  return (
+    wf?.activeStages?.find((st) => st !== 'stock_in') ||
+    (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material')
+  );
+}
+
+/**
+ * A batch can take more quantity / be merged only while it is still at its first stage and no
+ * work or money is recorded on it. Returns the reason in plain words, or null when it is open.
+ */
+export function batchJoinBlockReason(batch: ProductionBatch, firstStage: OperationStageKey): string | null {
+  if (batch.status !== 'in_progress') return 'it is already completed';
+  if (batch.currentStageKey !== firstStage) return 'it already moved past its first stage (it is with the factory or further)';
+  const spent = Object.values(batch.stageAssignments || {}).some(
+    (a) => a && (a.completedAt || a.totalCost || (a.costLines && a.costLines.length > 0))
+  );
+  if (spent) return 'work or costs are already recorded on it';
+  return null;
+}
+
+/** Money of one stage: price x units bought (+ extra lines such as transport). Old data: total, or price x batch quantity. */
+export function stageCostTotal(
+  a: { cost?: number; unitQty?: number; totalCost?: number; costLines?: { amount: number }[] } | undefined,
+  batchQty: number
+): number {
+  if (!a) return 0;
+  const material = typeof a.cost === 'number' && (a.unitQty || 0) > 0 ? a.cost * (a.unitQty as number) : 0;
+  const lines = (a.costLines || []).reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  if (material > 0 || lines > 0) return material + lines;
+  if (typeof a.totalCost === 'number' && a.totalCost >= 0) return a.totalCost;
+  if (typeof a.cost === 'number') return a.cost * Math.max(1, batchQty);
+  return 0;
+}
+
+/** Pieces per size/colour of a batch (one row when the batch has a single variant). */
+export function batchVariantParts(b: ProductionBatch): { variantId: string; qty: number }[] {
+  const vq = b.variantQty || {};
+  const rows = Object.entries(vq).filter(([, q]) => Number(q) > 0).map(([variantId, qty]) => ({ variantId, qty: Number(qty) }));
+  if (rows.length > 0) return rows;
+  return b.variantId ? [{ variantId: b.variantId, qty: b.quantity }] : [];
+}
+
+/** Add pieces of one variant to a batch breakdown. Returns the new quantity and breakdown. */
+export function addToBatchBreakdown(
+  b: ProductionBatch,
+  extra: { variantId?: string; qty: number }[]
+): { quantity: number; variantQty?: Record<string, number> } {
+  const map: Record<string, number> = {};
+  let loose = 0;
+  batchVariantParts(b).forEach((p) => { map[p.variantId] = (map[p.variantId] || 0) + p.qty; });
+  const known = Object.values(map).reduce((s, n) => s + n, 0);
+  loose += Math.max(0, b.quantity - known);
+  extra.forEach((e) => {
+    if (e.variantId) map[e.variantId] = (map[e.variantId] || 0) + e.qty;
+    else loose += e.qty;
+  });
+  const quantity = Object.values(map).reduce((s, n) => s + n, 0) + loose;
+  // Only keep a breakdown when every piece is assigned and there is more than one variant.
+  if (loose > 0 || Object.keys(map).length < 2) return { quantity };
+  return { quantity, variantQty: map };
+}
+
+/** Display name of a batch: "Purchasing #<order>" (merged: "#A + #B"). Stored batchCode is not changed. */
+export function batchLabel(b: { batchCode: string; linkedBookingNumber?: string; extraBookingNumbers?: string[] } | null | undefined): string {
+  if (!b) return '';
+  const nums = [b.linkedBookingNumber, ...(b.extraBookingNumbers || [])].filter(Boolean) as string[];
+  if (nums.length > 0) return `Purchasing ${nums.map((n) => `#${n}`).join(' + ')}`;
+  const m = String(b.batchCode || '').match(/(\d{4,})\s*$/);
+  return `Purchasing (restock) #${m ? m[1] : b.batchCode}`;
+}

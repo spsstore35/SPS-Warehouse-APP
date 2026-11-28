@@ -1,4 +1,7 @@
+import { batchLabel } from '../utils/sourcing';
 import React, { useState, useEffect, useMemo } from 'react';
+import { fetchOrderStockOwedFromDb } from '../services/supabaseService';
+import DeliveryEstimateLine from './DeliveryEstimateLine';
 import {
   BatchStageAssignment,
   Booking,
@@ -55,7 +58,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import { isUserAdmin } from '../utils/security';
+import { canUserManageOrders, canUserConfirmPayments, canUserRequestPayments } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 
 interface BookingsViewProps {
@@ -131,7 +134,9 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   initialSelectedBookingId,
   onClearSelectedBookingId,
 }) => {
-  const isAdmin = isUserAdmin(currentUser);
+  const isAdmin = canUserManageOrders(currentUser);
+  const canPay = canUserConfirmPayments(currentUser);
+  const canAskPay = canUserRequestPayments(currentUser);
   const allowEditBookings = canEditBookings ?? isAdmin;
   const activeMembers = useMemo(
     () =>
@@ -183,6 +188,26 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     d.setDate(d.getDate() + 5);
     return d.toISOString().slice(0, 10);
   });
+  // What each paid order still waits for (stock was short at deposit time): "bookingId|variantId" -> units.
+  const [owedMap, setOwedMap] = useState<Record<string, number>>({});
+  // Items of the open order whose stock is still missing (waiting on a purchase batch).
+  const deliveryBlockFor = (b: Booking | null | undefined): string[] => {
+    if (!b) return [];
+    return b.items
+      .map((it) => {
+        const owed = owedMap[`${b.id}|${it.variantId}`] || 0;
+        if (owed <= 0) return '';
+        const q = it.quantity || 0;
+        return `${it.productName} (${it.size}${it.colorName ? ` / ${it.colorName}` : ''}): need ${q}, have ${Math.max(0, q - owed)}, waiting on batch for ${owed}`;
+      })
+      .filter(Boolean);
+  };
+  const refreshOwed = () => {
+    fetchOrderStockOwedFromDb().then(setOwedMap).catch(() => {});
+  };
+  useEffect(() => {
+    refreshOwed();
+  }, [bookings.length, batches.length]);
   const [shortageBatchDraft, setShortageBatchDraft] = useState<{
     booking: Booking;
     targetDate: string;
@@ -216,7 +241,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       const prod = products.find((p) => p.id === it.productId);
       const variant = prod?.variants.find((v) => v.id === it.variantId);
       const liveAvail = variant ? variant.quantity : it.availableStock ?? 0;
-      const deficit = booking.inventoryDeducted ? 0 : Math.max(0, (it.quantity || 0) - liveAvail);
+      const deficit = booking.inventoryDeducted ? owedMap[`${booking.id}|${it.variantId}`] || 0 : Math.max(0, (it.quantity || 0) - liveAvail);
       if (deficit <= 0) return;
 
       const wf = workflows.find((w) => w.productId === it.productId);
@@ -273,14 +298,16 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 
   // Compute live shortage for any booking against current live catalog stock
   const getBookingShortageInfo = (b: Booking) => {
-    const shortageItems: { productName: string; size: string; colorName: string; deficit: number }[] = [];
+    const shortageItems: { productId: string; variantId: string; productName: string; size: string; colorName: string; deficit: number }[] = [];
     b.items.forEach((it) => {
       const prod = products.find((p) => p.id === it.productId);
       const variant = prod?.variants.find((v) => v.id === it.variantId);
       const liveAvail = variant ? variant.quantity : it.availableStock ?? 0;
-      const deficit = b.inventoryDeducted ? 0 : Math.max(0, (it.quantity || 0) - liveAvail);
+      const deficit = b.inventoryDeducted ? owedMap[`${b.id}|${it.variantId}`] || 0 : Math.max(0, (it.quantity || 0) - liveAvail);
       if (deficit > 0) {
         shortageItems.push({
+          productId: it.productId,
+          variantId: it.variantId,
           productName: it.productName,
           size: String(it.size || 'Standard'),
           colorName: it.colorName || 'Standard',
@@ -288,7 +315,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
         });
       }
     });
-    const linkedBatches = batches.filter((bt) => bt.linkedBookingId === b.id);
+    const linkedBatches = batches.filter((bt) => bt.linkedBookingId === b.id || (bt.extraBookingIds || []).includes(b.id));
     const activeBatches = linkedBatches.filter((bt) => bt.status === 'in_progress');
     const resolvedState =
       b.stockCheckStatus ||
@@ -426,6 +453,7 @@ This is our official Scout Store number. Through this chat, you can:
 
   // Active booking for details modal (keeps updated if status changes)
   const activeBooking = bookings.find((b) => b.id === selectedBookingId) || null;
+  const deliveryBlock = deliveryBlockFor(activeBooking);
   const activeDepositPct = activeBooking
     ? (activeBooking.depositPercentage ?? (activeBooking.depositRate ? Math.round(activeBooking.depositRate * 100) : 50))
     : 50;
@@ -439,7 +467,7 @@ This is our official Scout Store number. Through this chat, you can:
 
   const handleUpdateDepositPct = (pct: number) => {
     if (!activeBooking) return;
-    if (isAdmin) {
+    if (canPay) {
       // Immediate update for Admin
       const depositRequired = Math.round((activeBooking.total * pct) / 100);
       const updated: Booking = {
@@ -501,7 +529,7 @@ This is our official Scout Store number. Through this chat, you can:
   };
 
   const handleApprovePendingDepositPct = () => {
-    if (!activeBooking || !activeBooking.pendingDepositPercentage || !isAdmin) return;
+    if (!activeBooking || !activeBooking.pendingDepositPercentage || !canPay) return;
     const pct = activeBooking.pendingDepositPercentage;
     const depositRequired = Math.round((activeBooking.total * pct) / 100);
     const updated: Booking = {
@@ -535,7 +563,7 @@ This is our official Scout Store number. Through this chat, you can:
   };
 
   const handleRejectPendingDepositPct = () => {
-    if (!activeBooking || !isAdmin) return;
+    if (!activeBooking || !canPay) return;
     const prevPendingPct = activeBooking.pendingDepositPercentage;
     const updated: Booking = {
       ...activeBooking,
@@ -633,7 +661,7 @@ This is our official Scout Store number. Through this chat, you can:
     };
     if (!isAdmin && onSubmitTeamRequest) {
       onSubmitTeamRequest({
-        teamScope: 'budgeting',
+        teamScope: 'troops',
         entityType: 'booking_edit',
         actionType: 'update',
         targetId: activeBooking.id,
@@ -1577,10 +1605,14 @@ This is our official Scout Store number. Through this chat, you can:
                               key={i}
                               className="px-2 py-0.5 rounded-md bg-white border border-rose-200 text-[11px] font-semibold font-mono tabular-nums"
                             >
-                              {si.productName} ({si.size}/{si.colorName}): -{si.deficit} pcs
+                              {si.productName} ({si.size}/{si.colorName}): need {si.deficit} more pcs
                             </span>
                           ))}
                         </div>
+                        <DeliveryEstimateLine
+                          items={pipeInfo.shortageItems.map((si) => ({ productId: si.productId, variantId: si.variantId }))}
+                          batches={batches}
+                        />
                       </div>
                     )}
 
@@ -1595,7 +1627,7 @@ This is our official Scout Store number. Through this chat, you can:
                             className="p-2.5 rounded-xl bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs"
                           >
                             <div className="font-mono tabular-nums">
-                              <strong className="text-slate-900">{bt.batchCode}</strong> · {bt.quantity} pcs ·{' '}
+                              <strong className="text-slate-900">{batchLabel(bt)}</strong> · {bt.quantity} pcs ·{' '}
                               <span
                                 className={
                                   bt.status === 'completed'
@@ -1736,7 +1768,7 @@ This is our official Scout Store number. Through this chat, you can:
                           </div>
                         </div>
 
-                        {isAdmin ? (
+                        {canPay ? (
                           <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
                             <button
                               type="button"
@@ -1821,7 +1853,7 @@ This is our official Scout Store number. Through this chat, you can:
                       )}
                     </div>
 
-                    {isAdmin ? (
+                    {canPay ? (
                       <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
                         <button
                           type="button"
@@ -1849,8 +1881,8 @@ This is our official Scout Store number. Through this chat, you can:
                   </div>
                 )}
 
-                {allowEditBookings && activeBooking.status === 'pending' && (
-                  isAdmin ? (
+                {(allowEditBookings || canPay || canAskPay) && activeBooking.status === 'pending' && (
+                  canPay ? (
                     <button
                       type="button"
                       onClick={() => setShowConfirmDepositModal(true)}
@@ -1890,8 +1922,10 @@ This is our official Scout Store number. Through this chat, you can:
                 {allowEditBookings && activeBooking.status === 'preparing' && (
                   <button
                     type="button"
+                    disabled={deliveryBlock.length > 0}
+                    title={deliveryBlock.join(' | ')}
                     onClick={() => setPendingStatusConfirm({ booking: activeBooking, nextStatus: 'delivered' })}
-                    className="w-full p-3.5 sm:p-4 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-purple-600/20 transition-all"
+                    className="w-full p-3.5 sm:p-4 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-purple-600/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-purple-600"
                   >
                     <Package className="w-5 h-5" />
                     <span>
@@ -1902,6 +1936,14 @@ This is our official Scout Store number. Through this chat, you can:
                         : 'Request Move to Delivered (Admin Approval)'}
                     </span>
                   </button>
+                )}
+                {allowEditBookings && activeBooking.status === 'preparing' && deliveryBlock.length > 0 && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] font-bold text-rose-800 space-y-0.5">
+                    <div>Not enough stock to deliver yet:</div>
+                    {deliveryBlock.map((m) => (
+                      <div key={m}>{m}</div>
+                    ))}
+                  </div>
                 )}
 
                 {allowEditBookings && activeBooking.status === 'delivered' && (
@@ -2140,12 +2182,12 @@ This is our official Scout Store number. Through this chat, you can:
 
             <div className="text-center space-y-1.5">
               <h3 className="text-base sm:text-lg font-black text-slate-900">
-                {isAdmin
+                {canPay
                   ? `Update Deposit to ${pendingPctChange === 100 ? '100% Full Payment' : `${pendingPctChange}% Advance Deposit`}?`
                   : `Request Deposit Change to ${pendingPctChange === 100 ? '100% Full Payment' : `${pendingPctChange}% Advance Deposit`}?`}
               </h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                {isAdmin ? (
+                {canPay ? (
                   <>
                     Are you sure you want to change the upfront advance deposit for booking{' '}
                     <strong className="text-slate-900 font-mono">{activeBooking.bookingNumber}</strong> from{' '}
@@ -2195,7 +2237,7 @@ This is our official Scout Store number. Through this chat, you can:
                 }}
                 className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs shadow-md transition-all"
               >
-                {isAdmin ? `Yes, Update to ${pendingPctChange}%` : 'Submit Request for Approval'}
+                {canPay ? `Yes, Update to ${pendingPctChange}%` : 'Submit Request for Approval'}
               </button>
             </div>
           </div>
@@ -2329,7 +2371,7 @@ This is our official Scout Store number. Through this chat, you can:
                   setPendingStatusConfirm(null);
                   if (!isAdmin && onSubmitTeamRequest) {
                     onSubmitTeamRequest({
-                      teamScope: 'budgeting',
+                      teamScope: 'troops',
                       entityType: 'booking_status',
                       actionType: 'update',
                       targetId: booking.id,
@@ -2393,7 +2435,7 @@ This is our official Scout Store number. Through this chat, you can:
                   setSelectedBookingId(null);
                   if (!isAdmin && onSubmitTeamRequest) {
                     onSubmitTeamRequest({
-                      teamScope: 'budgeting',
+                      teamScope: 'troops',
                       entityType: 'booking_delete',
                       actionType: 'delete',
                       targetId: target.id,
@@ -2616,7 +2658,7 @@ This is our official Scout Store number. Through this chat, you can:
                             {item.size} / {item.colorName}
                           </span>
                           <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-mono font-bold text-[11px]">
-                            Min Shortage: {item.minShortage} pcs
+                            Still needed: {item.minShortage} pcs (cannot order less)
                           </span>
                         </div>
                       </div>
@@ -2628,7 +2670,7 @@ This is our official Scout Store number. Through this chat, you can:
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number"
-                            min={1}
+                            min={item.minShortage || 1}
                             value={item.orderQty || ''}
                             onChange={(e) => {
                               const nextVal = Math.max(0, Number(e.target.value) || 0);
@@ -2809,7 +2851,7 @@ This is our official Scout Store number. Through this chat, you can:
               </button>
               <button
                 type="button"
-                disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0)}
+                disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0 || it.orderQty < it.minShortage)}
                 onClick={() => {
                   if (!shortageBatchDraft || !onSendShortageToPurchases) return;
                   const configs: ShortageBatchConfig[] = shortageBatchDraft.items.map((it) => ({
@@ -2832,7 +2874,7 @@ This is our official Scout Store number. Through this chat, you can:
               {onOpenSourcing && (
                 <button
                   type="button"
-                  disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0)}
+                  disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0 || it.orderQty < it.minShortage)}
                   onClick={() => {
                     if (!shortageBatchDraft || !onSendShortageToPurchases) return;
                     const configs: ShortageBatchConfig[] = shortageBatchDraft.items.map((it) => ({

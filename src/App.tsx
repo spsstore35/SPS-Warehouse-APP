@@ -1,3 +1,5 @@
+import { batchLabel } from './utils/sourcing';
+import { loadSessionUser, signOutUser } from './services/authService';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Product,
@@ -31,11 +33,9 @@ import {
   WorkflowTemplateApplication,
 } from './types/inventory';
 import {
-  getStoredUser,
-  saveStoredUser,
   clearLegacyLocalEntityCaches,
 } from './utils/storage';
-import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType } from './utils/sourcing';
+import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType, batchJoinBlockReason, firstWorkingStage, batchVariantParts, addToBatchBreakdown } from './utils/sourcing';
 import { getEffectiveProductOffer } from './utils/offers';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import {
@@ -45,6 +45,10 @@ import {
   canEditProductMediaAndColors,
   canUserAccessView,
   canUserEditBookings,
+  canUserManageOrders,
+  canUserConfirmPayments,
+  canUserStartShortagePurchase,
+  canUserManageVendors,
   canUserManageTeamScope,
   isFullAccessAdmin,
   normalizeRole,
@@ -61,6 +65,14 @@ import {
   deleteUserFromDb,
   updateUserRoleInDb,
   updateVariantQuantityInDb,
+  applyStockChangeInDb,
+  fetchStockReservedFromDb,
+  previewStockAdjustInDb,
+  recordOrderShortfallInDb,
+  fetchOrderShortagesFromDb,
+  type OrderShortageNote,
+  previewBatchReceiveInDb,
+  receiveBatchStockInDb,
   fetchAdjustmentRequestsFromDb,
   createAdjustmentRequestInDb,
   updateAdjustmentRequestInDb,
@@ -131,6 +143,10 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
+import { appConfirm, AppConfirmHost } from './components/AppConfirm';
+import ShortageNeedsPanel, { NeedsTiles, NeedsList, type NeedsKind, type LowStockNote } from './components/ShortageNeedsPanel';
+import { estimateProductionDays, readSafetyDays } from './utils/deliveryEstimate';
+import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
 import {
@@ -155,7 +171,8 @@ import {
 
 export default function App() {
   // State (strictly DB-driven; only signed-in user session persists locally)
-  const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [requests, setRequests] = useState<AdjustmentRequest[]>([]);
@@ -485,10 +502,30 @@ export default function App() {
     setSelectedActivityLog(null);
   };
 
-  // Keep only active user login session in localStorage
+  // The session lives in Supabase Auth (not in a home-made localStorage record).
   useEffect(() => {
-    saveStoredUser(currentUser);
-  }, [currentUser]);
+    let alive = true;
+    (async () => {
+      const u = await loadSessionUser().catch(() => null);
+      if (alive) {
+        setCurrentUser(u);
+        setAuthReady(true);
+      }
+    })();
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') setCurrentUser(null);
+    });
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  // RLS needs a signed-in session, so reload data whenever the signed-in person changes.
+  useEffect(() => {
+    if (authReady) refreshFromSupabase(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady, currentUser?.id]);
 
   // Category handlers
   const executeAddCategory = async (name: string, description?: string) => {
@@ -999,7 +1036,6 @@ export default function App() {
   // Load all data ONCE when the app opens and clear any legacy client-only entity caches.
   useEffect(() => {
     clearLegacyLocalEntityCaches();
-    refreshFromSupabase(false);
   }, []);
 
   // Auth Handlers
@@ -1011,6 +1047,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    signOutUser().catch(() => {});
     setIsBudgetingUnlocked(false);
     setCurrentUser(null);
     setActiveView('inventory');
@@ -1474,6 +1511,33 @@ export default function App() {
     );
   };
 
+  // Manual stock change (count correction): done by the database so waiting orders are served first
+  // (more stock) or the shortage grows on the latest paid orders (less than the free stock).
+  const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
+  const refreshReserved = () => {
+    if (!currentUser) return;
+    fetchStockReservedFromDb().then(setReservedMap).catch(() => setReservedMap({}));
+  };
+  useEffect(() => {
+    refreshReserved();
+  }, [currentUser?.id, bookings.length, productionBatches.length, activeView]);
+  const syncManualStockChange = (productId: string, variantId: string, delta: number) => {
+    if (!delta) return;
+    applyStockChangeInDb(variantId, delta, 'inventory_adjust', variantId)
+      .then((newQty) => {
+        setProducts((prev) =>
+          prev.map((p) => {
+            if (p.id !== productId) return p;
+            const vs = p.variants.map((v) => (v.id === variantId ? { ...v, quantity: newQty } : v));
+            return { ...p, variants: vs, totalQuantity: vs.reduce((t, v) => t + v.quantity, 0) };
+          })
+        );
+        setTimeout(refreshShortageNotes, 600);
+        setTimeout(refreshReserved, 700);
+      })
+      .catch((err) => showToast(`Stock change was not saved: ${err?.message || 'sync failed'}`));
+  };
+
   // Admin directly adjusts stock without approval step (Persisted to Supabase)
   const handleAdminDirectAdjust = (data: {
     productId: string;
@@ -1493,12 +1557,13 @@ export default function App() {
 
       const nextVariants = prod.variants.map((v) => {
         if (v.id !== data.variantId) return v;
-        oldQty = v.quantity;
+        // The typed number is the PHYSICAL count: free stock + pieces reserved for paid orders.
+        oldQty = v.quantity + (reservedMap[v.id] || 0);
         variantSize = v.size;
         variantColor = v.colorName;
         return {
           ...v,
-          quantity: data.newQuantity,
+          quantity: Math.max(0, data.newQuantity - (reservedMap[v.id] || 0)),
         };
       });
 
@@ -1514,9 +1579,7 @@ export default function App() {
     setProducts(nextProducts);
 
     // Persist variant update to Supabase
-    updateVariantQuantityInDb(data.variantId, data.newQuantity).catch((err) => {
-      console.warn('Supabase variant update error:', err.message);
-    });
+    syncManualStockChange(data.productId, data.variantId, data.newQuantity - oldQty);
 
     // Audit log
     const delta = data.newQuantity - oldQty;
@@ -1561,9 +1624,23 @@ export default function App() {
   };
 
   // Admin Approves a Worker Request (Persisted to Supabase)
-  const handleApproveRequest = (requestId: string, adminNote?: string) => {
+  const handleApproveRequest = (requestId: string, adminNote?: string, skipConfirm?: boolean) => {
     const targetReq = requests.find((r) => r.id === requestId);
     if (!targetReq) return;
+    const reservedNow = reservedMap[targetReq.variantId] || 0;
+    if (targetReq.requestedQuantity < reservedNow && !skipConfirm) {
+      appConfirm({
+        title: 'Counted less than reserved',
+        message: 'The count is lower than what paid orders are holding. The difference will be marked missing on the latest paid orders, and they will wait for a new batch.',
+        facts: [
+          { label: 'Counted', value: String(targetReq.requestedQuantity) },
+          { label: 'Reserved for paid orders', value: String(reservedNow) },
+          { label: 'Marked missing', value: String(reservedNow - targetReq.requestedQuantity) },
+        ],
+        confirmLabel: 'Approve anyway',
+      }).then((ok) => { if (ok) handleApproveRequest(requestId, adminNote, true); });
+      return;
+    }
 
     // 1. Update the actual product variant quantity
     const nextProducts = products.map((prod) => {
@@ -1573,7 +1650,7 @@ export default function App() {
         if (v.id !== targetReq.variantId) return v;
         return {
           ...v,
-          quantity: targetReq.requestedQuantity,
+          quantity: Math.max(0, targetReq.requestedQuantity - reservedNow),
         };
       });
 
@@ -1607,9 +1684,11 @@ export default function App() {
     updateAdjustmentRequestInDb(requestId, 'approved', currentUser || undefined, adminNote).catch((err) => {
       console.warn('Supabase approval error:', err.message);
     });
-    updateVariantQuantityInDb(targetReq.variantId, targetReq.requestedQuantity).catch((err) => {
-      console.warn('Supabase variant quantity update error:', err.message);
-    });
+    syncManualStockChange(
+      targetReq.productId,
+      targetReq.variantId,
+      targetReq.requestedQuantity - ((products.find((p) => p.id === targetReq.productId)?.variants.find((v) => v.id === targetReq.variantId)?.quantity ?? 0) + reservedNow)
+    );
 
     // 4. Record Audit Log
     const matchedProd = products.find((p) => p.id === targetReq.productId);
@@ -1813,119 +1892,21 @@ export default function App() {
     }
 
     try {
-      const { supabase } = await import('./services/supabaseClient');
-      const { hashPassword, getPhoneSearchVariants, buildSyntheticNoEmail } = await import('./utils/security');
-      const securePasswordHash = await hashPassword(plainPassword);
-
-      // 2. Check if user already exists in remote Supabase profiles table (when matching by email/username/phone)
-      let existingProfile: any = null;
-      if (cleanEmail) {
-        const { data: emailMatch, error: existingErr } = await supabase
-          .from('profiles')
-          .select('id, email, status')
-          .ilike('email', cleanEmail)
-          .maybeSingle();
-        if (existingErr) throw existingErr;
-        existingProfile = emailMatch;
-      }
-
-      if (!existingProfile && cleanUsername) {
-        const { data: userMatch, error: userErr } = await supabase
-          .from('profiles')
-          .select('id, email, status')
-          .ilike('username', cleanUsername)
-          .maybeSingle();
-        if (!userErr && userMatch) {
-          if (userMatch.status === 'active') {
-            return { success: false, error: 'An account with this username already exists.' };
-          }
-          existingProfile = userMatch;
-        }
-      }
-
-      if (!existingProfile && cleanPhone) {
-        const variants = getPhoneSearchVariants(cleanPhone);
-        if (variants.length > 0) {
-          const { data: phoneMatch, error: phoneErr } = await supabase
-            .from('profiles')
-            .select('id, email, status')
-            .in('phone', variants)
-            .limit(1);
-          if (!phoneErr && phoneMatch && phoneMatch.length > 0) {
-            if (phoneMatch[0].status === 'active') {
-              return { success: false, error: 'An account with this phone number already exists.' };
-            }
-            existingProfile = phoneMatch[0];
-          }
-        }
-      }
-
-      if (existingProfile) {
-        const updatePayload: Record<string, any> = {
-          full_name: data.name.trim(),
-          username: cleanUsername || null,
-          phone: cleanPhone || null,
-          role: data.role,
-          status: 'active',
-          requested_role: data.role,
-          assigned_teams: initialTeams,
-          approved_at: new Date().toISOString(),
-          approved_by_name: currentUser?.name || 'Admin',
-        };
-        if (cleanEmail) {
-          updatePayload.email = cleanEmail;
-        }
-        if (data.password && data.password.trim().length >= 4) {
-          updatePayload.password_hash = securePasswordHash;
-        }
-
-        let { error: updateErr } = await supabase
-          .from('profiles')
-          .update(updatePayload)
-          .eq('id', existingProfile.id);
-
-        if (updateErr && (updateErr.code === 'PGRST204' || updateErr.code === '42703')) {
-          delete updatePayload.username;
-          delete updatePayload.phone;
-          const retryUpd = await supabase
-            .from('profiles')
-            .update(updatePayload)
-            .eq('id', existingProfile.id);
-          updateErr = retryUpd.error;
-        }
-
-        if (updateErr) throw updateErr;
-
-        if (initialTeams.length > 0) {
-          handleUserTeamsChange(existingProfile.id, initialTeams, []);
-        }
-
-        setUsers((prev) =>
-          prev.map((u) =>
-            u.id === existingProfile.id ||
-            (cleanEmail && (u.email || '').toLowerCase() === cleanEmail)
-              ? {
-                  ...u,
-                  status: 'active',
-                  role: data.role,
-                  name: data.name.trim(),
-                  email: cleanEmail || u.email,
-                  username: cleanUsername,
-                  phone: cleanPhone,
-                  assignedTeams: initialTeams,
-                }
-              : u
-          )
-        );
-
-        showToast(`Account for ${primaryContact} updated to Active.`);
-        return { success: true };
-      }
-
-      // 3. Insert new user profile with secure password hash
-      const newId = crypto.randomUUID();
+      // The account is created on the server (Edge Function admin-users, full_admin only).
+      // The browser never sees or stores a password hash.
+      const { callAdminUsers } = await import('./services/authService');
+      const created = await callAdminUsers({
+        action: 'create',
+        name: data.name.trim(),
+        email: cleanEmail,
+        username: cleanUsername,
+        phone: cleanPhone,
+        password: plainPassword,
+        role: data.role,
+        teams: initialTeams,
+      });
       const newUser: User = {
-        id: newId,
+        id: created?.id || `new_${Date.now()}`,
         name: data.name.trim(),
         email: cleanEmail,
         username: cleanUsername,
@@ -1934,6 +1915,7 @@ export default function App() {
         status: 'active',
         requestedRole: data.role,
         assignedTeams: initialTeams,
+        adminTeams: data.role === 'admin' ? initialTeams : [],
         createdAt: new Date().toISOString(),
         avatarColor:
           data.role === 'full_admin'
@@ -1944,81 +1926,6 @@ export default function App() {
             ? '#059669'
             : '#0284c7',
       };
-
-      const insertPayload: Record<string, any> = {
-        id: newUser.id,
-        full_name: newUser.name,
-        email: cleanEmail || null,
-        username: cleanUsername || null,
-        phone: cleanPhone || null,
-        password_hash: securePasswordHash,
-        role: newUser.role,
-        status: 'active',
-        requested_role: newUser.role,
-        assigned_teams: initialTeams,
-        avatar_color: newUser.avatarColor,
-        approved_at: new Date().toISOString(),
-        approved_by_name: currentUser?.name || 'Admin',
-        created_at: newUser.createdAt,
-      };
-
-      let insertErr: any = null;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const res = await supabase.from('profiles').insert(insertPayload);
-        insertErr = res.error;
-        if (!insertErr) break;
-        if (
-          !cleanEmail &&
-          (insertErr.code === '23502' ||
-            String(insertErr.message || '').toLowerCase().includes('null value in column "email"'))
-        ) {
-          insertPayload.email = buildSyntheticNoEmail(cleanUsername, cleanPhone, newId);
-          continue;
-        }
-        if (insertErr.code === 'PGRST204' || insertErr.code === '42703') {
-          delete insertPayload.username;
-          delete insertPayload.phone;
-          continue;
-        }
-        break;
-      }
-
-      if (insertErr) {
-        if (insertErr.message?.includes('profiles_username_unique_idx')) {
-          return { success: false, error: 'An account with this username already exists.' };
-        }
-        if (insertErr.message?.includes('profiles_phone_unique_idx')) {
-          return { success: false, error: 'An account with this phone number already exists.' };
-        }
-        // If unique constraint on email was hit, update existing row instead
-        if (
-          cleanEmail &&
-          (insertErr.code === '23505' ||
-            insertErr.message?.includes('profiles_email_key') ||
-            insertErr.message?.includes('profiles_email_unique_idx') ||
-            insertErr.message?.includes('duplicate key'))
-        ) {
-          const { error: dupRetryErr } = await supabase
-            .from('profiles')
-            .update({
-              status: 'active',
-              role: newUser.role,
-              requested_role: newUser.role,
-              assigned_teams: initialTeams,
-              full_name: newUser.name,
-              password_hash: securePasswordHash,
-              approved_at: new Date().toISOString(),
-              approved_by_name: currentUser?.name || 'Admin',
-            })
-            .ilike('email', cleanEmail);
-          if (dupRetryErr) throw dupRetryErr;
-
-          refreshFromSupabase();
-          showToast(`Account for ${cleanEmail} activated.`);
-          return { success: true };
-        }
-        throw insertErr;
-      }
 
       setUsers((prev) => [newUser, ...prev]);
 
@@ -2117,7 +2024,19 @@ export default function App() {
       getScoutFare2Meta(booking.assignedFare2);
     const taskId = `task_order_${booking.id}`;
     const invTaskId = `task_inv_${booking.id}`;
-    const createdDate = (booking.createdAt || new Date().toISOString()).slice(0, 10);
+    // Teams only see an order (calendar / board tasks) once the deposit is confirmed. An unpaid order
+    // creates nothing, and any task made for it earlier is removed.
+    const orderIsPaid = Boolean(booking.depositPaid) || booking.status !== 'pending';
+    if (!orderIsPaid) {
+      const stale = [taskId, invTaskId];
+      if (calendarEvents.some((ev) => stale.includes(ev.id))) {
+        setCalendarEvents((prev) => prev.filter((ev) => !stale.includes(ev.id)));
+        stale.forEach((id) => deleteCalendarEventFromDb(id).catch(() => {}));
+      }
+      return;
+    }
+    // The task is dated by the PAYMENT day (not the day the order was created).
+    const createdDate = (booking.depositPaidAt || new Date().toISOString()).slice(0, 10);
     const totalUnits = booking.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
     const itemsSummary = booking.items
       .map(
@@ -2278,6 +2197,81 @@ export default function App() {
   };
 
   // Inventory Mgmt -> Purchases Team & Calendar Handoff when stock shortage exists
+  // "Needs action" list: paid orders still waiting for stock (from order_stock_owed).
+  const [shortageNotes, setShortageNotes] = useState<OrderShortageNote[]>([]);
+  const [needsOpen, setNeedsOpen] = useState<NeedsKind>(null);
+  const [shortageToStart, setShortageToStart] = useState<OrderShortageNote | null>(null);
+  const [shortageGroup, setShortageGroup] = useState<OrderShortageNote[] | null>(null);
+  const refreshShortageNotes = () => {
+    if (!currentUser) return;
+    fetchOrderShortagesFromDb().then(setShortageNotes).catch(() => setShortageNotes([]));
+  };
+  useEffect(() => {
+    refreshShortageNotes();
+    const t = setInterval(refreshShortageNotes, 20000);
+    const onVis = () => { if (document.visibilityState === 'visible') refreshShortageNotes(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [currentUser?.id, bookings.length, productionBatches.length, activeView]);
+
+  // Low-stock items (variant stock at or below its own minimum) that have no purchase running yet.
+  const [lowToStart, setLowToStart] = useState<LowStockNote | null>(null);
+  const lowStockNotes: LowStockNote[] = useMemo(() => {
+    const out: LowStockNote[] = [];
+    products.forEach((p) => {
+      p.variants.forEach((v) => {
+        if (v.minThreshold === undefined || v.minThreshold === null) return;
+        if (!(v.minThreshold > 0) || v.quantity > v.minThreshold) return;
+        if (shortageNotes.some((n) => n.variantId === v.id)) return;
+        out.push({
+          productId: p.id,
+          variantId: v.id,
+          productName: p.name,
+          size: String(v.size),
+          colorName: v.colorName,
+          quantity: v.quantity,
+          minThreshold: v.minThreshold,
+          hasBatch: productionBatches.some(
+            (b) => b.status === 'in_progress' && b.variantId === v.id
+          ),
+        });
+      });
+    });
+    return out.sort((a, b) => Number(a.hasBatch) - Number(b.hasBatch) || a.quantity - b.quantity);
+  }, [products, shortageNotes, productionBatches]);
+
+  const handleStartLowStockPurchase = (n: LowStockNote, quantity: number, targetDate?: string, vendorId?: string) => {
+    const wf = productWorkflows.find((w) => w.productId === n.productId);
+    const stageKey: OperationStageKey =
+      wf?.activeStages?.find((st) => st !== 'stock_in') ||
+      (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+    const batchId = `batch_low_${n.variantId}_${Date.now()}`;
+    const batchCode = `PO-LOW-${Date.now().toString().slice(-6)}`;
+    const newBatch: ProductionBatch = {
+      id: batchId,
+      productId: n.productId,
+      variantId: n.variantId,
+      batchCode,
+      quantity: Math.max(1, Math.round(quantity)),
+      currentStageKey: stageKey,
+      status: 'in_progress',
+      targetDate,
+      stageAssignments: {
+        [stageKey]: {
+          ...(vendorId ? { vendorId } : {}),
+          notes: `Restock: ${n.productName} (${n.size} / ${n.colorName}) was low (${n.quantity} left).`,
+        },
+      } as Record<string, BatchStageAssignment>,
+      requestedByTeam: 'inventory',
+      createdAt: new Date().toISOString(),
+    };
+    setProductionBatches((prev) => [newBatch, ...prev]);
+    upsertProductionBatchToDb(newBatch).catch((err) =>
+      showToast(`Database batch sync error: ${err?.message || 'Sync error'}`)
+    );
+    showToast(`Restock batch ${batchCode} created for ${n.productName} (${quantity} pcs).`);
+  };
+
   const handleSendShortageToPurchases = (
     booking: Booking,
     targetDate?: string,
@@ -2320,7 +2314,10 @@ export default function App() {
           const matchedShort = shortItems.find(
             (s) => s.item.productId === cfg.productId && s.item.variantId === cfg.variantId
           );
-          const minShort = matchedShort?.shortQty ?? 1;
+          const owedNote = shortageNotes.find(
+            (n) => n.bookingId === booking.id && n.variantId === cfg.variantId
+          );
+          const minShort = owedNote?.owed ?? matchedShort?.shortQty ?? 1;
           return {
             productId: cfg.productId,
             variantId: cfg.variantId,
@@ -2328,6 +2325,8 @@ export default function App() {
             size: item?.size || 'Std',
             colorName: item?.colorName || 'Default',
             quantity: Math.max(1, Math.round(cfg.quantity || minShort)),
+            extraBookingIds: cfg.extraBookingIds,
+            extraBookingNumbers: cfg.extraBookingNumbers,
             minShort,
             stageAssignments: (cfg.stageAssignments || {}) as Record<string, BatchStageAssignment>,
             targetDate: cfg.targetDate || expectedDate,
@@ -2340,6 +2339,8 @@ export default function App() {
           size: entry.item.size || 'Std',
           colorName: entry.item.colorName || 'Default',
           quantity: entry.shortQty,
+          extraBookingIds: undefined as string[] | undefined,
+          extraBookingNumbers: undefined as string[] | undefined,
           minShort: entry.shortQty,
           stageAssignments: {} as Record<string, BatchStageAssignment>,
           targetDate: expectedDate,
@@ -2348,7 +2349,7 @@ export default function App() {
     entriesToProcess.forEach((entry, idx) => {
       const wf = productWorkflows.find((w) => w.productId === entry.productId);
       const batchId = `batch_ord_${booking.id}_${entry.variantId}_${Date.now()}_${idx}`;
-      const batchCode = `PO-#${booking.bookingNumber}-${idx + 1}`;
+      const batchCode = `PO-#${[booking.bookingNumber, ...(entry.extraBookingNumbers || [])].join('+')}-${idx + 1}`;
       const firstNonStockStage = wf?.activeStages?.find((s) => s !== 'stock_in');
       const stageKey: OperationStageKey =
         firstNonStockStage ||
@@ -2386,6 +2387,8 @@ export default function App() {
         stageAssignments: mergedStageAssignments,
         linkedBookingId: booking.id,
         linkedBookingNumber: booking.bookingNumber,
+        extraBookingIds: entry.extraBookingIds && entry.extraBookingIds.length ? entry.extraBookingIds : undefined,
+        extraBookingNumbers: entry.extraBookingNumbers,
         requestedByTeam: 'inventory',
         createdAt: new Date().toISOString(),
       };
@@ -2393,7 +2396,7 @@ export default function App() {
 
       createdCalendarTasks.push({
         id: `task_purchase_${batchId}`,
-        title: `[Purchases] ${entry.productName} (${entry.quantity} pcs) — Order #${booking.bookingNumber}`,
+        title: `[Purchases] ${entry.productName} (${entry.quantity} pcs) — Order #${[booking.bookingNumber, ...(entry.extraBookingNumbers || [])].join(', #')}`,
         itemType: 'task',
         startDate: entry.targetDate,
         endDate: entry.targetDate,
@@ -2430,19 +2433,23 @@ export default function App() {
       )
     );
 
-    lastBookingMutationAtRef.current = Date.now();
-    const updatedBooking: Booking = {
-      ...booking,
-      stockCheckStatus: 'in_production',
-      updatedAt: new Date().toISOString(),
-    };
-    setBookings((prev) => prev.map((b) => (b.id === booking.id ? updatedBooking : b)));
-    updateBookingInDb(booking.id, updatedBooking).catch((err) =>
-      showToast(`Database booking sync error: ${err?.message || 'Sync error'}`)
-    );
+    const bookingVisible = bookings.some((b) => b.id === booking.id);
+    if (bookingVisible) {
+      lastBookingMutationAtRef.current = Date.now();
+      const updatedBooking: Booking = {
+        ...booking,
+        stockCheckStatus: 'in_production',
+        updatedAt: new Date().toISOString(),
+      };
+      setBookings((prev) => prev.map((b) => (b.id === booking.id ? updatedBooking : b)));
+      updateBookingInDb(booking.id, updatedBooking).catch((err) =>
+        showToast(`Database booking sync error: ${err?.message || 'Sync error'}`)
+      );
+      syncOrderTaskToScoutFera2(updatedBooking);
+    }
 
     upsertCalendarItemsBatch(createdCalendarTasks);
-    syncOrderTaskToScoutFera2(updatedBooking);
+    setTimeout(refreshShortageNotes, 1500);
 
     showToast(
       `Created ${createdBatches.length} open batch(es) in Sourcing & Purchases Calendar (Target: ${expectedDate}).`
@@ -2634,13 +2641,13 @@ export default function App() {
     autoAdvanceToPreparing = false,
     bypassApproval = false
   ) => {
-    if (!bypassApproval && !isUserAdmin(currentUser)) {
+    if (!bypassApproval && !canUserManageOrders(currentUser, users)) {
       if (!canUserEditBookings(currentUser, users)) {
         showToast('View-only access on Orders & Bookings.');
         return;
       }
       handleSubmitTeamRequest({
-        teamScope: 'budgeting',
+        teamScope: 'troops',
         entityType: 'booking_create',
         actionType: 'create',
         targetId: newBooking.id,
@@ -2652,7 +2659,8 @@ export default function App() {
     }
 
     let nextProducts = [...products];
-    const variantDbUpdates: { variantId: string; newQty: number }[] = [];
+    const variantDbUpdates: { variantId: string; newQty: number; delta: number }[] = [];
+    const shortfalls: { variantId: string; owed: number }[] = [];
 
     // INVENTORY RULE: If created directly in preparing (deposit confirmed upfront), reserve & deduct available stock!
     // Otherwise, booking remains in 'pending' and inventory stock is NOT touched.
@@ -2666,7 +2674,10 @@ export default function App() {
               const deductUnits = Math.min(item.quantity, Math.max(0, v.quantity));
               const updatedQty = Math.max(0, v.quantity - deductUnits);
               if (deductUnits > 0) {
-                variantDbUpdates.push({ variantId: v.id, newQty: updatedQty });
+                variantDbUpdates.push({ variantId: v.id, newQty: updatedQty, delta: -deductUnits });
+              }
+              if (item.quantity > deductUnits) {
+                shortfalls.push({ variantId: v.id, owed: item.quantity - deductUnits });
               }
               return {
                 ...v,
@@ -2686,11 +2697,12 @@ export default function App() {
       });
       setProducts(nextProducts);
       variantDbUpdates.forEach((u) => {
-        updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
-          console.warn('Notice deducting booking stock in Supabase:', err?.message);
+        applyStockChangeInDb(u.variantId, u.delta, 'order_deduction', newBooking.id).catch((err) => {
+          showToast(`Stock was NOT saved in the database: ${err?.message || 'sync failed'}`);
         });
       });
       newBooking.inventoryDeducted = true;
+      saveOrderShortfalls(newBooking.id, shortfalls, newBooking);
     }
 
     lastBookingMutationAtRef.current = Date.now();
@@ -2735,7 +2747,7 @@ export default function App() {
     const safeBooking: Booking =
       prevBooking &&
       (prevBooking.troopGroup || '') !== (updatedBooking.troopGroup || '') &&
-      !isUserAdmin(currentUser)
+      !canUserManageOrders(currentUser, users)
         ? { ...updatedBooking, troopGroup: prevBooking.troopGroup }
         : updatedBooking;
 
@@ -2750,10 +2762,10 @@ export default function App() {
   };
 
   const handleSaveEditedBooking = (editedBooking: Booking, bypassApproval = false) => {
-    if (!bypassApproval && !isUserAdmin(currentUser)) {
+    if (!bypassApproval && !canUserManageOrders(currentUser, users)) {
       if (canUserEditBookings(currentUser, users)) {
         handleSubmitTeamRequest({
-          teamScope: 'budgeting',
+          teamScope: 'troops',
           entityType: 'booking_edit',
           actionType: 'update',
           targetId: editedBooking.id,
@@ -2905,7 +2917,7 @@ export default function App() {
   };
 
   const handleDeclinePaymentVerification = (bookingId: string) => {
-    if (!isUserAdmin(currentUser)) {
+    if (!canUserConfirmPayments(currentUser, users)) {
       showToast('Only Admins can approve or decline payment verification requests.');
       return;
     }
@@ -2953,12 +2965,13 @@ export default function App() {
     nextStatus: BookingStatus,
     bypassAdminCheck = false
   ) => {
-    if (nextStatus === 'preparing' && !bypassAdminCheck && !isUserAdmin(currentUser)) {
+    if (nextStatus === 'preparing' && !bypassAdminCheck && !canUserConfirmPayments(currentUser, users)) {
       showToast('Only Admins can confirm payment. Please submit a Payment Verification Request.');
       return;
     }
     const nextProducts = [...products];
-    const variantDbUpdates: { variantId: string; newQty: number }[] = [];
+    const variantDbUpdates: { variantId: string; newQty: number; delta: number }[] = [];
+    const shortfalls: { variantId: string; owed: number }[] = [];
     let affectedBooking: Booking | undefined;
 
     const updatedBookings = bookings.map((b) => {
@@ -2980,7 +2993,10 @@ export default function App() {
                 const deductUnits = Math.min(item.quantity, Math.max(0, v.quantity));
                 const updatedQty = Math.max(0, v.quantity - deductUnits);
                 if (deductUnits > 0) {
-                  variantDbUpdates.push({ variantId: v.id, newQty: updatedQty });
+                  variantDbUpdates.push({ variantId: v.id, newQty: updatedQty, delta: -deductUnits });
+                }
+                if (item.quantity > deductUnits) {
+                  shortfalls.push({ variantId: v.id, owed: item.quantity - deductUnits });
                 }
                 return {
                   ...v,
@@ -3031,10 +3047,11 @@ export default function App() {
 
       // Persist all deducted variant quantities to Supabase
       variantDbUpdates.forEach((u) => {
-        updateVariantQuantityInDb(u.variantId, u.newQty).catch((err) => {
-          console.warn('Notice updating reserved variant stock in Supabase:', err?.message);
+        applyStockChangeInDb(u.variantId, u.delta, 'order_deduction', bookingId).catch((err) => {
+          showToast(`Stock was NOT saved in the database: ${err?.message || 'sync failed'}`);
         });
       });
+      saveOrderShortfalls(bookingId, shortfalls);
 
       lastBookingMutationAtRef.current = Date.now();
       setBookings(updatedBookings);
@@ -3079,7 +3096,7 @@ export default function App() {
   };
 
   const handleDeleteBooking = (bookingId: string, bypassAdminCheck = false) => {
-    if (!bypassAdminCheck && !isUserAdmin(currentUser)) {
+    if (!bypassAdminCheck && !canUserManageOrders(currentUser, users)) {
       showToast('Only Admins can delete bookings directly.');
       return;
     }
@@ -3731,24 +3748,264 @@ export default function App() {
     );
   };
 
+  // Merge two early batches of the same item (any size/colour): quantities add up, linked orders are combined.
+  const handleMergeBatches = (keep: ProductionBatch, absorbed: ProductionBatch) => {
+    const primary = keep.linkedBookingId || absorbed.linkedBookingId;
+    const pairs: { id: string; num: string }[] = [];
+    const add = (id?: string, num?: string) => {
+      if (id && id !== primary && !pairs.some((p) => p.id === id)) pairs.push({ id, num: num || '' });
+    };
+    add(keep.linkedBookingId, keep.linkedBookingNumber);
+    (keep.extraBookingIds || []).forEach((id, i) => add(id, keep.extraBookingNumbers?.[i]));
+    add(absorbed.linkedBookingId, absorbed.linkedBookingNumber);
+    (absorbed.extraBookingIds || []).forEach((id, i) => add(id, absorbed.extraBookingNumbers?.[i]));
+    const merged: ProductionBatch = {
+      ...keep,
+      ...(() => {
+        const parts = [...batchVariantParts(absorbed)];
+        const loose = absorbed.quantity - parts.reduce((s, p) => s + p.qty, 0);
+        const r = addToBatchBreakdown(keep, loose > 0 ? [...parts, { qty: loose }] : parts);
+        return { quantity: r.quantity, variantQty: r.variantQty };
+      })(),
+      linkedBookingId: primary,
+      linkedBookingNumber: keep.linkedBookingId ? keep.linkedBookingNumber : absorbed.linkedBookingNumber,
+      extraBookingIds: pairs.length ? pairs.map((p) => p.id) : undefined,
+      extraBookingNumbers: pairs.length ? pairs.map((p) => p.num) : undefined,
+    };
+    // Save the merged batch first, then remove the other one.
+    setProductionBatches((prev) => prev.map((b) => (b.id === keep.id ? merged : b)));
+    upsertProductionBatchToDb(merged)
+      .then(() => {
+        handleDeleteBatch(absorbed.id);
+        showToast(`Merged ${batchLabel(absorbed)} into ${batchLabel(keep)}: now ${merged.quantity} pcs.`);
+        setTimeout(refreshShortageNotes, 1000);
+      })
+      .catch((err) => {
+        setProductionBatches((prev) => prev.map((b) => (b.id === keep.id ? keep : b)));
+        showToast(`Could not merge: ${err?.message || 'sync failed'}`);
+      });
+  };
+
+  // Before starting a NEW batch: is there an open batch of the same item still at its first stage?
+  type JoinPrompt = {
+    batch: ProductionBatch;
+    blockedReason?: string;
+    variantId?: string;
+    quantity: number;
+    orders: { id: string; num: string }[];
+    startNew: () => void;
+  };
+  const [joinPrompt, setJoinPrompt] = useState<JoinPrompt | null>(null);
+  const askJoinOrStartNew = (
+    productId: string,
+    variantId: string,
+    quantity: number,
+    orders: { id: string; num: string }[],
+    startNew: () => void
+  ) => {
+    const open = productionBatches.filter(
+      (b) => b.productId === productId && b.status === 'in_progress'
+    );
+    if (open.length === 0) return startNew();
+    const first = firstWorkingStage(productWorkflows.find((w) => w.productId === productId));
+    const joinable = open.find((b) => !batchJoinBlockReason(b, first));
+    if (joinable) return setJoinPrompt({ batch: joinable, variantId, quantity, orders, startNew });
+    setJoinPrompt({ batch: open[0], variantId, blockedReason: batchJoinBlockReason(open[0], first) || undefined, quantity, orders, startNew });
+  };
+  const popupEstimate = (productId: string, variantId?: string) => {
+    const e = estimateProductionDays(productionBatches, productId, variantId);
+    if (!e || e.max <= 0) return null;
+    const safety = readSafetyDays();
+    return { days: e.max + safety, baseDays: e.max, safety };
+  };
+  const popupMergeTargets = (productId: string) => {
+    const first = firstWorkingStage(productWorkflows.find((w) => w.productId === productId));
+    return productionBatches.filter((b) => b.productId === productId && b.status === 'in_progress' && !batchJoinBlockReason(b, first));
+  };
+  const joinVariantText = (productId: string, variantId?: string) => {
+    const v = products.find((x) => x.id === productId)?.variants.find((x) => x.id === variantId);
+    return v ? ` (size ${v.size} / ${v.colorName})` : '';
+  };
+  const joinExistingBatch = (p: JoinPrompt) => {
+    const b = p.batch;
+    const have = new Set([b.linkedBookingId, ...(b.extraBookingIds || [])].filter(Boolean) as string[]);
+    const newOnes = p.orders.filter((o) => !have.has(o.id));
+    let primary = b.linkedBookingId;
+    let primaryNum = b.linkedBookingNumber;
+    let list = newOnes;
+    if (!primary && newOnes.length > 0) {
+      primary = newOnes[0].id;
+      primaryNum = newOnes[0].num;
+      list = newOnes.slice(1);
+    }
+    const extraIds = [...(b.extraBookingIds || []), ...list.map((o) => o.id)];
+    const extraNums = [...(b.extraBookingNumbers || (b.extraBookingIds || []).map(() => '')), ...list.map((o) => o.num)];
+    const updated: ProductionBatch = {
+      ...b,
+      quantity: addToBatchBreakdown(b, [{ variantId: p.variantId, qty: p.quantity }]).quantity,
+      variantQty: addToBatchBreakdown(b, [{ variantId: p.variantId, qty: p.quantity }]).variantQty,
+      linkedBookingId: primary,
+      linkedBookingNumber: primaryNum,
+      extraBookingIds: extraIds.length ? extraIds : undefined,
+      extraBookingNumbers: extraIds.length ? extraNums : undefined,
+    };
+    setProductionBatches((prev) => prev.map((x) => (x.id === b.id ? updated : x)));
+    upsertProductionBatchToDb(updated)
+      .then(() => {
+        showToast(`Added ${p.quantity} pcs${joinVariantText(b.productId, p.variantId)} to ${batchLabel(b)}: now ${updated.quantity} pcs.`);
+        setTimeout(refreshShortageNotes, 1000);
+      })
+      .catch((err) => {
+        setProductionBatches((prev) => prev.map((x) => (x.id === b.id ? b : x)));
+        showToast(`Could not add to the batch: ${err?.message || 'sync failed'}`);
+      });
+  };
+
   const handleDeleteBatch = (batchId: string) => {
     const target = productionBatches.find((b) => b.id === batchId);
     setProductionBatches((prev) => prev.filter((b) => b.id !== batchId));
     deleteProductionBatchFromDb(batchId).catch((err) =>
       showToast(`Database batch delete error: ${err?.message || 'Sync failed'}`)
     );
-    showToast(`Deleted batch ${target?.batchCode || ''}.`);
+    showToast(`Deleted batch ${(target ? batchLabel(target) : undefined) || ''}.`);
   };
 
-  const handleCompleteBatchStockIn = ({
-    batchId,
-    finalQuantity,
-    variantId,
-  }: {
+  // Tell the purchases team (Calendar & Board task, same mechanism used for inventory/Fera2) that production must start.
+  const notifyPurchasesOfShortage = (bookingId: string, items: { variantId: string; owed: number }[], bk?: Booking) => {
+    const booking = bk || bookings.find((b) => b.id === bookingId);
+    const today = new Date().toISOString().slice(0, 10);
+    const lines = items.map((it) => {
+      const prod = products.find((p) => p.variants.some((v) => v.id === it.variantId));
+      const v = prod?.variants.find((x) => x.id === it.variantId);
+      return `• ${prod?.name || 'Item'} (${v?.size || 'Std'}${v?.colorName ? ' / ' + v.colorName : ''}): make ${it.owed}`;
+    });
+    const total = items.reduce((sum, i) => sum + i.owed, 0);
+    const purchMember = users.find((u) => u.status === 'active' && (u.assignedTeams || []).includes('purchases') && isUserAdmin(u));
+    const task: CalendarItem = {
+      id: `task_purch_${bookingId}`,
+      title: `[Batch needed] Order #${booking?.bookingNumber || ''} (${total} pcs short)`,
+      itemType: 'task',
+      startDate: today,
+      endDate: today,
+      allDay: true,
+      completed: false,
+      boardStatus: 'upcoming',
+      team: 'purchases',
+      assignedToId: purchMember?.id,
+      assignedToName: purchMember?.name,
+      linkedBookingId: bookingId,
+      workflowStage: 'purchase_needed',
+      notes: `Deposit confirmed, stock was not enough. Start a purchase/production batch in Sourcing & Operations.\n${booking ? `Order #${booking.bookingNumber} · ${booking.clientName}\n` : ''}${lines.join('\n')}`,
+      createdById: currentUser?.id || 'system',
+      createdByName: currentUser?.name || 'System',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    upsertCalendarItemsBatch([task]);
+  };
+
+  // Stock was short when the deposit was confirmed: remember what the order still waits for.
+  // The order row is saved a moment after, so retry a few times.
+  const saveOrderShortfalls = (bookingId: string, items: { variantId: string; owed: number }[], bk?: Booking) => {
+    if (items.length === 0) return;
+    notifyPurchasesOfShortage(bookingId, items, bk);
+    const total = items.reduce((sum, i) => sum + i.owed, 0);
+    showToast(
+      `Stock was not enough: ${total} unit(s) are still needed for this order. They will be taken automatically when the linked purchase is received.`
+    );
+    items.forEach((it) => {
+      const attempt = (n: number) => {
+        recordOrderShortfallInDb(bookingId, it.variantId, it.owed).catch((err) => {
+          if (n < 4) setTimeout(() => attempt(n + 1), 1500 * (n + 1));
+          else showToast(`Could not remember the missing stock for this order: ${err?.message || 'sync failed'}`);
+        });
+      };
+      setTimeout(() => attempt(0), 1200);
+    });
+  };
+
+  // Tell the user BEFORE saving when part of the received goods goes to a waiting order.
+  const handleCompleteBatchStockIn = (args: {
     batchId: string;
     finalQuantity: number;
     variantId: string;
+    parts?: { variantId: string; qty: number }[];
   }) => {
+    if (args.parts && args.parts.length > 1) {
+      const parts = args.parts.map((p) => ({ variantId: p.variantId, qty: Math.max(0, Math.round(p.qty)) })).filter((p) => p.qty > 0);
+      Promise.all(parts.map((p) => previewBatchReceiveInDb(args.batchId, p.variantId, p.qty).catch(() => null))).then((pvs) => {
+        const reservedBy: Record<string, number> = {};
+        for (let i = 0; i < parts.length; i++) {
+          const pv = pvs[i];
+          const pr = products.find((x) => x.id === productionBatches.find((b) => b.id === args.batchId)?.productId);
+          const vv = pr?.variants.find((x) => x.id === parts[i].variantId);
+          const label = vv ? `size ${vv.size} / ${vv.colorName}` : 'one of the sizes';
+          if (pv && pv.owed > 0 && parts[i].qty < pv.owed) {
+            showToast(`Cannot complete: the orders on this purchase still need ${pv.owed} pcs of ${label} (Order #${pv.bookingNumber}). The quantity made for it must be at least ${pv.owed}.`);
+            return;
+          }
+          if (pv && pv.reserved > 0) reservedBy[parts[i].variantId] = pv.reserved;
+        }
+        const totalReserved = Object.values(reservedBy).reduce((s, n) => s + n, 0);
+        if (totalReserved > 0) {
+          const totalQty = parts.reduce((sum, x) => sum + x.qty, 0);
+          appConfirm({
+            title: 'Some pieces go to waiting orders',
+            message: 'Part of the received goods is deducted for orders that are waiting. The rest goes to stock, per size.',
+            facts: [
+              { label: 'Received', value: `${totalQty} pcs` },
+              { label: 'Deducted for waiting orders', value: `${totalReserved} pcs` },
+              { label: 'Added to stock', value: `${totalQty - totalReserved} pcs` },
+            ],
+            confirmLabel: 'Complete & Stock In',
+          }).then((ok) => { if (ok) finishBatchStockIn({ ...args, parts }, reservedBy); });
+          return;
+        }
+        finishBatchStockIn({ ...args, parts }, reservedBy);
+      });
+      return;
+    }
+    const qty = Math.max(1, Math.round(args.finalQuantity));
+    previewBatchReceiveInDb(args.batchId, args.variantId, qty)
+      .catch(() => null)
+      .then((pv) => {
+        if (pv && pv.owed > 0 && qty < pv.owed) {
+          showToast(
+            `Cannot complete: this purchase is for Order #${pv.bookingNumber} (${pv.clientName}), which still needs ${pv.owed} pcs. The quantity made must be at least ${pv.owed}.`
+          );
+          return;
+        }
+        if (pv && pv.reserved > 0) {
+          appConfirm({
+            title: `Pieces go to Order #${pv.bookingNumber}`,
+            message: `${pv.clientName} is waiting for stock. Part of this batch is deducted for the order, the rest goes to stock.`,
+            facts: [
+              { label: 'Received', value: `${qty} pcs` },
+              { label: 'Deducted for the order', value: `${pv.reserved} pcs` },
+              { label: 'Added to stock', value: `${qty - pv.reserved} pcs` },
+            ],
+            confirmLabel: 'Complete & Stock In',
+          }).then((ok) => { if (ok) finishBatchStockIn(args, { [args.variantId]: pv?.reserved || 0 }); });
+          return;
+        }
+        finishBatchStockIn(args, { [args.variantId]: pv?.reserved || 0 });
+      });
+  };
+
+  const finishBatchStockIn = (
+    {
+      batchId,
+      finalQuantity,
+      variantId,
+      parts: partsIn,
+    }: {
+      batchId: string;
+      finalQuantity: number;
+      variantId: string;
+      parts?: { variantId: string; qty: number }[];
+    },
+    reservedBy: Record<string, number>
+  ) => {
     const batch = productionBatches.find((b) => b.id === batchId);
     const product = products.find((p) => p.id === batch?.productId);
     if (!batch || !product) {
@@ -3756,20 +4013,21 @@ export default function App() {
       return;
     }
 
-    const qtyToAdd = Math.max(1, Math.round(finalQuantity));
-    const targetVariant = product.variants.find((v) => v.id === variantId) || product.variants[0];
-    if (!targetVariant) {
+    const parts = partsIn && partsIn.length > 1
+      ? partsIn
+      : [{ variantId: product.variants.find((v) => v.id === variantId)?.id || product.variants[0]?.id || '', qty: Math.max(1, Math.round(finalQuantity)) }];
+    if (parts.length === 0 || !parts[0].variantId) {
       showToast('No variant found on product to receive stock.');
       return;
     }
-
-    const oldQty = targetVariant.quantity;
-    const newQty = oldQty + qtyToAdd;
+    const qtyToAdd = parts.reduce((s, p) => s + p.qty, 0);
+    const targetVariant = product.variants.find((v) => v.id === parts[0].variantId) || product.variants[0];
     const oldTotal = product.totalQuantity;
 
-    const updatedVariants = product.variants.map((v) =>
-      v.id === targetVariant.id ? { ...v, quantity: newQty } : v
-    );
+    const updatedVariants = product.variants.map((v) => {
+      const part = parts.find((p) => p.variantId === v.id);
+      return part ? { ...v, quantity: v.quantity + part.qty - (reservedBy[v.id] || 0) } : v;
+    });
     const newTotal = updatedVariants.reduce((sum, v) => sum + v.quantity, 0);
     const updatedProduct: Product = {
       ...product,
@@ -3780,37 +4038,51 @@ export default function App() {
 
     const nextProducts = products.map((p) => (p.id === product.id ? updatedProduct : p));
     setProducts(nextProducts);
-    updateVariantQuantityInDb(targetVariant.id, newQty).catch((err) =>
-      showToast(`Database stock update error: ${err?.message || 'Sync failed'}`)
-    );
+    (async () => {
+      for (const part of parts) {
+        try {
+          const r = await receiveBatchStockInDb(batchId, part.variantId, part.qty);
+          if (r.reserved > 0) showToast(`${r.reserved} unit(s) were taken for the waiting order. Stock is now ${r.newQuantity}.`);
+          setProducts((prev) => prev.map((p) => p.id !== product.id ? p : (() => { const vs = p.variants.map((v) => (v.id === part.variantId ? { ...v, quantity: r.newQuantity } : v)); return { ...p, variants: vs, totalQuantity: vs.reduce((t, v) => t + v.quantity, 0) }; })()));
+          setTimeout(refreshShortageNotes, 800);
+        } catch (err: any) {
+          showToast(`Database stock update error: ${err?.message || 'Sync failed'}`);
+        }
+      }
+    })();
 
-    // Log audit entry for Gard stock-in
-    const sizeText =
-      targetVariant.size === 'One Size' || targetVariant.size === 'Standard'
-        ? 'Standard Size'
-        : targetVariant.size;
-    const newLog: AuditLogEntry = {
-      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      action: 'stock_adjusted',
-      actorName: currentUser?.name || 'Operations',
-      actorRole: currentUser?.role || 'admin',
-      productId: product.id,
-      productName: product.name,
-      productImage: product.image,
-      variantSize: sizeText,
-      variantColor: targetVariant.colorName,
-      oldQuantity: oldQty,
-      newQuantity: newQty,
-      delta: qtyToAdd,
-      totalQuantityBefore: oldTotal,
-      totalQuantityAfter: newTotal,
-      reason: `Batch Stock-In (Gard): ${batch.batchCode}`,
-      summary: `Batch ${batch.batchCode} Stocked In (+${qtyToAdd}): "${product.name}" [${sizeText} / ${targetVariant.colorName}] (${oldQty} -> ${newQty})`,
-      details: `Completed production batch ${batch.batchCode}. Stock added via Gard: +${qtyToAdd} pcs (${sizeText} / ${targetVariant.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
-    };
-    setAuditLogs((prev) => [newLog, ...prev]);
-    insertAuditLogInDb(newLog).catch(() => {});
+    // Log audit entry for Gard stock-in (one per size/colour)
+    let newLog: AuditLogEntry | undefined;
+    parts.forEach((part) => {
+      const pv = product.variants.find((v) => v.id === part.variantId);
+      if (!pv) return;
+      const oldQty = pv.quantity;
+      const newQty = oldQty + part.qty - (reservedBy[pv.id] || 0);
+      const sizeText = pv.size === 'One Size' || pv.size === 'Standard' ? 'Standard Size' : pv.size;
+      const log: AuditLogEntry = {
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        action: 'stock_adjusted',
+        actorName: currentUser?.name || 'Operations',
+        actorRole: currentUser?.role || 'admin',
+        productId: product.id,
+        productName: product.name,
+        productImage: product.image,
+        variantSize: sizeText,
+        variantColor: pv.colorName,
+        oldQuantity: oldQty,
+        newQuantity: newQty,
+        delta: part.qty,
+        totalQuantityBefore: oldTotal,
+        totalQuantityAfter: newTotal,
+        reason: `Batch Stock-In (Gard): ${batchLabel(batch)}`,
+        summary: `Batch ${batchLabel(batch)} Stocked In (+${part.qty}): "${product.name}" [${sizeText} / ${pv.colorName}] (${oldQty} -> ${newQty})`,
+        details: `Completed production batch ${batchLabel(batch)}. Stock added via Gard: +${part.qty} pcs (${sizeText} / ${pv.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
+      };
+      newLog = newLog || log;
+      setAuditLogs((prev) => [log, ...prev]);
+      insertAuditLogInDb(log).catch(() => {});
+    });
 
     // Auto-log batch stage costs into Vendor Price History
     const todayIso = new Date().toISOString().slice(0, 10);
@@ -3849,7 +4121,7 @@ export default function App() {
         purchaseDate: todayIso,
         unitPrice: Number(assignment.cost),
         quantity: `${qtyToAdd} pcs`,
-        notes: `Auto-logged from ${batch.batchCode}`,
+        notes: `Auto-logged from ${batchLabel(batch)}`,
       });
     });
 
@@ -3868,6 +4140,7 @@ export default function App() {
       ...batch,
       quantity: qtyToAdd,
       variantId: targetVariant.id,
+      variantQty: parts.length > 1 ? Object.fromEntries(parts.map((p) => [p.variantId, p.qty])) : undefined,
       currentStageKey: 'stock_in',
       status: 'completed',
       completedAt: new Date().toISOString(),
@@ -3896,11 +4169,11 @@ export default function App() {
     }
 
     // If batch was triggered by an Order shortage & all batches for that booking are completed -> Ready for Scout Fera2 Delivery!
-    if (batch.linkedBookingId) {
+    [batch.linkedBookingId, ...(batch.extraBookingIds || [])].filter(Boolean).forEach((orderId) => {
       const stillOpenForOrder = nextBatches.some(
-        (b) => b.linkedBookingId === batch.linkedBookingId && b.status !== 'completed'
+        (b) => (b.linkedBookingId === orderId || (b.extraBookingIds || []).includes(orderId as string)) && b.status !== 'completed'
       );
-      const linkedOrder = bookings.find((b) => b.id === batch.linkedBookingId);
+      const linkedOrder = bookings.find((b) => b.id === orderId);
       if (linkedOrder && !stillOpenForOrder) {
         lastBookingMutationAtRef.current = Date.now();
         const readyOrder: Booking = {
@@ -3912,12 +4185,18 @@ export default function App() {
         updateBookingInDb(linkedOrder.id, readyOrder).catch(() => {});
         syncOrderTaskToScoutFera2(readyOrder);
       }
-    }
+      if (!linkedOrder && !stillOpenForOrder) {
+        // This person cannot read orders (e.g. purchases admin), so the database marks it ready.
+        supabase.rpc('mark_booking_ready', { p_booking_id: orderId }).then(({ error }) => {
+          if (error) showToast(`Could not mark the order ready: ${error.message}`);
+        });
+      }
+    });
 
     showToast(
       batch.linkedBookingNumber
-        ? `Batch ${batch.batchCode} Gard stock-in complete (+${qtyToAdd} pcs)! Order #${batch.linkedBookingNumber} updated for Scout Fera2 delivery.`
-        : `Batch ${batch.batchCode} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
+        ? `Batch ${batchLabel(batch)} Gard stock-in complete (+${qtyToAdd} pcs)! Order #${batch.linkedBookingNumber} updated for Scout Fera2 delivery.`
+        : `Batch ${batchLabel(batch)} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
       newLog
     );
   };
@@ -4165,6 +4444,7 @@ export default function App() {
             batchId: req.payload.batchId,
             finalQuantity: req.payload.finalQuantity,
             variantId: req.payload.variantId,
+            parts: req.payload.parts,
           });
         }
         break;
@@ -5071,6 +5351,167 @@ export default function App() {
           />
         )}
 
+        {shortageToStart && (
+          <ShortageStartModal
+            currentStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageToStart.variantId)?.quantity ?? 0}
+            minStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageToStart.variantId)?.minThreshold}
+            note={shortageToStart}
+            estimate={popupEstimate(shortageToStart.productId, shortageToStart.variantId)}
+            mergeTargets={popupMergeTargets(shortageToStart.productId)}
+            onMerge={(batch, quantity) => {
+              const n = shortageToStart;
+              setShortageToStart(null);
+              joinExistingBatch({ batch, variantId: n.variantId, quantity, orders: [{ id: n.bookingId, num: n.bookingNumber }], startNew: () => {} });
+            }}
+            onCancel={() => setShortageToStart(null)}
+            onConfirm={(quantity, targetDate) => {
+              const vendorId: string | undefined = undefined;
+              const n = shortageToStart;
+              setShortageToStart(null);
+              const stub = {
+                id: n.bookingId,
+                bookingNumber: n.bookingNumber,
+                clientName: n.clientName,
+                items: [
+                  {
+                    productId: n.productId,
+                    variantId: n.variantId,
+                    productName: n.productName,
+                    size: n.size,
+                    colorName: n.colorName,
+                    quantity: n.owed,
+                  },
+                ],
+              } as unknown as Booking;
+              const real = bookings.find((b) => b.id === n.bookingId);
+              // The vendor goes on the first working stage of this product's workflow (same stage the batch opens in).
+              const wf = productWorkflows.find((w) => w.productId === n.productId);
+              const firstStage =
+                wf?.activeStages?.find((st) => st !== 'stock_in') ||
+                (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+              const stageAssignments: Record<string, BatchStageAssignment> = vendorId
+                ? { [firstStage]: { vendorId } }
+                : {};
+              askJoinOrStartNew(n.productId, n.variantId, quantity, [{ id: n.bookingId, num: n.bookingNumber }], () =>
+                handleSendShortageToPurchases(real || stub, targetDate, [
+                  { productId: n.productId, variantId: n.variantId, quantity, stageAssignments, targetDate },
+                ])
+              );
+            }}
+          />
+        )}
+
+        {shortageGroup && shortageGroup.length > 0 && (
+          <ShortageStartModal
+            note={{ ...shortageGroup[0], owed: shortageGroup.reduce((sum, x) => sum + x.owed, 0) }}
+            currentStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageGroup[0].variantId)?.quantity ?? 0}
+            minStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageGroup[0].variantId)?.minThreshold}
+            groupOrders={shortageGroup}
+            estimate={popupEstimate(shortageGroup[0].productId, shortageGroup[0].variantId)}
+            mergeTargets={popupMergeTargets(shortageGroup[0].productId)}
+            onMerge={(batch, quantity) => {
+              const g = shortageGroup;
+              setShortageGroup(null);
+              joinExistingBatch({ batch, variantId: g[0].variantId, quantity, orders: g.map((x) => ({ id: x.bookingId, num: x.bookingNumber })), startNew: () => {} });
+            }}
+            onCancel={() => setShortageGroup(null)}
+            onConfirm={(quantity, targetDate) => {
+              const vendorId: string | undefined = undefined;
+              const g = shortageGroup;
+              const n = g[0];
+              setShortageGroup(null);
+              const total = g.reduce((sum, x) => sum + x.owed, 0);
+              const stub = {
+                id: n.bookingId,
+                bookingNumber: n.bookingNumber,
+                clientName: g.map((x) => x.clientName).filter(Boolean).join(', '),
+                items: [{ productId: n.productId, variantId: n.variantId, productName: n.productName, size: n.size, colorName: n.colorName, quantity: total }],
+              } as unknown as Booking;
+              const wf = productWorkflows.find((w) => w.productId === n.productId);
+              const firstStage =
+                wf?.activeStages?.find((st) => st !== 'stock_in') ||
+                (wf?.workflowType === 'ready_made' ? 'supplier_sourcing' : 'raw_material');
+              const stageAssignments: Record<string, BatchStageAssignment> = vendorId ? { [firstStage]: { vendorId } } : {};
+              askJoinOrStartNew(n.productId, n.variantId, quantity, g.map((x) => ({ id: x.bookingId, num: x.bookingNumber })), () =>
+                handleSendShortageToPurchases(bookings.find((b) => b.id === n.bookingId) || stub, targetDate, [
+                  {
+                    productId: n.productId,
+                    variantId: n.variantId,
+                    quantity,
+                    stageAssignments,
+                    targetDate,
+                    extraBookingIds: g.slice(1).map((x) => x.bookingId),
+                    extraBookingNumbers: g.slice(1).map((x) => x.bookingNumber),
+                  },
+                ])
+              );
+            }}
+          />
+        )}
+
+        {joinPrompt && (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/60 p-4">
+            <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-3 shadow-2xl">
+              {joinPrompt.blockedReason ? (
+                <>
+                  <div className="text-base font-black text-slate-900">An open batch already exists</div>
+                  <div className="text-xs text-slate-700">
+                    {batchLabel(joinPrompt.batch)} ({joinPrompt.batch.quantity} pcs) cannot take this quantity: {joinPrompt.blockedReason}. A new batch will be started.
+                  </div>
+                  <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Start a new batch</button>
+                  <button type="button" onClick={() => setJoinPrompt(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
+                </>
+              ) : (
+                <>
+                  <div className="text-base font-black text-slate-900">Add to the open batch?</div>
+                  <div className="text-xs text-slate-700">
+                    {batchLabel(joinPrompt.batch)} ({joinPrompt.batch.quantity} pcs) for this item is still at its first stage, not sent to the factory and no money spent. Size/color does not matter, the same vendor makes all of them. Add {joinPrompt.quantity} pcs{joinVariantText(joinPrompt.batch.productId, joinPrompt.variantId)} to it (total {joinPrompt.batch.quantity + joinPrompt.quantity}, kept per size), or start a new batch?
+                  </div>
+                  <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); joinExistingBatch(p); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Add to {joinPrompt.batch.batchCode}</button>
+                  <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-slate-800 text-white font-black text-xs">Start a new batch</button>
+                  <button type="button" onClick={() => setJoinPrompt(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {lowToStart && (
+          <ShortageStartModal
+            mode="low"
+            currentStock={lowToStart.quantity}
+            minStock={lowToStart.minThreshold}
+            leftInStock={lowToStart.quantity}
+            suggestedQty={Math.max(1, lowToStart.minThreshold * 2 - lowToStart.quantity)}
+            note={{
+              bookingId: '',
+              bookingNumber: '',
+              clientName: '',
+              productId: lowToStart.productId,
+              variantId: lowToStart.variantId,
+              productName: lowToStart.productName,
+              size: lowToStart.size,
+              colorName: lowToStart.colorName,
+              owed: 1,
+              hasBatch: false,
+            }}
+            estimate={popupEstimate(lowToStart.productId, lowToStart.variantId)}
+            mergeTargets={popupMergeTargets(lowToStart.productId)}
+            onMerge={(batch, quantity) => {
+              const n = lowToStart;
+              setLowToStart(null);
+              joinExistingBatch({ batch, variantId: n.variantId, quantity, orders: [], startNew: () => {} });
+            }}
+            onCancel={() => setLowToStart(null)}
+            onConfirm={(quantity, targetDate) => {
+              const vendorId: string | undefined = undefined;
+              const n = lowToStart;
+              setLowToStart(null);
+              askJoinOrStartNew(n.productId, n.variantId, quantity, [], () => handleStartLowStockPurchase(n, quantity, targetDate, vendorId));
+            }}
+          />
+        )}
+
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
         {effectiveView === 'bookings' && canUserAccessView(currentUser, 'bookings', users) && (
           <BookingsView
@@ -5096,7 +5537,7 @@ export default function App() {
             }}
             onEditBooking={(booking) => {
               if (!canUserEditBookings(currentUser, users)) {
-                showToast('Only Budgeting & Liquidity Team or Full-Access Admin can edit bookings.');
+                showToast('Only Full-Access Admin or the Scout Fera2 team can edit bookings.');
                 return;
               }
               if (booking.status !== 'pending' || booking.depositPaid) {
@@ -5119,7 +5560,7 @@ export default function App() {
             onUpdateBooking={handleUpdateBooking}
             onSendShortageToPurchases={handleSendShortageToPurchases}
             onConfirmBookingStockReady={handleConfirmBookingStockReady}
-            onOpenSourcing={() => handleNavigate('sourcing')}
+            onOpenSourcing={canUserAccessView(currentUser, 'sourcing', users) ? () => handleNavigate('sourcing') : undefined}
             onOpenCalendar={() => handleNavigate('calendar')}
             onLogActivity={(log) => {
               setAuditLogs((prev) => [log, ...prev]);
@@ -5174,14 +5615,29 @@ export default function App() {
               setSelectedBookingForDetails(bid);
               setActiveView('bookings');
             }}
-            onOpenSourcing={() => handleNavigate('sourcing')}
+            onOpenSourcing={canUserAccessView(currentUser, 'sourcing', users) ? () => handleNavigate('sourcing') : undefined}
             onOpenMarketing={() => handleNavigate('marketing')}
             onShowToast={(msg) => showToast(msg)}
           />
         )}
 
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
+          <div className="space-y-4">
           <SourcingOperationsView
+            needsTiles={<NeedsTiles notes={shortageNotes} lowNotes={lowStockNotes} open={needsOpen} setOpen={setNeedsOpen} />}
+            needsProductIds={
+              needsOpen === 'order'
+                ? new Set(shortageNotes.filter((n) => !n.hasBatch).map((n) => n.productId))
+                : needsOpen === 'low'
+                ? new Set(lowStockNotes.filter((n) => !n.hasBatch).map((n) => n.productId))
+                : null
+            }
+            onClearNeeds={() => setNeedsOpen(null)}
+            needsDetail={(pid) =>
+              needsOpen ? (
+                <NeedsList kind={needsOpen} productId={pid} notes={shortageNotes} lowNotes={lowStockNotes} canAct={canUserStartShortagePurchase(currentUser, users)} onStart={(n) => setShortageToStart(n)} onStartGroup={(g) => setShortageGroup(g)} onStartLow={(n) => setLowToStart(n)} />
+              ) : null
+            }
             products={products}
             vendors={vendors}
             workflows={productWorkflows}
@@ -5203,9 +5659,12 @@ export default function App() {
             onAddPriceEntry={handleAddPriceEntry}
             onSaveBatch={handleSaveBatch}
             onDeleteBatch={handleDeleteBatch}
+            onMergeBatches={handleMergeBatches}
+            orderInfo={shortageNotes}
             onCompleteBatchStockIn={handleCompleteBatchStockIn}
             onShowToast={(msg) => showToast(msg)}
           />
+          </div>
         )}
 
         {effectiveView === 'marketing' && canUserAccessView(currentUser, 'marketing', users) && (
@@ -5298,6 +5757,7 @@ export default function App() {
       {detailProduct && (
         <ProductDetailModal
           product={detailProduct}
+          reservedMap={reservedMap}
           userRole={normalizeRole(currentUser.role)}
           canEditMedia={canEditProductMedia}
           onClose={() => setDetailProduct(null)}
@@ -5328,6 +5788,8 @@ export default function App() {
           onClose={() => setAdjustmentTarget(null)}
           onSubmitWorkerRequest={handleSubmitWorkerRequest}
           onAdminDirectAdjust={handleAdminDirectAdjust}
+          reservedMap={reservedMap}
+          onPreviewMissing={previewStockAdjustInDb}
         />
       )}
 
@@ -5367,6 +5829,7 @@ export default function App() {
       )}
 
       {/* Confirmation Modal for Direct Product Deletion from Catalog */}
+      <AppConfirmHost />
       <ConfirmDeleteModal
         isOpen={!!productToDelete}
         title="Delete Item"

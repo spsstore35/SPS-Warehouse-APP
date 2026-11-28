@@ -1,5 +1,6 @@
 /**
- * Security, Role & Permission Utilities (Strict DB-backed State)
+ * Role & permission helpers for the UI. These only decide what to SHOW. The database (RLS) is
+ * what actually enforces access.
  */
 
 import type { CalendarItem, Role, StoreTeamId, User } from '../types/inventory';
@@ -98,63 +99,6 @@ export function getPhoneSearchVariants(raw?: string | null): string[] {
   return Array.from(set).filter((v) => v.length >= 4);
 }
 
-export async function hashPassword(plainText: string): Promise<string> {
-  const text = (plainText || '').trim();
-  if (!text) {
-    throw new Error('Password cannot be empty.');
-  }
-  const mod = await import('bcryptjs');
-  const bcrypt = mod.default ?? mod;
-  return await bcrypt.hash(text, 10);
-}
-
-/**
- * Legacy SHA-256 hashing. Only kept so verifyPassword can still validate
- * hashes stored before the bcrypt migration. Never use for new passwords.
- */
-async function hashPasswordSha256Legacy(plainText: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plainText);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-export function isBcryptHash(storedHash?: string | null): boolean {
-  return /^\$2[aby]\$/.test(storedHash || '');
-}
-
-export async function verifyPassword(
-  plainText: string,
-  storedHash?: string | null
-): Promise<boolean> {
-  if (!storedHash) return false;
-
-  const enteredText = (plainText || '').trim();
-  if (!enteredText) return false;
-
-  // 1. Bcrypt hashes ($2a$, $2b$, $2y$): real verification, fail closed.
-  if (isBcryptHash(storedHash)) {
-    try {
-      const mod = await import('bcryptjs');
-      const bcrypt = mod.default ?? mod;
-      return await bcrypt.compare(enteredText, storedHash);
-    } catch {
-      return false;
-    }
-  }
-
-  // 2. Legacy unhashed records
-  if (storedHash === enteredText) return true;
-
-  // 3. Legacy SHA-256 hash
-  const cleanStored = storedHash.startsWith('$sha256$')
-    ? storedHash.slice(8)
-    : storedHash;
-  const computed = await hashPasswordSha256Legacy(enteredText);
-  return computed.toLowerCase() === cleanStored.toLowerCase();
-}
-
 /**
  * Normalize raw role strings from DB into strict Role union
  */
@@ -219,19 +163,11 @@ export function isExplicitFullAdmin(user?: User | null): boolean {
  * Regular Admins ('admin') and Staff ('worker') see pages strictly according to their assigned team(s).
  * Includes bootstrap safety when database has no explicit 'full_admin' yet.
  */
-export function isFullAccessAdmin(user?: User | null, allUsers?: User[]): boolean {
-  if (!user || !isUserAdmin(user)) return false;
-  if (isExplicitFullAdmin(user)) return true;
-
-  const teams = getUserAssignedTeams(user);
-  if (teams.length > 0) return false;
-
-  if (Array.isArray(allUsers) && allUsers.length > 0) {
-    const hasExplicitLiveFullAdmin = allUsers.some((u) => isExplicitFullAdmin(u));
-    return !hasExplicitLiveFullAdmin;
-  }
-
-  return false;
+export function isFullAccessAdmin(user?: User | null, _allUsers?: User[]): boolean {
+  // Only an explicit full_admin role from the database counts. (The old "no full_admin exists yet,
+  // so any admin without teams is promoted" shortcut was removed: the first full_admin is created
+  // with the SQL helper in the migration.) The real protection is RLS in the database.
+  return isExplicitFullAdmin(user);
 }
 
 export function getEffectiveUserRole(user?: User | null, allUsers?: User[]): Role {
@@ -384,13 +320,80 @@ export function canUserSeeCalendarItem(
   return teams.some((t) => myTeams.includes(t));
 }
 
+/**
+ * Orders (Client Bookings) belong to the Scout Fera2 team (team id 'troops').
+ * - Who can START or EDIT an order: full_admin, or a member of Scout Fera2 (staff send a request,
+ *   the team_admin of Scout Fera2 or a full_admin approves).
+ * - Budgeting (and everybody else) can only LOOK at orders.
+ */
 export function canUserEditBookings(
   user?: User | null,
   allUsers?: User[]
 ): boolean {
   if (!user || isUserLeader(user)) return false;
   if (isFullAccessAdmin(user, allUsers)) return true;
-  return getUserAssignedTeams(user).includes('budgeting');
+  return getUserAssignedTeams(user).includes('troops'); // only Scout Fera2 staff send order requests
+}
+
+/**
+ * Who confirms a deposit / full payment (this is also the step that takes stock for the order):
+ * full_admin, the team_admin of Scout Fera2 ('troops'), or the team_admin of Budgeting.
+ * Staff only send a request.
+ */
+export function canUserConfirmPayments(
+  user?: User | null,
+  allUsers?: User[]
+): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  if (Array.isArray(user.adminTeams)) {
+    return user.adminTeams.includes('troops') || user.adminTeams.includes('budgeting');
+  }
+  const teams = getUserAssignedTeams(user);
+  return teams.includes('troops') || teams.includes('budgeting');
+}
+
+/**
+ * Who can create / edit / delete an order directly (no request):
+ * full_admin, or the team_admin of Scout Fera2 ('troops'). Same people approve staff requests.
+ */
+// Who may SEND a deposit/payment confirmation request: Scout Fera2 staff or budgeting staff
+// (admins confirm directly, so they never need to send one).
+export function canUserRequestPayments(user?: User | null, allUsers?: User[]): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  const t = getUserAssignedTeams(user);
+  return t.includes('troops') || t.includes('budgeting');
+}
+
+export function canUserManageOrders(
+  user?: User | null,
+  allUsers?: User[]
+): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  if (Array.isArray(user.adminTeams)) return user.adminTeams.includes('troops');
+  return getUserAssignedTeams(user).includes('troops');
+}
+
+// Who may start the purchase for a shortage / low stock: full_admin or purchases admin only.
+export function canUserStartShortagePurchase(user?: User | null, allUsers?: User[]): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  const teams = Array.isArray(user.adminTeams) ? user.adminTeams : getUserAssignedTeams(user);
+  return teams.includes('purchases');
+}
+
+// Vendors (suppliers): full_admin or purchases admin (same as the database rule).
+export function canUserManageVendors(user?: User | null, allUsers?: User[]): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  const teams = Array.isArray(user.adminTeams) ? user.adminTeams : getUserAssignedTeams(user);
+  return teams.includes('purchases');
 }
 
 export function canUserManageTeamScope(
@@ -400,6 +403,8 @@ export function canUserManageTeamScope(
 ): boolean {
   if (!user || !isUserAdmin(user)) return false;
   if (isFullAccessAdmin(user, allUsers)) return true;
+  // user_teams decides: team_admin only for the teams where this person has that role.
+  if (Array.isArray(user.adminTeams)) return user.adminTeams.includes(teamScope);
   return getUserAssignedTeams(user).includes(teamScope);
 }
 

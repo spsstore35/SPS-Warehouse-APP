@@ -908,8 +908,9 @@ export const TeamBoardView: React.FC<TeamBoardViewProps> = ({
     const nameLower = user.name.trim().toLowerCase();
     return bookings.filter(
       (b) =>
-        (b.assignedToId && b.assignedToId === user.id) ||
-        (b.assignedToName && b.assignedToName.trim().toLowerCase() === nameLower)
+        (b.depositPaid || b.status !== 'pending') && // unpaid orders do not count for teams
+        ((b.assignedToId && b.assignedToId === user.id) ||
+          (b.assignedToName && b.assignedToName.trim().toLowerCase() === nameLower))
     );
   };
 

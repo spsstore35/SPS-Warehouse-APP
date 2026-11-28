@@ -13,6 +13,8 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
+export const SUPABASE_PUBLISHABLE_KEY = SUPABASE_ANON_KEY;
+
 export const SUPABASE_CONFIG = {
   url: SUPABASE_URL,
   isConfigured: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY),

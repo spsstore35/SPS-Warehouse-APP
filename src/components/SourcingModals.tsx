@@ -1,3 +1,4 @@
+import { batchLabel } from '../utils/sourcing';
 import React, { useEffect, useState } from 'react';
 import {
   BatchStageAssignment,
@@ -310,10 +311,16 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
 }) => {
   const [batchCode, setBatchCode] = useState('');
   const [quantity, setQuantity] = useState<number>(100);
+  const [variantQtyDraft, setVariantQtyDraft] = useState<Record<string, number> | null>(null);
   const [variantId, setVariantId] = useState<string>('');
   const [targetDate, setTargetDate] = useState<string>('');
   const [assignments, setAssignments] = useState<Record<string, BatchStageAssignment>>({});
   const [error, setError] = useState('');
+  // Ready-made purchase details (stored on the supplier stage): units per box, boxes, lead time for this order.
+  const isReadyMade = activeStages.includes('supplier_sourcing');
+  const [unitsPerBox, setUnitsPerBox] = useState<number>(0);
+  const [boxes, setBoxes] = useState<number>(0);
+  const [leadDays, setLeadDays] = useState<number>(0);
 
   const totalLeadDays = activeStages.reduce(
     (sum, k) => sum + Math.max(0, Number(stageLeadTimes?.[k] || 0)),
@@ -325,6 +332,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
     if (initialBatch) {
       setBatchCode(initialBatch.batchCode);
       setQuantity(initialBatch.quantity);
+      setVariantQtyDraft(initialBatch.variantQty && Object.keys(initialBatch.variantQty).length > 1 ? { ...initialBatch.variantQty } : null);
       setVariantId(initialBatch.variantId || product.variants[0]?.id || '');
       setTargetDate(initialBatch.targetDate || '');
 
@@ -338,12 +346,17 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
         }
       });
       setAssignments(mergedAssignments);
+      const rm = mergedAssignments['supplier_sourcing'];
+      setUnitsPerBox(Number(rm?.unitsPerBox) || 0);
+      setBoxes(Number(rm?.boxes) || 0);
+      setLeadDays(Number(rm?.leadTimeDays) || 0);
       setError('');
       return;
     }
 
     setBatchCode(`Batch #${105 + existingBatchCount}`);
     setQuantity(100);
+    setVariantQtyDraft(null);
     setVariantId(product.variants[0]?.id || '');
     const leadDaysToAdd = totalLeadDays > 0 ? totalLeadDays : 7;
     const defaultTarget = new Date(Date.now() + leadDaysToAdd * 86400000)
@@ -395,17 +408,34 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
       setError('Batch Code is required.');
       return;
     }
-    if (!quantity || quantity <= 0) {
+    const breakdown: Record<string, number> | undefined = variantQtyDraft
+      ? (Object.fromEntries(
+          Object.entries(variantQtyDraft)
+            .map(([k, n]) => [k, Math.max(0, Math.round(Number(n) || 0))] as [string, number])
+            .filter(([, n]) => n > 0)
+        ) as Record<string, number>)
+      : undefined;
+    const finalQty = breakdown ? Object.values(breakdown).reduce((s, n) => s + n, 0) : quantity;
+    if (!finalQty || finalQty <= 0) {
       setError('Batch quantity must be greater than 0.');
       return;
     }
 
+    if (isReadyMade && (unitsPerBox > 0 || boxes > 0 || leadDays > 0)) {
+      assignments['supplier_sourcing'] = {
+        ...(assignments['supplier_sourcing'] || {}),
+        unitsPerBox: unitsPerBox > 0 ? unitsPerBox : undefined,
+        boxes: boxes > 0 ? boxes : undefined,
+        leadTimeDays: leadDays > 0 ? leadDays : undefined,
+      };
+    }
     const batch: ProductionBatch = initialBatch
       ? {
           ...initialBatch,
           batchCode: batchCode.trim(),
           variantId: variantId || undefined,
-          quantity: Math.round(quantity),
+          quantity: Math.round(finalQty),
+          variantQty: breakdown && Object.keys(breakdown).length > 1 ? breakdown : undefined,
           targetDate: targetDate || undefined,
           stageAssignments: assignments,
         }
@@ -414,7 +444,8 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
           batchCode: batchCode.trim(),
           productId: product.id,
           variantId: variantId || undefined,
-          quantity: Math.round(quantity),
+          quantity: Math.round(finalQty),
+          variantQty: breakdown && Object.keys(breakdown).length > 1 ? breakdown : undefined,
           targetDate: targetDate || undefined,
           currentStageKey: firstStage,
           status: 'in_progress',
@@ -459,6 +490,87 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
               />
             </div>
 
+            {isReadyMade && (
+              <div className="col-span-full p-3 rounded-xl border border-indigo-200 bg-indigo-50/60 space-y-2">
+                <div className="text-xs font-black text-indigo-900">Ready-made purchase (from a supplier)</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Units per box
+                    <input
+                      type="number"
+                      min={0}
+                      value={unitsPerBox || ''}
+                      onChange={(e) => {
+                        const u = Math.max(0, Number(e.target.value) || 0);
+                        setUnitsPerBox(u);
+                        if (u > 0 && boxes > 0) setQuantity(u * boxes);
+                      }}
+                      className="mt-0.5 w-full px-2 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                  </label>
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Number of boxes
+                    <input
+                      type="number"
+                      min={0}
+                      value={boxes || ''}
+                      onChange={(e) => {
+                        const b = Math.max(0, Number(e.target.value) || 0);
+                        setBoxes(b);
+                        if (b > 0 && unitsPerBox > 0) setQuantity(unitsPerBox * b);
+                      }}
+                      className="mt-0.5 w-full px-2 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                  </label>
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Supplier needs (days)
+                    <input
+                      type="number"
+                      min={0}
+                      value={leadDays || ''}
+                      onChange={(e) => {
+                        const d = Math.max(0, Number(e.target.value) || 0);
+                        setLeadDays(d);
+                        if (d > 0) setTargetDate(new Date(Date.now() + d * 86400000).toISOString().slice(0, 10));
+                      }}
+                      className="mt-0.5 w-full px-2 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                  </label>
+                </div>
+                <div className="text-[11px] text-slate-600">
+                  {unitsPerBox > 0 && boxes > 0 ? `${boxes} box(es) x ${unitsPerBox} = ${unitsPerBox * boxes} pcs. ` : ''}
+                  Lead time is typed per order and sets the target date below (you can still change it). Choose the supplier in the stage list. When received, the goods go straight into stock.
+                </div>
+              </div>
+            )}
+
+            {variantQtyDraft ? (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Quantity per size / color (pcs) *
+                </label>
+                <div className="space-y-1.5">
+                  {Object.entries(variantQtyDraft).map(([vid, q]) => {
+                    const vv = product.variants.find((x) => x.id === vid);
+                    return (
+                      <div key={vid} className="flex items-center gap-2">
+                        <span className="flex-1 text-xs font-semibold text-slate-800">{vv ? `Size ${vv.size} · ${vv.colorName}` : 'Item'}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={q || ''}
+                          onChange={(e) => setVariantQtyDraft({ ...variantQtyDraft, [vid]: Number(e.target.value) })}
+                          className="w-24 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-900"
+                        />
+                      </div>
+                    );
+                  })}
+                  <div className="text-xs font-bold text-slate-900">
+                    Total: {Object.values(variantQtyDraft).reduce((s, n) => s + (Number(n) || 0), 0)} pcs
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Quantity (pcs) *
@@ -471,6 +583,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
                 className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-900"
               />
             </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -608,11 +721,46 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
                         </span>
                       </div>
                     </div>
+                    <div className="sm:col-span-12 flex flex-wrap items-center gap-2 text-[11px] text-slate-700">
+                      <label className="inline-flex items-center gap-1">
+                        {meta.defaultUnit}s
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={current.unitQty ?? ''}
+                          onChange={(e) =>
+                            setAssignments((prev) => ({
+                              ...prev,
+                              [stageKey]: { ...prev[stageKey], unitQty: e.target.value === '' ? undefined : Number(e.target.value) },
+                            }))
+                          }
+                          className="w-20 px-2 py-1 border border-slate-300 rounded-lg font-mono"
+                        />
+                      </label>
+                      {typeof current.cost === 'number' && (current.unitQty || 0) > 0 && (
+                        <span className="font-mono font-bold text-slate-900">
+                          {current.cost.toLocaleString()} EGP x {(current.unitQty as number).toLocaleString()} {meta.defaultUnit} = {(current.cost * (current.unitQty as number)).toLocaleString()} EGP
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
+
+          {(() => {
+            const total = productionStages.reduce((sum, k) => {
+              const a = assignments[k];
+              return sum + (a && typeof a.cost === 'number' && (a.unitQty || 0) > 0 ? a.cost * (a.unitQty as number) : 0);
+            }, 0);
+            return total > 0 ? (
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-black text-emerald-900">
+                Batch total so far: {total.toLocaleString()} EGP
+              </div>
+            ) : null;
+          })()}
 
           {error && (
             <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
@@ -652,6 +800,7 @@ interface CompleteStockInModalProps {
     batchId: string;
     finalQuantity: number;
     variantId: string;
+    parts?: { variantId: string; qty: number }[];
   }) => void;
 }
 
@@ -665,9 +814,11 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
 }) => {
   const [finalQuantity, setFinalQuantity] = useState<number>(0);
   const [variantId, setVariantId] = useState<string>('');
+  const [partsDraft, setPartsDraft] = useState<Record<string, number> | null>(null);
 
   useEffect(() => {
     if (!batch || !product) return;
+    setPartsDraft(batch.variantQty && Object.keys(batch.variantQty).length > 1 ? { ...batch.variantQty } : null);
     setFinalQuantity(batch.quantity);
     setVariantId(batch.variantId || product.variants[0]?.id || '');
   }, [batch, product]);
@@ -698,11 +849,33 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
 
         <div className="p-5 space-y-4">
           <div className="text-sm text-slate-700">
-            Ready to stock in <span className="font-bold text-slate-900">{batch.batchCode}</span>{' '}
+            Ready to stock in <span className="font-bold text-slate-900">{batchLabel(batch)}</span>{' '}
             for <span className="font-bold text-slate-900">{product.name}</span>.
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {partsDraft && (
+            <div className="space-y-1.5">
+              <div className="text-xs font-bold text-slate-700">Final quantity received per size / color (pcs)</div>
+              {Object.entries(partsDraft).map(([vid, q]) => {
+                const vv = product.variants.find((x) => x.id === vid);
+                return (
+                  <div key={vid} className="flex items-center gap-2">
+                    <span className="flex-1 text-xs font-semibold text-slate-800">{vv ? `Size ${vv.size} · ${vv.colorName} (${vv.quantity} in stock)` : 'Item'}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={q || ''}
+                      onChange={(e) => setPartsDraft({ ...partsDraft, [vid]: Number(e.target.value) })}
+                      className="w-24 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                  </div>
+                );
+              })}
+              <div className="text-xs font-bold text-slate-900">Total: {Object.values(partsDraft).reduce((s, n) => s + (Number(n) || 0), 0)} pcs. Each size goes to its own stock.</div>
+            </div>
+          )}
+
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${partsDraft ? 'hidden' : ''}`}>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Final QC Quantity (pcs)
@@ -778,14 +951,24 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
             </button>
             <button
               type="button"
-              disabled={!finalQuantity || finalQuantity <= 0}
-              onClick={() =>
+              disabled={partsDraft ? Object.values(partsDraft).reduce((s, n) => s + (Number(n) || 0), 0) <= 0 : !finalQuantity || finalQuantity <= 0}
+              onClick={() => {
+                if (partsDraft) {
+                  const parts = Object.entries(partsDraft).map(([vid, q]) => ({ variantId: vid, qty: Math.max(0, Math.round(Number(q) || 0)) })).filter((p) => p.qty > 0);
+                  onConfirm({
+                    batchId: batch.id,
+                    finalQuantity: parts.reduce((s, p) => s + p.qty, 0),
+                    variantId: parts[0]?.variantId || variantId,
+                    parts,
+                  });
+                  return;
+                }
                 onConfirm({
                   batchId: batch.id,
                   finalQuantity: Math.round(finalQuantity),
                   variantId,
-                })
-              }
+                });
+              }}
               className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 min-h-[40px]"
             >
               <Check className="w-4 h-4" />
@@ -1300,7 +1483,7 @@ export const AdvanceStageModal: React.FC<AdvanceStageModalProps> = ({
               Complete Stage &amp; Advance Batch
             </h3>
             <p className="text-xs text-slate-500 mt-0.5 truncate">
-              {batch.batchCode} ({batch.quantity} pcs) · {product.name}
+              {batchLabel(batch)} ({batch.quantity} pcs) · {product.name}
             </p>
           </div>
           <button
