@@ -37,6 +37,10 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   }, [isOpen, booking?.id]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [pendingPdf, setPendingPdf] = useState<{ file: File; pdf: any; filename: string } | null>(null);
+  useEffect(() => {
+    if (!isOpen) setPendingPdf(null);
+  }, [isOpen, booking?.id]);
 
   if (!isOpen || !booking) return null;
 
@@ -51,6 +55,36 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
     if (d.length === 11 && d.startsWith('0')) return '20' + d.slice(1);
     if (d.length === 10 && d.startsWith('1')) return '20' + d;
     return d.length >= 8 ? d : '';
+  };
+
+  // Step 1: open the customer's chat with a greeting (must happen right on the tap), build the PDF meanwhile.
+  const handleSendWhatsApp = () => {
+    const num = whatsappNumber(booking.clientPhone);
+    const greeting = `Hello ${booking.clientName}, this is SPS Store. Your ${docType === 'quotation' ? 'invoice' : 'sheet'} ${booking.bookingNumber} (PDF) is coming in the next message.`;
+    if (num) window.open(`https://wa.me/${num}?text=${encodeURIComponent(greeting)}`, '_blank');
+    else alert('This order has no valid phone number. The PDF will be prepared so you can pick the chat yourself.');
+    handleDownloadPdf('share');
+  };
+
+  // Step 2: share the PDF file (share sheet), he picks the same chat and taps Send.
+  const handleSharePendingPdf = async () => {
+    if (!pendingPdf) return;
+    const nav: any = navigator;
+    if (nav.canShare && nav.canShare({ files: [pendingPdf.file] })) {
+      try {
+        await nav.share({ files: [pendingPdf.file], title: pendingPdf.filename });
+        setPendingPdf(null);
+      } catch (e: any) {
+        if (!(e && e.name === 'AbortError')) {
+          pendingPdf.pdf.save(pendingPdf.filename);
+          alert('Could not open the share sheet. The PDF was downloaded: attach it in WhatsApp with the paperclip.');
+        }
+      }
+    } else {
+      pendingPdf.pdf.save(pendingPdf.filename);
+      alert('This device cannot share the file directly. The PDF was downloaded: attach it in the same WhatsApp chat with the paperclip.');
+      setPendingPdf(null);
+    }
   };
 
   const handleDownloadPdf = async (mode: 'save' | 'share' = 'save') => {
@@ -124,25 +158,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
       if (mode === 'save') {
         pdf.save(filename);
       } else {
-        const file = new File([pdf.output('blob')], filename, { type: 'application/pdf' });
-        const text = `Hello ${booking.clientName}, here is your ${docType === 'quotation' ? 'quotation' : 'sheet'} ${booking.bookingNumber}.`;
-        const nav: any = navigator;
-        let shared = false;
-        if (nav.canShare && nav.canShare({ files: [file] })) {
-          try {
-            await nav.share({ files: [file], text, title: filename });
-            shared = true;
-          } catch (e: any) {
-            if (e && e.name === 'AbortError') return; // he closed the share sheet
-          }
-        }
-        if (!shared) {
-          // This device cannot attach a file straight from the browser: download it and open the customer's chat.
-          pdf.save(filename);
-          const num = whatsappNumber(booking.clientPhone);
-          window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank');
-          alert('The PDF was downloaded and the WhatsApp chat was opened. Tap the paperclip in WhatsApp and attach the PDF.');
-        }
+        // Step 2 is prepared in the background; the big green button appears after he sends the greeting.
+        setPendingPdf({ file: new File([pdf.output('blob')], filename, { type: 'application/pdf' }), pdf, filename });
       }
     } catch (err) {
       console.warn('PDF export failed:', err);
@@ -273,7 +290,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
             <button
               type="button"
               disabled={isSharing || isDownloading}
-              onClick={() => handleDownloadPdf('share')}
+              onClick={handleSendWhatsApp}
               className="flex-1 sm:flex-none px-4 py-2 bg-green-600 hover:bg-green-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
               title="Share this invoice PDF on WhatsApp"
             >
@@ -284,6 +301,18 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               )}
               <span>{isSharing ? 'Preparing...' : 'Send on WhatsApp'}</span>
             </button>
+
+            {/* Step 2 of Send on WhatsApp */}
+            {pendingPdf && (
+              <button
+                type="button"
+                onClick={handleSharePendingPdf}
+                className="w-full order-first px-4 py-3 bg-green-600 hover:bg-green-700 text-white font-black text-sm rounded-xl shadow-lg animate-pulse flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Send className="w-4 h-4 stroke-[2.5]" />
+                <span>Step 2: Now send the PDF (pick the same chat)</span>
+              </button>
+            )}
 
             {/* Primary Print Action */}
             <button
