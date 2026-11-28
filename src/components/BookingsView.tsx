@@ -1,3 +1,4 @@
+import { batchLabel } from '../utils/sourcing';
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchOrderStockOwedFromDb } from '../services/supabaseService';
 import DeliveryEstimateLine from './DeliveryEstimateLine';
@@ -1626,7 +1627,7 @@ This is our official Scout Store number. Through this chat, you can:
                             className="p-2.5 rounded-xl bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs"
                           >
                             <div className="font-mono tabular-nums">
-                              <strong className="text-slate-900">{bt.batchCode}</strong> · {bt.quantity} pcs ·{' '}
+                              <strong className="text-slate-900">{batchLabel(bt)}</strong> · {bt.quantity} pcs ·{' '}
                               <span
                                 className={
                                   bt.status === 'completed'

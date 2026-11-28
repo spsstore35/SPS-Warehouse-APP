@@ -1,3 +1,4 @@
+import { batchLabel } from '../utils/sourcing';
 import React, { useMemo, useState } from 'react';
 import type {
   ProductionBatch,
@@ -108,7 +109,7 @@ export default function BatchCostModal({ batch, allBatches, stages, customStages
       <div className="w-full max-w-3xl my-4 rounded-3xl bg-white p-4 sm:p-5 space-y-4 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-base font-black text-slate-900">Steps &amp; costs: {batch.batchCode}</div>
+            <div className="text-base font-black text-slate-900">Steps &amp; costs: {batchLabel(batch)}</div>
             <div className="text-[11px] text-slate-500">
               {canEdit ? 'Log each step: dates, what was bought, transport, cost, notes.' : 'View only. The Purchases admin or the owner edits this.'}
             </div>
@@ -146,7 +147,7 @@ export default function BatchCostModal({ batch, allBatches, stages, customStages
 
         {previous ? (
           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1">
-            <div className="font-black text-slate-900">Compare with the previous batch of this item ({previous.b.batchCode}, {previous.b.quantity} pcs)</div>
+            <div className="font-black text-slate-900">Compare with the previous batch of this item ({batchLabel(previous.b)}, {previous.b.quantity} pcs)</div>
             {(() => {
               const dPer = sum.perUnit - previous.s.perUnit;
               const dTot = sum.total - previous.s.total;

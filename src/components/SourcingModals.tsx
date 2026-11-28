@@ -1,3 +1,4 @@
+import { batchLabel } from '../utils/sourcing';
 import React, { useEffect, useState } from 'react';
 import {
   BatchStageAssignment,
@@ -848,7 +849,7 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
 
         <div className="p-5 space-y-4">
           <div className="text-sm text-slate-700">
-            Ready to stock in <span className="font-bold text-slate-900">{batch.batchCode}</span>{' '}
+            Ready to stock in <span className="font-bold text-slate-900">{batchLabel(batch)}</span>{' '}
             for <span className="font-bold text-slate-900">{product.name}</span>.
           </div>
 
@@ -1482,7 +1483,7 @@ export const AdvanceStageModal: React.FC<AdvanceStageModalProps> = ({
               Complete Stage &amp; Advance Batch
             </h3>
             <p className="text-xs text-slate-500 mt-0.5 truncate">
-              {batch.batchCode} ({batch.quantity} pcs) · {product.name}
+              {batchLabel(batch)} ({batch.quantity} pcs) · {product.name}
             </p>
           </div>
           <button

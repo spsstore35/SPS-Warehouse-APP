@@ -1,3 +1,4 @@
+import { batchLabel } from '../utils/sourcing';
 import { batchActualDays } from '../utils/deliveryEstimate';
 import React, { useMemo, useState } from 'react';
 import {
@@ -663,7 +664,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
         entityType: 'sourcing_batch',
         actionType: 'update',
         targetId: targetBatch.id,
-        title: `Advance Batch ${targetBatch.batchCode}`,
+        title: `Advance Batch ${batchLabel(targetBatch)}`,
         summary: `Completed ${completedMeta.shortLabel} @ ${vendorLabel} (${(
           assignment.totalCost ?? assignment.cost ?? 0
         ).toLocaleString()} EGP) -> ${nextStageMeta.shortLabel}.`,
@@ -675,7 +676,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     onSaveBatch(updatedBatch);
     setAdvancingBatchContext(null);
     onShowToast?.(
-      `${targetBatch.batchCode} moved to ${nextStageMeta.shortLabel} (${vendorLabel} · ${(
+      `${batchLabel(targetBatch)} moved to ${nextStageMeta.shortLabel} (${vendorLabel} · ${(
         assignment.totalCost ?? assignment.cost ?? 0
       ).toLocaleString()} EGP).`
     );
@@ -696,7 +697,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
           const pname = products.find((x) => x.id === b.productId)?.name || 'Item';
           const ln = c.lines.get(lk) || { product: pname, label: `${n.size || ''}${n.colorName ? ' / ' + n.colorName : ''}`.trim() || 'Std', qty: 0, batches: new Set<string>() };
           ln.qty += n.owed;
-          ln.batches.add(b.batchCode);
+          ln.batches.add(batchLabel(b));
           c.lines.set(lk, ln);
           byClient.set(key, c);
         });
@@ -1691,7 +1692,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                         const hv = selectedProduct.variants.find((v) => v.id === hb.variantId);
                         return (
                           <tr key={hb.id} className="border-t border-slate-100 text-slate-900">
-                            <td className="px-3 py-1 font-mono font-bold">{hb.batchCode}</td>
+                            <td className="px-3 py-1 font-mono font-bold">{batchLabel(hb)}</td>
                             <td className="px-3 py-1">{hv ? `${hv.size} / ${hv.colorName}` : '-'}</td>
                             <td className="px-3 py-1 text-right font-mono">{hb.quantity}</td>
                             <td className="px-3 py-1 text-right font-mono">{act ? act.days : '-'}</td>
@@ -1792,7 +1793,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             <div>
                               <div className="flex items-center gap-2 text-xs text-slate-500">
                                 <span className="font-mono font-bold text-slate-900 text-sm">
-                                  {batch.batchCode}
+                                  {batchLabel(batch)}
                                 </span>
                                 <span aria-hidden="true">·</span>
                                 <span className="font-mono tabular-nums font-bold text-slate-800">
@@ -1853,7 +1854,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                 const others = batches.filter(
                                   (o) => o.id !== batch.id && o.productId === batch.productId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
                                 );
-                                const why = own ? `Cannot merge ${batch.batchCode}: ${own}.` : others.length === 0 ? `Cannot merge ${batch.batchCode}: there is no other open batch of the same ITEM (any size/color) that is still at its first stage with no costs.` : 'Merge with another early batch';
+                                const why = own ? `Cannot merge ${batchLabel(batch)}: ${own}.` : others.length === 0 ? `Cannot merge ${batchLabel(batch)}: there is no other open batch of the same ITEM (any size/color) that is still at its first stage with no costs.` : 'Merge with another early batch';
                                 return (
                                   <button
                                     type="button"
@@ -1896,7 +1897,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                       entityType: 'sourcing_batch',
                                       actionType: 'delete',
                                       targetId: batch.id,
-                                      title: `Delete Batch ${batch.batchCode}`,
+                                      title: `Delete Batch ${batchLabel(batch)}`,
                                       summary: `${selectedProduct.name} · ${batch.quantity} pcs`,
                                       payload: { batchId: batch.id },
                                     });
@@ -2619,7 +2620,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     entityType: 'sourcing_batch',
                     actionType: wasEdit ? 'update' : 'create',
                     targetId: batch.id,
-                    title: `${wasEdit ? 'Update' : 'Start'} Batch ${batch.batchCode}`,
+                    title: `${wasEdit ? 'Update' : 'Start'} Batch ${batchLabel(batch)}`,
                     summary: `${selectedProduct.name} · ${batch.quantity} pcs @ ${stageShort}`,
                     payload: { batch },
                   });
@@ -2633,8 +2634,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 setBatchTab('active');
                 onShowToast?.(
                   wasEdit
-                    ? `${batch.batchCode} updated (${batch.quantity} pcs).`
-                    : `${batch.batchCode} started at ${stageShort}.`
+                    ? `${batchLabel(batch)} updated (${batch.quantity} pcs).`
+                    : `${batchLabel(batch)} started at ${stageShort}.`
                 );
               }}
             />
@@ -2649,7 +2650,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               return (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4">
                   <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-3 shadow-2xl">
-                    <div className="text-base font-black text-slate-900">Merge into {keep.batchCode} ({keep.quantity} pcs)</div>
+                    <div className="text-base font-black text-slate-900">Merge into {batchLabel(keep)} ({keep.quantity} pcs)</div>
                     <div className="text-xs text-slate-600">Same item, any size/color. Quantities are added (kept per size), and the orders of both batches are linked to one batch. The other batch is removed. Pick the batch to add:</div>
                     {cands.map((c) => (
                       <button
@@ -2658,7 +2659,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                         onClick={() => { onMergeBatches?.(keep, c); setMergeBatchId(null); }}
                         className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-900"
                       >
-                        Add {c.batchCode} ({c.quantity} pcs{(() => { const v = selectedProduct.variants.find((x) => x.id === c.variantId); return v && !c.variantQty ? `, ${v.size} / ${v.colorName}` : ''; })()}) = {keep.quantity + c.quantity} pcs
+                        Add {batchLabel(c)} ({c.quantity} pcs{(() => { const v = selectedProduct.variants.find((x) => x.id === c.variantId); return v && !c.variantQty ? `, ${v.size} / ${v.colorName}` : ''; })()}) = {keep.quantity + c.quantity} pcs
                       </button>
                     ))}
                     <button type="button" onClick={() => setMergeBatchId(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
@@ -2694,7 +2695,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 onSave={(updated) => {
                   setCostBatchId(null);
                   onSaveBatch(updated);
-                  onShowToast?.(`Saved steps and costs for ${updated.batchCode}.`);
+                  onShowToast?.(`Saved steps and costs for ${batchLabel(updated)}.`);
                 }}
               />
             )}
@@ -2714,7 +2715,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                     entityType: 'sourcing_stock_in',
                     actionType: 'update',
                     targetId: payload.batchId,
-                    title: `Complete & Stock In: ${targetBatch?.batchCode || payload.batchId}`,
+                    title: `Complete & Stock In: ${(targetBatch ? batchLabel(targetBatch) : undefined) || payload.batchId}`,
                     summary: `${selectedProduct.name} · Final Gard Qty: ${payload.finalQuantity} pcs`,
                     payload,
                   });

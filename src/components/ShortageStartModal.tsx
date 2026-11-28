@@ -1,3 +1,4 @@
+import { batchLabel } from '../utils/sourcing';
 import React, { useState } from 'react';
 import type { OrderShortageNote } from '../services/supabaseService';
 import type { ProductionBatch } from '../types/inventory';
@@ -117,7 +118,7 @@ export default function ShortageStartModal({ currentStock = 0, minStock, groupOr
                       onClick={() => onMerge(b, qty)}
                       className="w-full text-left px-3 py-2.5 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-xs font-bold text-slate-900"
                     >
-                      Add {qty} pcs to {b.batchCode} ({b.quantity} pcs now) = {b.quantity + qty} pcs
+                      Add {qty} pcs to {batchLabel(b)} ({b.quantity} pcs now) = {b.quantity + qty} pcs
                     </button>
                   ))
                 )}

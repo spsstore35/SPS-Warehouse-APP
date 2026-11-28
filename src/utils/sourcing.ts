@@ -230,3 +230,12 @@ export function addToBatchBreakdown(
   if (loose > 0 || Object.keys(map).length < 2) return { quantity };
   return { quantity, variantQty: map };
 }
+
+/** Display name of a batch: "Purchasing #<order>" (merged: "#A + #B"). Stored batchCode is not changed. */
+export function batchLabel(b: { batchCode: string; linkedBookingNumber?: string; extraBookingNumbers?: string[] } | null | undefined): string {
+  if (!b) return '';
+  const nums = [b.linkedBookingNumber, ...(b.extraBookingNumbers || [])].filter(Boolean) as string[];
+  if (nums.length > 0) return `Purchasing ${nums.map((n) => `#${n}`).join(' + ')}`;
+  const m = String(b.batchCode || '').match(/(\d{4,})\s*$/);
+  return `Purchasing (restock) #${m ? m[1] : b.batchCode}`;
+}

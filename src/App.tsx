@@ -1,3 +1,4 @@
+import { batchLabel } from './utils/sourcing';
 import { loadSessionUser, signOutUser } from './services/authService';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
@@ -3776,7 +3777,7 @@ export default function App() {
     upsertProductionBatchToDb(merged)
       .then(() => {
         handleDeleteBatch(absorbed.id);
-        showToast(`Merged ${absorbed.batchCode} into ${keep.batchCode}: now ${merged.quantity} pcs.`);
+        showToast(`Merged ${batchLabel(absorbed)} into ${batchLabel(keep)}: now ${merged.quantity} pcs.`);
         setTimeout(refreshShortageNotes, 1000);
       })
       .catch((err) => {
@@ -3851,7 +3852,7 @@ export default function App() {
     setProductionBatches((prev) => prev.map((x) => (x.id === b.id ? updated : x)));
     upsertProductionBatchToDb(updated)
       .then(() => {
-        showToast(`Added ${p.quantity} pcs${joinVariantText(b.productId, p.variantId)} to ${b.batchCode}: now ${updated.quantity} pcs.`);
+        showToast(`Added ${p.quantity} pcs${joinVariantText(b.productId, p.variantId)} to ${batchLabel(b)}: now ${updated.quantity} pcs.`);
         setTimeout(refreshShortageNotes, 1000);
       })
       .catch((err) => {
@@ -3866,7 +3867,7 @@ export default function App() {
     deleteProductionBatchFromDb(batchId).catch((err) =>
       showToast(`Database batch delete error: ${err?.message || 'Sync failed'}`)
     );
-    showToast(`Deleted batch ${target?.batchCode || ''}.`);
+    showToast(`Deleted batch ${(target ? batchLabel(target) : undefined) || ''}.`);
   };
 
   // Tell the purchases team (Calendar & Board task, same mechanism used for inventory/Fera2) that production must start.
@@ -4074,9 +4075,9 @@ export default function App() {
         delta: part.qty,
         totalQuantityBefore: oldTotal,
         totalQuantityAfter: newTotal,
-        reason: `Batch Stock-In (Gard): ${batch.batchCode}`,
-        summary: `Batch ${batch.batchCode} Stocked In (+${part.qty}): "${product.name}" [${sizeText} / ${pv.colorName}] (${oldQty} -> ${newQty})`,
-        details: `Completed production batch ${batch.batchCode}. Stock added via Gard: +${part.qty} pcs (${sizeText} / ${pv.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
+        reason: `Batch Stock-In (Gard): ${batchLabel(batch)}`,
+        summary: `Batch ${batchLabel(batch)} Stocked In (+${part.qty}): "${product.name}" [${sizeText} / ${pv.colorName}] (${oldQty} -> ${newQty})`,
+        details: `Completed production batch ${batchLabel(batch)}. Stock added via Gard: +${part.qty} pcs (${sizeText} / ${pv.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
       };
       newLog = newLog || log;
       setAuditLogs((prev) => [log, ...prev]);
@@ -4120,7 +4121,7 @@ export default function App() {
         purchaseDate: todayIso,
         unitPrice: Number(assignment.cost),
         quantity: `${qtyToAdd} pcs`,
-        notes: `Auto-logged from ${batch.batchCode}`,
+        notes: `Auto-logged from ${batchLabel(batch)}`,
       });
     });
 
@@ -4194,8 +4195,8 @@ export default function App() {
 
     showToast(
       batch.linkedBookingNumber
-        ? `Batch ${batch.batchCode} Gard stock-in complete (+${qtyToAdd} pcs)! Order #${batch.linkedBookingNumber} updated for Scout Fera2 delivery.`
-        : `Batch ${batch.batchCode} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
+        ? `Batch ${batchLabel(batch)} Gard stock-in complete (+${qtyToAdd} pcs)! Order #${batch.linkedBookingNumber} updated for Scout Fera2 delivery.`
+        : `Batch ${batchLabel(batch)} stocked in (+${qtyToAdd} pcs to ${product.name}) & vendor prices logged.`,
       newLog
     );
   };
@@ -5455,7 +5456,7 @@ export default function App() {
                 <>
                   <div className="text-base font-black text-slate-900">An open batch already exists</div>
                   <div className="text-xs text-slate-700">
-                    {joinPrompt.batch.batchCode} ({joinPrompt.batch.quantity} pcs) cannot take this quantity: {joinPrompt.blockedReason}. A new batch will be started.
+                    {batchLabel(joinPrompt.batch)} ({joinPrompt.batch.quantity} pcs) cannot take this quantity: {joinPrompt.blockedReason}. A new batch will be started.
                   </div>
                   <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Start a new batch</button>
                   <button type="button" onClick={() => setJoinPrompt(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>
@@ -5464,7 +5465,7 @@ export default function App() {
                 <>
                   <div className="text-base font-black text-slate-900">Add to the open batch?</div>
                   <div className="text-xs text-slate-700">
-                    {joinPrompt.batch.batchCode} ({joinPrompt.batch.quantity} pcs) for this item is still at its first stage, not sent to the factory and no money spent. Size/color does not matter, the same vendor makes all of them. Add {joinPrompt.quantity} pcs{joinVariantText(joinPrompt.batch.productId, joinPrompt.variantId)} to it (total {joinPrompt.batch.quantity + joinPrompt.quantity}, kept per size), or start a new batch?
+                    {batchLabel(joinPrompt.batch)} ({joinPrompt.batch.quantity} pcs) for this item is still at its first stage, not sent to the factory and no money spent. Size/color does not matter, the same vendor makes all of them. Add {joinPrompt.quantity} pcs{joinVariantText(joinPrompt.batch.productId, joinPrompt.variantId)} to it (total {joinPrompt.batch.quantity + joinPrompt.quantity}, kept per size), or start a new batch?
                   </div>
                   <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); joinExistingBatch(p); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Add to {joinPrompt.batch.batchCode}</button>
                   <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-slate-800 text-white font-black text-xs">Start a new batch</button>
