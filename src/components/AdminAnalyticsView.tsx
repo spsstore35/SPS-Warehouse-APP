@@ -753,6 +753,45 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     productByName,
   ]);
 
+  // Unpaid demand (display only): pieces asked for by orders that have not paid yet, per item and size.
+  // Uses the same date and branch filters as the aggregator above. No money, no customers. Unpaid orders
+  // never reserve stock and are not part of the shortage lists.
+  const unpaidDemandRows = useMemo(() => {
+    const effFrom = aggFromDate || fromDate;
+    const effTo = aggToDate || toDate;
+    const fare2Set = new Set(aggregatorFare2.map((f) => f.toLowerCase()));
+    const map = new Map<string, { key: string; productName: string; size: string; colorName: string; colorHex: string; unpaid: number; paid: number }>();
+    bookings.forEach((b) => {
+      const orderDay = toOrderDateKey(b.createdAt);
+      if (effFrom && orderDay && orderDay < effFrom) return;
+      if (effTo && orderDay && orderDay > effTo) return;
+      if ((effFrom || effTo) && !orderDay) return;
+      const resolvedBranch = resolveBookingBranchName(b);
+      if (fare2Set.size > 0) {
+        if (!fare2Set.has(resolvedBranch.toLowerCase())) return;
+      } else if (branchFilter !== 'All Branches') {
+        if (branchFilter === 'Unassigned') {
+          if (resolvedBranch !== 'Unassigned') return;
+        } else if (resolvedBranch.toLowerCase() !== branchFilter.toLowerCase()) {
+          return;
+        }
+      }
+      const paid = isOrderPaidOrConfirmed(b);
+      b.items.forEach((it) => {
+        const sizeLabel = normalizeSizeLabel(it.size);
+        const colorName = (it.colorName || 'Standard').trim() || 'Standard';
+        const catProd = productById.get(it.productId) || productByName.get((it.productName || '').trim().toLowerCase());
+        const prodName = catProd?.name || it.productName;
+        const key = `${(it.productId || prodName).toLowerCase()}__${sizeLabel.toLowerCase()}__${colorName.toLowerCase()}`;
+        const cur = map.get(key) || { key, productName: prodName, size: sizeLabel, colorName, colorHex: it.colorHex || '#94a3b8', unpaid: 0, paid: 0 };
+        if (paid) cur.paid += it.quantity || 0;
+        else cur.unpaid += it.quantity || 0;
+        map.set(key, cur);
+      });
+    });
+    return Array.from(map.values()).filter((r) => r.unpaid > 0).sort((a, b) => b.unpaid - a.unpaid);
+  }, [bookings, aggFromDate, aggToDate, fromDate, toDate, aggregatorFare2, branchFilter, productById, productByName]);
+
   const aggregatorSummary = useMemo(() => {
     return productionAggregatorRows.reduce(
       (acc, r) => ({
@@ -2093,6 +2132,48 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
               ))}
             </div>
           </>
+        )}
+      </section>
+
+      {/* Unpaid orders: demand only (pieces), no money, no customers. Does not reserve stock. */}
+      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-3">
+        <div>
+          <h3 className="text-base font-black text-slate-900">Unpaid orders: pieces asked for</h3>
+          <p className="text-[11px] text-slate-500">
+            Orders that have not paid a deposit yet. For information only: they do not reserve stock and do not create shortages. Same dates and branch filters as above.
+          </p>
+        </div>
+        {unpaidDemandRows.length === 0 ? (
+          <div className="text-xs text-slate-500">No unpaid orders in this range.</div>
+        ) : (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase px-1">
+              <span>Item / size</span>
+              <span className="flex gap-4">
+                <span>Unpaid pcs</span>
+                <span>Paid pcs</span>
+              </span>
+            </div>
+            {unpaidDemandRows.map((r) => (
+              <div key={r.key} className="flex items-center justify-between gap-2 p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs">
+                <div className="min-w-0 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full border border-slate-300 shrink-0" style={{ backgroundColor: r.colorHex }} />
+                  <span className="font-black text-slate-900 truncate">
+                    {r.productName} - {r.size === 'Standard Size' ? 'Standard Size' : `Size ${r.size}`}
+                    {r.colorName && r.colorName !== 'Standard' ? ` (${r.colorName})` : ''}
+                  </span>
+                </div>
+                <div className="flex gap-4 font-mono tabular-nums shrink-0">
+                  <span className="w-16 text-right font-black text-amber-700">{r.unpaid.toLocaleString()}</span>
+                  <span className="w-16 text-right text-slate-600">{r.paid.toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+            <div className="flex items-center justify-between text-xs font-black text-slate-900 px-1 pt-1">
+              <span>Total</span>
+              <span className="font-mono tabular-nums text-amber-700">{unpaidDemandRows.reduce((s, r) => s + r.unpaid, 0).toLocaleString()} unpaid pcs</span>
+            </div>
+          </div>
         )}
       </section>
     </div>
