@@ -164,6 +164,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [editingStageDays, setEditingStageDays] = useState('');
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
+  const [catalogView, setCatalogView] = useState<'items' | 'clients'>('items');
   const [batchView, setBatchView] = useState<'items' | 'clients'>('items');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
   const [mergeBatchId, setMergeBatchId] = useState<string | null>(null);
@@ -680,6 +681,51 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     );
   };
 
+  // Clients waiting for goods: one card per client, lines per item/size with the batch code(s).
+  const renderClientCards = (batchList: ProductionBatch[], onlyProductId?: string) => {
+    const byClient = new Map<string, { name: string; orders: Set<string>; lines: Map<string, { product: string; label: string; qty: number; batches: Set<string> }> }>();
+    batchList.forEach((b) => {
+      const ids = [b.linkedBookingId, ...(b.extraBookingIds || [])].filter(Boolean) as string[];
+      const vIds = new Set<string>([b.variantId, ...Object.keys(b.variantQty || {})].filter(Boolean) as string[]);
+      ids.forEach((id) => {
+        (orderInfo || []).filter((n) => n.bookingId === id && n.owed > 0 && (!n.variantId || vIds.size === 0 || vIds.has(n.variantId)) && (!n.productId || n.productId === b.productId) && (!onlyProductId || b.productId === onlyProductId)).forEach((n) => {
+          const key = n.clientName || n.bookingNumber;
+          const c = byClient.get(key) || { name: n.clientName || `Order #${n.bookingNumber}`, orders: new Set<string>(), lines: new Map() };
+          c.orders.add(n.bookingNumber);
+          const lk = `${n.variantId}|${b.id}`;
+          const pname = products.find((x) => x.id === b.productId)?.name || 'Item';
+          const ln = c.lines.get(lk) || { product: pname, label: `${n.size || ''}${n.colorName ? ' / ' + n.colorName : ''}`.trim() || 'Std', qty: 0, batches: new Set<string>() };
+          ln.qty += n.owed;
+          ln.batches.add(b.batchCode);
+          c.lines.set(lk, ln);
+          byClient.set(key, c);
+        });
+      });
+    });
+    const list = Array.from(byClient.values());
+    if (list.length === 0) {
+      return <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center text-sm font-semibold text-slate-700">No client is waiting for goods from the active batches{onlyProductId ? ' of this item' : ''}.</div>;
+    }
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {list.map((c) => (
+          <div key={c.name} className="rounded-xl border border-slate-200 bg-white p-3 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-bold text-slate-900">{c.name}</div>
+              <div className="text-[11px] text-slate-500">Order {Array.from(c.orders).map((o) => `#${o}`).join(', ')}</div>
+            </div>
+            {Array.from(c.lines.values()).map((ln, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 text-xs text-slate-800">
+                <span>{ln.product} · {ln.label}: <b className="font-mono">{ln.qty}</b> missing</span>
+                <span className="font-mono font-bold text-slate-600">{Array.from(ln.batches).join(', ')}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const totalActiveBatches = batches.filter((b) => b.status === 'in_progress').length;
 
   return (
@@ -800,6 +846,18 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               )}
             </div>
 
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 w-fit">
+              {(['items', 'clients'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setCatalogView(v)}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold min-h-[36px] ${catalogView === v ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'}`}
+                >
+                  {v === 'items' ? 'Items' : 'Clients'}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
               {(
                 [
@@ -826,7 +884,12 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
           </div>
 
           {/* Product Grid */}
-          {activeCatalogProducts.length === 0 ? (
+          {catalogView === 'clients' ? (
+            <div className="space-y-2">
+              <div className="text-xs text-slate-500">Clients waiting for goods from all active batches (paid orders, pieces still missing).</div>
+              {renderClientCards(batches.filter((b) => b.status === 'in_progress'))}
+            </div>
+          ) : activeCatalogProducts.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center space-y-3 max-w-lg mx-auto">
               <Package className="w-10 h-10 text-slate-300 mx-auto" />
               <h3 className="text-base font-bold text-slate-900">
@@ -1641,48 +1704,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 </div>
               )}
 
-              {batchTab === 'active' && batchView === 'clients' ? (() => {
-                const byClient = new Map<string, { name: string; orders: Set<string>; lines: Map<string, { label: string; qty: number; batches: Set<string> }> }>();
-                visibleBatches.forEach((b) => {
-                  const ids = [b.linkedBookingId, ...(b.extraBookingIds || [])].filter(Boolean) as string[];
-                  const vIds = new Set<string>([b.variantId, ...Object.keys(b.variantQty || {})].filter(Boolean) as string[]);
-                  ids.forEach((id) => {
-                    (orderInfo || []).filter((n) => n.bookingId === id && n.owed > 0 && (!n.variantId || vIds.size === 0 || vIds.has(n.variantId)) && (!n.productId || n.productId === selectedProduct.id)).forEach((n) => {
-                      const key = n.clientName || n.bookingNumber;
-                      const c = byClient.get(key) || { name: n.clientName || `Order #${n.bookingNumber}`, orders: new Set<string>(), lines: new Map() };
-                      c.orders.add(n.bookingNumber);
-                      const lk = `${n.variantId}|${b.id}`;
-                      const ln = c.lines.get(lk) || { label: `${n.size || ''}${n.colorName ? ' / ' + n.colorName : ''}`.trim() || 'Std', qty: 0, batches: new Set<string>() };
-                      ln.qty += n.owed;
-                      ln.batches.add(b.batchCode);
-                      c.lines.set(lk, ln);
-                      byClient.set(key, c);
-                    });
-                  });
-                });
-                const list = Array.from(byClient.values());
-                if (list.length === 0) {
-                  return <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center text-sm font-semibold text-slate-700">No client is waiting for goods from the active batches of this item.</div>;
-                }
-                return (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {list.map((c) => (
-                      <div key={c.name} className="rounded-xl border border-slate-200 bg-white p-3 space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-sm font-bold text-slate-900">{c.name}</div>
-                          <div className="text-[11px] text-slate-500">Order {Array.from(c.orders).map((o) => `#${o}`).join(', ')}</div>
-                        </div>
-                        {Array.from(c.lines.values()).map((ln, i) => (
-                          <div key={i} className="flex items-center justify-between gap-2 text-xs text-slate-800">
-                            <span>{selectedProduct.name} · {ln.label}: <b className="font-mono">{ln.qty}</b> missing</span>
-                            <span className="font-mono font-bold text-slate-600">{Array.from(ln.batches).join(', ')}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                );
-              })() : visibleBatches.length === 0 ? (
+              {batchTab === 'active' && batchView === 'clients' ? renderClientCards(visibleBatches, selectedProduct.id) : visibleBatches.length === 0 ? (
                 <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-2">
                   <p className="text-sm font-semibold text-slate-700">
                     {batchTab === 'active'
