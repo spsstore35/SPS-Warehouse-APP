@@ -133,23 +133,36 @@ export async function loadSessionUser(): Promise<User | null> {
 
 /** Admin-only account actions (create / set password / delete) via the admin-users Edge Function. */
 export async function callAdminUsers(body: Record<string, unknown>): Promise<any> {
+  const send = async (token: string) => {
+    const res = await fetch(`${SUPABASE_CONFIG.url}/functions/v1/admin-users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {
+      /* ignore */
+    }
+    return { res, data };
+  };
   const { data: sess } = await supabase.auth.getSession();
-  const token = sess?.session?.access_token;
+  let token = sess?.session?.access_token;
   if (!token) throw new Error('You are signed out. Please sign in again.');
-  const res = await fetch(`${SUPABASE_CONFIG.url}/functions/v1/admin-users`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  let data: any = null;
-  try {
-    data = await res.json();
-  } catch {
-    /* ignore */
+  let { res, data } = await send(token);
+  if (res.status === 401) {
+    // The saved token may be stale: get a fresh one and try once more.
+    const { data: fresh } = await supabase.auth.refreshSession();
+    const t2 = fresh?.session?.access_token;
+    if (t2) ({ res, data } = await send(t2));
+  }
+  if (res.status === 401) {
+    throw new Error('Your login session expired. Please log out, sign in again, then retry.');
   }
   if (!res.ok) throw new Error(data?.message || data?.error || 'Request failed');
   return data;
