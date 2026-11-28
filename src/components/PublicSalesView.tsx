@@ -169,42 +169,28 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
         )}
         <div className="space-y-2">
           {shownOrders.map((b) => (
-            <div key={b.id} className="border border-slate-200 rounded-xl p-3 text-sm">
-              <div className="flex flex-wrap justify-between gap-2">
-                <div>
-                  <div className="font-bold">
-                    {b.clientName} <span className="text-slate-500 font-normal">· {b.clientPhone}</span>
-                  </div>
-                  <div className="text-xs text-slate-600">
-                    {b.bookingNumber} · {b.troopGroup === '3ashera 1' ? 'Ashira 1' : b.troopGroup === '3ashera 2' ? 'Ashira 2' : b.troopGroup} · Raht: {b.teamName || '-'}
-                  </div>
-                  <div className="text-xs text-slate-600 mt-1">
-                    {b.items.map((i) => `${i.quantity}× ${i.productName}${i.size && i.size !== 'One Size' ? ` (${i.size})` : ''}`).join(', ')}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-black">{money(b.total)}</div>
-                  <div className="text-xs text-slate-600">To pay now: {money(b.depositRequired)}</div>
-                  <div className="text-xs text-slate-600">Method: {b.paymentMethod === 'instapay' ? 'Instapay' : b.paymentMethod === 'cash' ? 'Cash' : '-'}</div>
-                  <div className={`text-xs font-bold ${b.depositPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {b.depositPaid ? 'Paid' : 'Awaiting payment'}
-                  </div>
-                </div>
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => onOpenOrder(b.id)}
+              className="w-full text-left border border-slate-200 hover:border-slate-300 active:bg-slate-50 rounded-xl px-3.5 py-3 flex items-center justify-between gap-3 transition-colors"
+            >
+              <div className="min-w-0">
+                <div className="font-black text-slate-900 truncate">{b.clientName}</div>
+                <div className="text-xs text-slate-500 mt-0.5 truncate">{b.clientPhone}</div>
+                <div className="text-[11px] font-mono text-slate-400 mt-0.5">{b.bookingNumber}</div>
               </div>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {!b.depositPaid && (
-                  <button className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white" onClick={() => onMarkPaid(b.id)}>
-                    Paid
-                  </button>
-                )}
-                <button className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300 flex items-center gap-1" onClick={() => onOpenInvoice(b)}>
-                  <FileText className="w-3.5 h-3.5" /> Invoice
-                </button>
-                <button className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300" onClick={() => onOpenOrder(b.id)}>
-                  Order details
-                </button>
+              <div className="text-right shrink-0">
+                <div className="font-black text-slate-900">{money(b.total)}</div>
+                <span
+                  className={`inline-block mt-1 text-[11px] font-black px-2 py-0.5 rounded-full ${
+                    b.depositPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {b.depositPaid ? 'Paid' : 'Awaiting payment'}
+                </span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>
