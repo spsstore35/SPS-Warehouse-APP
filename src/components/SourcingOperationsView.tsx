@@ -96,7 +96,7 @@ interface SourcingOperationsViewProps {
   onDeleteBatch: (batchId: string) => void;
   onMergeBatches?: (keep: ProductionBatch, absorbed: ProductionBatch) => void;
   /** Orders still waiting for stock (number, client, pieces), used for the "Merged: ..." line. */
-  orderInfo?: { bookingId: string; bookingNumber: string; clientName: string; owed: number }[];
+  orderInfo?: { bookingId: string; bookingNumber: string; clientName: string; owed: number; productId?: string; variantId?: string; size?: string; colorName?: string }[];
   onCompleteBatchStockIn: (payload: {
     batchId: string;
     finalQuantity: number;
@@ -164,6 +164,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [editingStageDays, setEditingStageDays] = useState('');
   const [drawerStageKey, setDrawerStageKey] = useState<OperationStageKey | null>(null);
   const [batchTab, setBatchTab] = useState<'active' | 'completed'>('active');
+  const [batchView, setBatchView] = useState<'items' | 'clients'>('items');
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
   const [mergeBatchId, setMergeBatchId] = useState<string | null>(null);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
@@ -1554,6 +1555,20 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
+                  {batchTab === 'active' && (
+                    <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                      {(['items', 'clients'] as const).map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setBatchView(v)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${batchView === v ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'}`}
+                        >
+                          {v === 'items' ? 'Items' : 'Clients'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
                     <button
                       type="button"
@@ -1626,7 +1641,48 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                 </div>
               )}
 
-              {visibleBatches.length === 0 ? (
+              {batchTab === 'active' && batchView === 'clients' ? (() => {
+                const byClient = new Map<string, { name: string; orders: Set<string>; lines: Map<string, { label: string; qty: number; batches: Set<string> }> }>();
+                visibleBatches.forEach((b) => {
+                  const ids = [b.linkedBookingId, ...(b.extraBookingIds || [])].filter(Boolean) as string[];
+                  const vIds = new Set<string>([b.variantId, ...Object.keys(b.variantQty || {})].filter(Boolean) as string[]);
+                  ids.forEach((id) => {
+                    (orderInfo || []).filter((n) => n.bookingId === id && n.owed > 0 && (!n.variantId || vIds.size === 0 || vIds.has(n.variantId)) && (!n.productId || n.productId === selectedProduct.id)).forEach((n) => {
+                      const key = n.clientName || n.bookingNumber;
+                      const c = byClient.get(key) || { name: n.clientName || `Order #${n.bookingNumber}`, orders: new Set<string>(), lines: new Map() };
+                      c.orders.add(n.bookingNumber);
+                      const lk = `${n.variantId}|${b.id}`;
+                      const ln = c.lines.get(lk) || { label: `${n.size || ''}${n.colorName ? ' / ' + n.colorName : ''}`.trim() || 'Std', qty: 0, batches: new Set<string>() };
+                      ln.qty += n.owed;
+                      ln.batches.add(b.batchCode);
+                      c.lines.set(lk, ln);
+                      byClient.set(key, c);
+                    });
+                  });
+                });
+                const list = Array.from(byClient.values());
+                if (list.length === 0) {
+                  return <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center text-sm font-semibold text-slate-700">No client is waiting for goods from the active batches of this item.</div>;
+                }
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {list.map((c) => (
+                      <div key={c.name} className="rounded-xl border border-slate-200 bg-white p-3 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-bold text-slate-900">{c.name}</div>
+                          <div className="text-[11px] text-slate-500">Order {Array.from(c.orders).map((o) => `#${o}`).join(', ')}</div>
+                        </div>
+                        {Array.from(c.lines.values()).map((ln, i) => (
+                          <div key={i} className="flex items-center justify-between gap-2 text-xs text-slate-800">
+                            <span>{selectedProduct.name} · {ln.label}: <b className="font-mono">{ln.qty}</b> missing</span>
+                            <span className="font-mono font-bold text-slate-600">{Array.from(ln.batches).join(', ')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })() : visibleBatches.length === 0 ? (
                 <div className="p-8 rounded-xl bg-slate-50 border border-slate-200 text-center space-y-2">
                   <p className="text-sm font-semibold text-slate-700">
                     {batchTab === 'active'
