@@ -909,38 +909,6 @@ This is our official Scout Store number. Through this chat, you can:
             )}
           </div>
 
-          <div className="flex items-center justify-between sm:justify-start gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0">
-            <span className="text-[11px] font-bold text-slate-600 pl-2 flex items-center gap-1">
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-              <span>WhatsApp:</span>
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setWaLanguage('en')}
-                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
-                  waLanguage === 'en'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                English
-              </button>
-              <button
-                type="button"
-                onClick={() => setWaLanguage('ar')}
-                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
-                  waLanguage === 'ar'
-                    ? 'bg-white text-emerald-800 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-              >
-                عربي
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Bookings List Cards matching exact screenshot layout with Arrow */}
       {filteredBookings.length === 0 ? (
