@@ -5583,6 +5583,7 @@ export default function App() {
             onSaveBatch={handleSaveBatch}
             onDeleteBatch={handleDeleteBatch}
             onMergeBatches={handleMergeBatches}
+            orderInfo={shortageNotes}
             onCompleteBatchStockIn={handleCompleteBatchStockIn}
             onShowToast={(msg) => showToast(msg)}
           />

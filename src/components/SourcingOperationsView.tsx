@@ -95,6 +95,8 @@ interface SourcingOperationsViewProps {
   onSaveBatch: (batch: ProductionBatch) => void;
   onDeleteBatch: (batchId: string) => void;
   onMergeBatches?: (keep: ProductionBatch, absorbed: ProductionBatch) => void;
+  /** Orders still waiting for stock (number, client, pieces), used for the "Merged: ..." line. */
+  orderInfo?: { bookingId: string; bookingNumber: string; clientName: string; owed: number }[];
   onCompleteBatchStockIn: (payload: {
     batchId: string;
     finalQuantity: number;
@@ -134,6 +136,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onSaveBatch,
   onDeleteBatch,
   onMergeBatches,
+  orderInfo,
   onCompleteBatchStockIn,
   onShowToast,
 }) => {
@@ -1831,31 +1834,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             </div>
                           </div>
 
-                          {/* Completed / Logged Stages Cost & Vendor Trail */}
-                          {loggedStages.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
-                              {loggedStages
-                                .map((st) => (
-                                  <span
-                                    key={st.stageKey}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[10px] font-semibold text-slate-700"
-                                  >
-                                    {st.completed && <Check className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
-                                    <span>{st.label}:</span>
-                                    <span className="text-slate-900">{st.vendorName}</span>
-                                    {typeof st.unitCost === 'number' && (st.unitQty || 0) > 0 && (
-                                      <span className="font-mono text-slate-600">
-                                        {st.unitCost.toLocaleString()}/{st.unitName} x {(st.unitQty as number).toLocaleString()}
-                                      </span>
-                                    )}
-                                    <span className="font-mono text-emerald-700">
-                                      ({st.totalEgp.toLocaleString()} EGP)
-                                    </span>
-                                    {st.days !== null && st.days >= 0 && <span className="text-slate-500">{st.days}d</span>}
-                                  </span>
-                                ))}
-                            </div>
-                          )}
+                          {/* Merged orders: which orders are inside this one batch */}
+                          {(() => {
+                            const ids = [batch.linkedBookingId, ...(batch.extraBookingIds || [])].filter(Boolean) as string[];
+                            if (ids.length < 2) return null;
+                            const parts = ids.map((id, i) => {
+                              const rows = (orderInfo || []).filter((n) => n.bookingId === id);
+                              const num = rows[0]?.bookingNumber || (i === 0 ? batch.linkedBookingNumber : batch.extraBookingNumbers?.[i - 1]) || '';
+                              const who = rows[0]?.clientName;
+                              const pcs = rows.reduce((sum, n) => sum + n.owed, 0);
+                              return `Order ${num ? `#${num}` : '(no.)'}${who ? ` (${who})` : ''}${pcs > 0 ? `: ${pcs} pcs` : ''}`;
+                            });
+                            return <div className="text-[11px] text-slate-600">Merged: {parts.join(' + ')}</div>;
+                          })()}
 
                           {/* Clean Progress Bar */}
                           <div className="space-y-1">
