@@ -1022,7 +1022,7 @@ grant execute on function public.batch_receive_preview(text, text, integer) to a
 create or replace function public.receive_batch_stock(p_batch_id text, p_variant_id text, p_qty integer)
 returns table (new_quantity integer, reserved integer)
 language plpgsql security definer set search_path = public as $$
-declare v_primary text; v_extra text[]; v_total integer := 0; v_take integer := 0; v_new integer;
+declare v_primary text; v_extra text[]; v_total integer := 0; v_take integer := 0; v_new integer; v_left integer; r record; v_give integer;
 begin
   if not public.app_is_staff_or_above() or not public.app_admin_of_any(array['purchases','inventory']) then
     raise exception 'Only an admin of the purchases team can add received stock.' using errcode = '42501';
@@ -1047,8 +1047,28 @@ begin
      where variant_id = p_variant_id
        and (booking_id = v_primary or booking_id = any(coalesce(v_extra, '{}')));
   end if;
+  -- Pieces beyond what the linked orders needed go FIRST to other orders of the same size that still
+  -- wait (earliest confirmed deposit first), so a later order cannot grab them from stock.
+  v_left := p_qty - v_take;
+  if v_left > 0 then
+    for r in select o.booking_id, o.owed from public.order_stock_owed o
+               join public.bookings b on b.id = o.booking_id
+              where o.variant_id = p_variant_id
+                and not (o.booking_id = v_primary or o.booking_id = any(coalesce(v_extra, '{}')))
+              order by coalesce(b.deposit_paid_at, b.created_at), o.booking_id
+              for update of o loop
+      exit when v_left <= 0;
+      v_give := least(r.owed, v_left);
+      if v_give >= r.owed then
+        delete from public.order_stock_owed where booking_id = r.booking_id and variant_id = p_variant_id;
+      else
+        update public.order_stock_owed set owed = owed - v_give where booking_id = r.booking_id and variant_id = p_variant_id;
+      end if;
+      v_left := v_left - v_give;
+    end loop;
+  end if;
   perform set_config('app.stock_fn', 'on', true);
-  update public.product_variants set quantity = greatest(0, quantity + p_qty - v_take), updated_at = now()
+  update public.product_variants set quantity = greatest(0, quantity + v_left), updated_at = now()
    where id = p_variant_id returning quantity into v_new;
   perform set_config('app.stock_fn', 'off', true);
   if v_new is null then raise exception 'Unknown item.'; end if;

@@ -3968,6 +3968,8 @@ export default function App() {
         try {
           const r = await receiveBatchStockInDb(batchId, part.variantId, part.qty);
           if (r.reserved > 0) showToast(`${r.reserved} unit(s) were taken for the waiting order. Stock is now ${r.newQuantity}.`);
+          setProducts((prev) => prev.map((p) => p.id !== product.id ? p : (() => { const vs = p.variants.map((v) => (v.id === part.variantId ? { ...v, quantity: r.newQuantity } : v)); return { ...p, variants: vs, totalQuantity: vs.reduce((t, v) => t + v.quantity, 0) }; })()));
+          setTimeout(refreshShortageNotes, 800);
         } catch (err: any) {
           showToast(`Database stock update error: ${err?.message || 'Sync failed'}`);
         }
