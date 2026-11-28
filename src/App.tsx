@@ -44,6 +44,8 @@ import {
   canEditProductMediaAndColors,
   canUserAccessView,
   canUserEditBookings,
+  canUserManageOrders,
+  canUserConfirmPayments,
   canUserManageTeamScope,
   isFullAccessAdmin,
   normalizeRole,
@@ -2483,13 +2485,13 @@ export default function App() {
     autoAdvanceToPreparing = false,
     bypassApproval = false
   ) => {
-    if (!bypassApproval && !isUserAdmin(currentUser)) {
+    if (!bypassApproval && !canUserManageOrders(currentUser, users)) {
       if (!canUserEditBookings(currentUser, users)) {
         showToast('View-only access on Orders & Bookings.');
         return;
       }
       handleSubmitTeamRequest({
-        teamScope: 'budgeting',
+        teamScope: 'troops',
         entityType: 'booking_create',
         actionType: 'create',
         targetId: newBooking.id,
@@ -2584,7 +2586,7 @@ export default function App() {
     const safeBooking: Booking =
       prevBooking &&
       (prevBooking.troopGroup || '') !== (updatedBooking.troopGroup || '') &&
-      !isUserAdmin(currentUser)
+      !canUserManageOrders(currentUser, users)
         ? { ...updatedBooking, troopGroup: prevBooking.troopGroup }
         : updatedBooking;
 
@@ -2599,10 +2601,10 @@ export default function App() {
   };
 
   const handleSaveEditedBooking = (editedBooking: Booking, bypassApproval = false) => {
-    if (!bypassApproval && !isUserAdmin(currentUser)) {
+    if (!bypassApproval && !canUserManageOrders(currentUser, users)) {
       if (canUserEditBookings(currentUser, users)) {
         handleSubmitTeamRequest({
-          teamScope: 'budgeting',
+          teamScope: 'troops',
           entityType: 'booking_edit',
           actionType: 'update',
           targetId: editedBooking.id,
@@ -2754,7 +2756,7 @@ export default function App() {
   };
 
   const handleDeclinePaymentVerification = (bookingId: string) => {
-    if (!isUserAdmin(currentUser)) {
+    if (!canUserConfirmPayments(currentUser, users)) {
       showToast('Only Admins can approve or decline payment verification requests.');
       return;
     }
@@ -2802,7 +2804,7 @@ export default function App() {
     nextStatus: BookingStatus,
     bypassAdminCheck = false
   ) => {
-    if (nextStatus === 'preparing' && !bypassAdminCheck && !isUserAdmin(currentUser)) {
+    if (nextStatus === 'preparing' && !bypassAdminCheck && !canUserConfirmPayments(currentUser, users)) {
       showToast('Only Admins can confirm payment. Please submit a Payment Verification Request.');
       return;
     }
@@ -2928,7 +2930,7 @@ export default function App() {
   };
 
   const handleDeleteBooking = (bookingId: string, bypassAdminCheck = false) => {
-    if (!bypassAdminCheck && !isUserAdmin(currentUser)) {
+    if (!bypassAdminCheck && !canUserManageOrders(currentUser, users)) {
       showToast('Only Admins can delete bookings directly.');
       return;
     }
@@ -3760,6 +3762,12 @@ export default function App() {
         setBookings((prev) => prev.map((b) => (b.id === linkedOrder.id ? readyOrder : b)));
         updateBookingInDb(linkedOrder.id, readyOrder).catch(() => {});
         syncOrderTaskToScoutFera2(readyOrder);
+      }
+      if (!linkedOrder && !stillOpenForOrder) {
+        // This person cannot read orders (e.g. purchases admin), so the database marks it ready.
+        supabase.rpc('mark_booking_ready', { p_booking_id: batch.linkedBookingId }).then(({ error }) => {
+          if (error) showToast(`Could not mark the order ready: ${error.message}`);
+        });
       }
     }
 
@@ -4945,7 +4953,7 @@ export default function App() {
             }}
             onEditBooking={(booking) => {
               if (!canUserEditBookings(currentUser, users)) {
-                showToast('Only Budgeting & Liquidity Team or Full-Access Admin can edit bookings.');
+                showToast('Only Full-Access Admin or the Scout Fera2 team can edit bookings.');
                 return;
               }
               if (booking.status !== 'pending' || booking.depositPaid) {

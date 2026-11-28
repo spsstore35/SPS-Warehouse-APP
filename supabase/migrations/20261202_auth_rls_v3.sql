@@ -616,7 +616,8 @@ begin
     with check (
       public.app_is_staff_or_above()
       and requested_by_id = auth.uid()::text
-      and public.app_member_of_any(array[team_scope])
+      and (public.app_member_of_any(array[team_scope])
+           or (team_scope = 'troops' and public.app_member_of_any(array['budgeting'])))
       and (status = 'pending' or public.app_is_team_admin(team_scope))
     );
   create policy tcr_update on public.team_change_requests for update to authenticated
@@ -638,20 +639,21 @@ begin
   ------------------------------------------------------------------------------
   create policy bookings_select on public.bookings for select to authenticated
     using (public.app_member_of_any(array['troops','budgeting','inventory']));
+  -- Orders belong to Scout Fera2 ('troops'). Only a full_admin or the team_admin of that team
+  -- creates / edits / deletes orders (staff of the team send a request, an admin approves).
+  -- Budgeting can read orders; its team_admin can confirm payments (guard trigger below).
   create policy bookings_insert on public.bookings for insert to authenticated
-    with check (public.app_member_of_any(array['troops','budgeting']) and created_by_id = auth.uid()::text);
+    with check (public.app_admin_of_any(array['troops']));
   create policy bookings_update on public.bookings for update to authenticated
     using (public.app_member_of_any(array['troops','budgeting','inventory']))
     with check (public.app_member_of_any(array['troops','budgeting','inventory']));
   create policy bookings_delete on public.bookings for delete to authenticated
-    using (public.app_admin_of_any(array['troops','budgeting']));
-
+    using (public.app_admin_of_any(array['troops']));
   create policy booking_items_select on public.booking_items for select to authenticated
     using (public.app_member_of_any(array['troops','budgeting','inventory']));
   create policy booking_items_write on public.booking_items for all to authenticated
-    using (public.app_member_of_any(array['troops','budgeting']))
-    with check (public.app_member_of_any(array['troops','budgeting']));
-
+    using (public.app_admin_of_any(array['troops']))
+    with check (public.app_admin_of_any(array['troops']));
   ------------------------------------------------------------------------------
   -- Calendar
   ------------------------------------------------------------------------------
@@ -883,17 +885,80 @@ create trigger guard_product_update before update on public.product_variants
 create or replace function public.guard_booking_update() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
-  v_ok text[] := array['pending_deposit_percentage','pending_deposit_percentage_by','pending_deposit_percentage_at',
+  v_request text[] := array['pending_deposit_percentage','pending_deposit_percentage_by','pending_deposit_percentage_at',
     'payment_verification_requested','payment_verification_requested_by','payment_verification_requested_at',
     'payment_verification_note','updated_at'];
+  v_payment text[];
+  v_content text[] := array['booking_number','client_name','client_phone','notes','subtotal','discount','total',
+    'deposit_rate','deposit_percentage','deposit_required','created_by_id','created_by_name','created_by_role','created_at'];
+  v_diff text[];
+  v_allowed text[];
 begin
   if auth.uid() is null then return new; end if;
-  if public.app_admin_of_any(array['troops','budgeting','inventory']) then return new; end if;
-  if (to_jsonb(new) - v_ok) is distinct from (to_jsonb(old) - v_ok) then
-    raise exception 'Staff can only request deposit or payment checks on a booking.' using errcode = '42501';
+  v_payment := v_request || array['status','deposit_paid','deposit_paid_amount','deposit_paid_at',
+    'final_paid_amount','final_paid_at','inventory_deducted'];
+  select coalesce(array_agg(n.key), '{}') into v_diff
+    from jsonb_each(to_jsonb(new)) n join jsonb_each(to_jsonb(old)) o on o.key = n.key
+   where n.value is distinct from o.value;
+  -- Once a deposit or payment is confirmed, the order's details are frozen for everybody.
+  if (old.deposit_paid or old.status <> 'pending') and v_diff && v_content then
+    raise exception 'This order is locked: payment was already confirmed. Its details cannot be changed.' using errcode = '42501';
+  end if;
+  if public.app_admin_of_any(array['troops']) then return new; end if;            -- full_admin / Scout Fera2 team_admin
+  if public.app_admin_of_any(array['budgeting']) then v_allowed := v_payment;      -- payment confirmation only
+  elsif public.app_admin_of_any(array['inventory']) then v_allowed := array['stock_check_status','updated_at'];
+  elsif public.app_member_of_any(array['troops','budgeting']) then v_allowed := v_request;  -- Fera2 + budgeting staff: only ask for deposit/payment checks
+  else v_allowed := array['updated_at'];
+  end if;
+  if not (v_diff <@ v_allowed) then
+    raise exception 'You are not allowed to change this on an order.' using errcode = '42501';
   end if;
   return new;
 end $$;
+
+-- Locked orders cannot be deleted, and their items cannot be changed (a brand-new order gets 2
+-- minutes so its items can be saved right after the order row).
+create or replace function public.guard_booking_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return old; end if;
+  if old.deposit_paid or old.status <> 'pending' then
+    raise exception 'This order is locked: payment was already confirmed. It cannot be deleted.' using errcode = '42501';
+  end if;
+  return old;
+end $$;
+drop trigger if exists guard_booking_delete on public.bookings;
+create trigger guard_booking_delete before delete on public.bookings
+  for each row execute function public.guard_booking_delete();
+
+create or replace function public.guard_booking_items() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_b record; v_id text := coalesce(to_jsonb(new)->>'booking_id', to_jsonb(old)->>'booking_id');
+begin
+  if auth.uid() is null then return coalesce(new, old); end if;
+  select deposit_paid, status, created_at into v_b from public.bookings where id = v_id;
+  if found and (v_b.deposit_paid or v_b.status <> 'pending')
+     and not (tg_op = 'INSERT' and v_b.created_at > now() - interval '2 minutes') then
+    raise exception 'This order is locked: payment was already confirmed. Its items cannot be changed.' using errcode = '42501';
+  end if;
+  return coalesce(new, old);
+end $$;
+drop trigger if exists guard_booking_items on public.booking_items;
+create trigger guard_booking_items before insert or update or delete on public.booking_items
+  for each row execute function public.guard_booking_items();
+
+-- Purchases/inventory admins mark an order "ready for handover" when its goods arrive, without
+-- needing to read orders.
+create or replace function public.mark_booking_ready(p_booking_id text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.app_admin_of_any(array['purchases','inventory']) then
+    raise exception 'Only an admin of purchases or inventory can do this.' using errcode = '42501';
+  end if;
+  update public.bookings set stock_check_status = 'ready_for_handover', updated_at = now() where id = p_booking_id;
+end $$;
+revoke all on function public.mark_booking_ready(text) from public, anon;
+grant execute on function public.mark_booking_ready(text) to authenticated;
 drop trigger if exists guard_booking_update on public.bookings;
 create trigger guard_booking_update before update on public.bookings
   for each row execute function public.guard_booking_update();

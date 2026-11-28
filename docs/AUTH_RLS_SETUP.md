@@ -54,6 +54,15 @@ Run `20261202_auth_rls_v3_ROLLBACK.sql` (restores old hashes, reopens tables), r
 | wrong password x5 | message "too many attempts" | login keeps working during the lockout window |
 | not signed in | - | read any table with the public key (should return nothing/401) |
 
+## Order rules (Client Bookings)
+- Create / edit / delete an order directly: full_admin or the team_admin of Scout Fera2 (`troops`). Nobody else.
+- Staff of Scout Fera2 and staff of budgeting (el mezanya) may only SEND requests (create/edit order, deposit/payment check). No other staff.
+- Approve a staff order request: troops team_admin or full_admin.
+- Confirm a deposit/payment (this also takes stock): full_admin, troops team_admin, or budgeting team_admin. Admins of other teams cannot.
+- Budgeting members see Orders read-only.
+- After a deposit or payment is confirmed, the order details, items and deletion are locked for everyone (enforced in the database, not only the screen). Only status steps (delivered etc.) by a troops admin / full_admin, and stock-ready marking, still work.
+- Purchases/inventory admins mark an order ready through `mark_booking_ready()` (they cannot read orders).
+
 ## How stock changes work (checked on a test copy)
 Stock is taken for an order when the deposit is confirmed (any %), and added when purchased goods arrive. Delivery/handover does not change stock. These steps are done by admins of other teams (budgeting, troops, purchases), who cannot edit `product_variants` directly. So the database function `apply_stock_change` does them with checks:
 - `order_deduction`: full_admin, or team_admin of budgeting / troops / inventory. Only reduces stock.

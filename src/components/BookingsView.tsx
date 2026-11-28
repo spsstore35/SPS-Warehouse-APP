@@ -55,7 +55,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import { isUserAdmin } from '../utils/security';
+import { canUserManageOrders, canUserConfirmPayments } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 
 interface BookingsViewProps {
@@ -131,7 +131,8 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   initialSelectedBookingId,
   onClearSelectedBookingId,
 }) => {
-  const isAdmin = isUserAdmin(currentUser);
+  const isAdmin = canUserManageOrders(currentUser);
+  const canPay = canUserConfirmPayments(currentUser);
   const allowEditBookings = canEditBookings ?? isAdmin;
   const activeMembers = useMemo(
     () =>
@@ -439,7 +440,7 @@ This is our official Scout Store number. Through this chat, you can:
 
   const handleUpdateDepositPct = (pct: number) => {
     if (!activeBooking) return;
-    if (isAdmin) {
+    if (canPay) {
       // Immediate update for Admin
       const depositRequired = Math.round((activeBooking.total * pct) / 100);
       const updated: Booking = {
@@ -501,7 +502,7 @@ This is our official Scout Store number. Through this chat, you can:
   };
 
   const handleApprovePendingDepositPct = () => {
-    if (!activeBooking || !activeBooking.pendingDepositPercentage || !isAdmin) return;
+    if (!activeBooking || !activeBooking.pendingDepositPercentage || !canPay) return;
     const pct = activeBooking.pendingDepositPercentage;
     const depositRequired = Math.round((activeBooking.total * pct) / 100);
     const updated: Booking = {
@@ -535,7 +536,7 @@ This is our official Scout Store number. Through this chat, you can:
   };
 
   const handleRejectPendingDepositPct = () => {
-    if (!activeBooking || !isAdmin) return;
+    if (!activeBooking || !canPay) return;
     const prevPendingPct = activeBooking.pendingDepositPercentage;
     const updated: Booking = {
       ...activeBooking,
@@ -633,7 +634,7 @@ This is our official Scout Store number. Through this chat, you can:
     };
     if (!isAdmin && onSubmitTeamRequest) {
       onSubmitTeamRequest({
-        teamScope: 'budgeting',
+        teamScope: 'troops',
         entityType: 'booking_edit',
         actionType: 'update',
         targetId: activeBooking.id,
@@ -1736,7 +1737,7 @@ This is our official Scout Store number. Through this chat, you can:
                           </div>
                         </div>
 
-                        {isAdmin ? (
+                        {canPay ? (
                           <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
                             <button
                               type="button"
@@ -1821,7 +1822,7 @@ This is our official Scout Store number. Through this chat, you can:
                       )}
                     </div>
 
-                    {isAdmin ? (
+                    {canPay ? (
                       <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
                         <button
                           type="button"
@@ -2140,12 +2141,12 @@ This is our official Scout Store number. Through this chat, you can:
 
             <div className="text-center space-y-1.5">
               <h3 className="text-base sm:text-lg font-black text-slate-900">
-                {isAdmin
+                {canPay
                   ? `Update Deposit to ${pendingPctChange === 100 ? '100% Full Payment' : `${pendingPctChange}% Advance Deposit`}?`
                   : `Request Deposit Change to ${pendingPctChange === 100 ? '100% Full Payment' : `${pendingPctChange}% Advance Deposit`}?`}
               </h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                {isAdmin ? (
+                {canPay ? (
                   <>
                     Are you sure you want to change the upfront advance deposit for booking{' '}
                     <strong className="text-slate-900 font-mono">{activeBooking.bookingNumber}</strong> from{' '}
@@ -2195,7 +2196,7 @@ This is our official Scout Store number. Through this chat, you can:
                 }}
                 className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs shadow-md transition-all"
               >
-                {isAdmin ? `Yes, Update to ${pendingPctChange}%` : 'Submit Request for Approval'}
+                {canPay ? `Yes, Update to ${pendingPctChange}%` : 'Submit Request for Approval'}
               </button>
             </div>
           </div>
@@ -2329,7 +2330,7 @@ This is our official Scout Store number. Through this chat, you can:
                   setPendingStatusConfirm(null);
                   if (!isAdmin && onSubmitTeamRequest) {
                     onSubmitTeamRequest({
-                      teamScope: 'budgeting',
+                      teamScope: 'troops',
                       entityType: 'booking_status',
                       actionType: 'update',
                       targetId: booking.id,
@@ -2393,7 +2394,7 @@ This is our official Scout Store number. Through this chat, you can:
                   setSelectedBookingId(null);
                   if (!isAdmin && onSubmitTeamRequest) {
                     onSubmitTeamRequest({
-                      teamScope: 'budgeting',
+                      teamScope: 'troops',
                       entityType: 'booking_delete',
                       actionType: 'delete',
                       targetId: target.id,

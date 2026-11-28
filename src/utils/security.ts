@@ -320,13 +320,54 @@ export function canUserSeeCalendarItem(
   return teams.some((t) => myTeams.includes(t));
 }
 
+/**
+ * Orders (Client Bookings) belong to the Scout Fera2 team (team id 'troops').
+ * - Who can START or EDIT an order: full_admin, or a member of Scout Fera2 (staff send a request,
+ *   the team_admin of Scout Fera2 or a full_admin approves).
+ * - Budgeting (and everybody else) can only LOOK at orders.
+ */
 export function canUserEditBookings(
   user?: User | null,
   allUsers?: User[]
 ): boolean {
   if (!user || isUserLeader(user)) return false;
   if (isFullAccessAdmin(user, allUsers)) return true;
-  return getUserAssignedTeams(user).includes('budgeting');
+  const t = getUserAssignedTeams(user);
+  return t.includes('troops') || t.includes('budgeting'); // may send order / payment requests
+}
+
+/**
+ * Who confirms a deposit / full payment (this is also the step that takes stock for the order):
+ * full_admin, the team_admin of Scout Fera2 ('troops'), or the team_admin of Budgeting.
+ * Staff only send a request.
+ */
+export function canUserConfirmPayments(
+  user?: User | null,
+  allUsers?: User[]
+): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  if (Array.isArray(user.adminTeams)) {
+    return user.adminTeams.includes('troops') || user.adminTeams.includes('budgeting');
+  }
+  const teams = getUserAssignedTeams(user);
+  return teams.includes('troops') || teams.includes('budgeting');
+}
+
+/**
+ * Who can create / edit / delete an order directly (no request):
+ * full_admin, or the team_admin of Scout Fera2 ('troops'). Same people approve staff requests.
+ */
+export function canUserManageOrders(
+  user?: User | null,
+  allUsers?: User[]
+): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  if (Array.isArray(user.adminTeams)) return user.adminTeams.includes('troops');
+  return getUserAssignedTeams(user).includes('troops');
 }
 
 export function canUserManageTeamScope(
