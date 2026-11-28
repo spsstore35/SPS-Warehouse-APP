@@ -53,3 +53,14 @@ export function estimateProductionDays(
 
 export const addDaysIso = (days: number): string =>
   new Date(Date.now() + days * dayMs).toISOString().slice(0, 10);
+
+/** Safety days added on top of the slowest finished batch (shared with the estimate line). */
+export function readSafetyDays(): number {
+  try {
+    const raw = localStorage.getItem('sps_delivery_safety_days');
+    const v = Number(raw);
+    return raw !== null && Number.isFinite(v) && v >= 0 ? v : 14;
+  } catch {
+    return 14;
+  }
+}

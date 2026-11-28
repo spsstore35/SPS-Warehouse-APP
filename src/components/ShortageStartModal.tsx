@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { OrderShortageNote } from '../services/supabaseService';
-import type { Vendor } from '../types/inventory';
+import type { ProductionBatch } from '../types/inventory';
 
 interface Props {
   note: OrderShortageNote;
@@ -12,39 +12,19 @@ interface Props {
   mode?: 'order' | 'low';
   suggestedQty?: number;
   leftInStock?: number;
-  vendors: Vendor[];
-  canManageVendors: boolean;
-  onAddVendor: (vendor: Vendor) => void;
+  /** Days the item usually takes (slowest finished batch + safety). Undefined = no history yet: no date is shown. */
+  estimate?: { days: number; baseDays: number; safety: number } | null;
+  /** Open batches of the SAME ITEM (any size/color) still at the first stage with no money spent. */
+  mergeTargets?: ProductionBatch[];
+  onMerge?: (batch: ProductionBatch, quantity: number) => void;
   onCancel: () => void;
-  onConfirm: (quantity: number, targetDate: string, vendorId?: string) => void;
+  onConfirm: (quantity: number, targetDate?: string) => void;
 }
 
-export default function ShortageStartModal({ currentStock = 0, minStock, groupOrders, note, mode = 'order', suggestedQty, leftInStock, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
-  const [vendorId, setVendorId] = useState<string>('');
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newLocation, setNewLocation] = useState('');
-  const addVendor = () => {
-    const name = newName.trim();
-    if (!name) return;
-    const v: Vendor = {
-      id: `vendor_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name,
-      location: newLocation.trim(),
-      phone: newPhone.trim() || undefined,
-      tags: [],
-      createdAt: new Date().toISOString(),
-    };
-    onAddVendor(v);
-    setVendorId(v.id);
-    setAdding(false);
-    setNewName('');
-    setNewPhone('');
-    setNewLocation('');
-  };
+export default function ShortageStartModal({ currentStock = 0, minStock, groupOrders, note, mode = 'order', suggestedQty, leftInStock, estimate, mergeTargets = [], onMerge, onCancel, onConfirm }: Props) {
   const [qty, setQty] = useState<number>(suggestedQty ?? note.owed);
-  const [date, setDate] = useState<string>(new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
+  const [date, setDate] = useState<string>(estimate ? new Date(Date.now() + estimate.days * 86400000).toISOString().slice(0, 10) : '');
+  const [pickMerge, setPickMerge] = useState(false);
   const minQty = mode === 'low' ? 1 : note.owed;
   const tooLow = !qty || qty < minQty;
   const reservedForOrders = mode === 'low' ? 0 : note.owed;
@@ -70,8 +50,8 @@ export default function ShortageStartModal({ currentStock = 0, minStock, groupOr
             {mode === 'low' ? `Only ${leftInStock ?? 0} left in stock. Choose any quantity.` : `Still needed: ${note.owed} pcs in total (cannot order less; you can order more)`}
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-xs font-bold text-slate-700">
+        <div className="space-y-2">
+          <label className="block text-xs font-bold text-slate-700">
             Quantity (pcs)
             <input
               type="number"
@@ -81,57 +61,16 @@ export default function ShortageStartModal({ currentStock = 0, minStock, groupOr
               className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-mono font-black text-center"
             />
           </label>
-          <label className="text-xs font-bold text-slate-700">
-            Target date
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-mono text-xs"
-            />
-          </label>
-        </div>
-        <div className="space-y-1.5">
-          <label className="block text-xs font-bold text-slate-700">
-            Vendor / supplier
-            <select
-              value={vendorId}
-              onChange={(e) => setVendorId(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
-            >
-              <option value="">Not chosen yet (assign later in Sourcing)</option>
-              {vendors.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                  {v.location ? ` - ${v.location}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          {vendors.length === 0 && !canManageVendors && (
-            <div className="text-[11px] text-slate-500">The vendor list is managed by the Purchases admin. Leave it open and they assign it in Sourcing.</div>
-          )}
-          {canManageVendors && !adding && (
-            <button type="button" onClick={() => setAdding(true)} className="text-[11px] font-black text-emerald-700 underline">
-              + Add a new vendor
-            </button>
-          )}
-          {canManageVendors && adding && (
-            <div className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Vendor name" className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs" />
-              <div className="grid grid-cols-2 gap-2">
-                <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="Phone (optional)" className="px-3 py-2 rounded-lg border border-slate-300 text-xs" />
-                <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Location (optional)" className="px-3 py-2 rounded-lg border border-slate-300 text-xs" />
-              </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={addVendor} disabled={!newName.trim()} className="px-3 py-1.5 rounded-lg bg-emerald-600 disabled:opacity-40 text-white text-xs font-black">
-                  Save vendor
-                </button>
-                <button type="button" onClick={() => setAdding(false)} className="px-3 py-1.5 rounded-lg bg-slate-200 text-xs font-black text-slate-900">
-                  Cancel
-                </button>
-              </div>
-            </div>
+          {estimate && (
+            <label className="block text-xs font-bold text-slate-700">
+              Estimated about {estimate.baseDays} days (+{estimate.safety} safety), receive around
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-mono text-xs"
+              />
+            </label>
           )}
         </div>
         <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-[11px] text-slate-800 space-y-1">
@@ -146,19 +85,49 @@ export default function ShortageStartModal({ currentStock = 0, minStock, groupOr
           <div className="text-slate-500">This is only a hint. You can order any quantity from the minimum up.</div>
         </div>
         {tooLow && <div className="text-[11px] font-bold text-rose-700">Quantity must be at least {minQty}.</div>}
-        <div className="grid grid-cols-2 gap-2.5">
-          <button type="button" onClick={onCancel} className="py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs min-h-[44px]">
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={tooLow}
-            onClick={() => onConfirm(qty, date, vendorId || undefined)}
-            className="py-2.5 rounded-xl bg-emerald-600 disabled:opacity-40 text-white font-black text-xs min-h-[44px]"
-          >
-            Create purchase batch
-          </button>
-        </div>
+        <button
+          type="button"
+          disabled={tooLow}
+          onClick={() => onConfirm(qty, date || undefined)}
+          className="w-full py-2.5 rounded-xl bg-emerald-600 disabled:opacity-40 text-white font-black text-xs min-h-[44px]"
+        >
+          Create purchase batch
+        </button>
+        {onMerge && (
+          <>
+            <button
+              type="button"
+              disabled={tooLow}
+              onClick={() => setPickMerge((v) => !v)}
+              className="w-full py-2.5 rounded-xl bg-sky-600 disabled:opacity-40 text-white font-black text-xs min-h-[44px]"
+            >
+              Merge into existing batch
+            </button>
+            {pickMerge && (
+              <div className="space-y-1.5">
+                {mergeTargets.length === 0 ? (
+                  <div className="text-[11px] font-bold text-slate-700">
+                    No open batch of this item to merge into. A batch must still be at its first stage with no money spent (any size/color is fine).
+                  </div>
+                ) : (
+                  mergeTargets.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => onMerge(b, qty)}
+                      className="w-full text-left px-3 py-2.5 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-xs font-bold text-slate-900"
+                    >
+                      Add {qty} pcs to {b.batchCode} ({b.quantity} pcs now) = {b.quantity + qty} pcs
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </>
+        )}
+        <button type="button" onClick={onCancel} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs min-h-[44px]">
+          Cancel
+        </button>
       </div>
     </div>
   );

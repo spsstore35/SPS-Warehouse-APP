@@ -141,6 +141,7 @@ import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
 import ShortageNeedsPanel, { NeedsTiles, NeedsList, type NeedsKind, type LowStockNote } from './components/ShortageNeedsPanel';
+import { estimateProductionDays, readSafetyDays } from './utils/deliveryEstimate';
 import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
@@ -2181,7 +2182,7 @@ export default function App() {
     return out.sort((a, b) => Number(a.hasBatch) - Number(b.hasBatch) || a.quantity - b.quantity);
   }, [products, shortageNotes, productionBatches]);
 
-  const handleStartLowStockPurchase = (n: LowStockNote, quantity: number, targetDate: string, vendorId?: string) => {
+  const handleStartLowStockPurchase = (n: LowStockNote, quantity: number, targetDate?: string, vendorId?: string) => {
     const wf = productWorkflows.find((w) => w.productId === n.productId);
     const stageKey: OperationStageKey =
       wf?.activeStages?.find((st) => st !== 'stock_in') ||
@@ -3753,6 +3754,16 @@ export default function App() {
     if (joinable) return setJoinPrompt({ batch: joinable, variantId, quantity, orders, startNew });
     setJoinPrompt({ batch: open[0], variantId, blockedReason: batchJoinBlockReason(open[0], first) || undefined, quantity, orders, startNew });
   };
+  const popupEstimate = (productId: string, variantId?: string) => {
+    const e = estimateProductionDays(productionBatches, productId, variantId);
+    if (!e || e.max <= 0) return null;
+    const safety = readSafetyDays();
+    return { days: e.max + safety, baseDays: e.max, safety };
+  };
+  const popupMergeTargets = (productId: string) => {
+    const first = firstWorkingStage(productWorkflows.find((w) => w.productId === productId));
+    return productionBatches.filter((b) => b.productId === productId && b.status === 'in_progress' && !batchJoinBlockReason(b, first));
+  };
   const joinVariantText = (productId: string, variantId?: string) => {
     const v = products.find((x) => x.id === productId)?.variants.find((x) => x.id === variantId);
     return v ? ` (size ${v.size} / ${v.colorName})` : '';
@@ -5268,11 +5279,16 @@ export default function App() {
             currentStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageToStart.variantId)?.quantity ?? 0}
             minStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageToStart.variantId)?.minThreshold}
             note={shortageToStart}
-            vendors={vendors}
-            canManageVendors={canUserManageVendors(currentUser, users)}
-            onAddVendor={handleSaveVendor}
+            estimate={popupEstimate(shortageToStart.productId, shortageToStart.variantId)}
+            mergeTargets={popupMergeTargets(shortageToStart.productId)}
+            onMerge={(batch, quantity) => {
+              const n = shortageToStart;
+              setShortageToStart(null);
+              joinExistingBatch({ batch, variantId: n.variantId, quantity, orders: [{ id: n.bookingId, num: n.bookingNumber }], startNew: () => {} });
+            }}
             onCancel={() => setShortageToStart(null)}
-            onConfirm={(quantity, targetDate, vendorId) => {
+            onConfirm={(quantity, targetDate) => {
+              const vendorId: string | undefined = undefined;
               const n = shortageToStart;
               setShortageToStart(null);
               const stub = {
@@ -5314,11 +5330,16 @@ export default function App() {
             currentStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageGroup[0].variantId)?.quantity ?? 0}
             minStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageGroup[0].variantId)?.minThreshold}
             groupOrders={shortageGroup}
-            vendors={vendors}
-            canManageVendors={canUserManageVendors(currentUser, users)}
-            onAddVendor={handleSaveVendor}
+            estimate={popupEstimate(shortageGroup[0].productId, shortageGroup[0].variantId)}
+            mergeTargets={popupMergeTargets(shortageGroup[0].productId)}
+            onMerge={(batch, quantity) => {
+              const g = shortageGroup;
+              setShortageGroup(null);
+              joinExistingBatch({ batch, variantId: g[0].variantId, quantity, orders: g.map((x) => ({ id: x.bookingId, num: x.bookingNumber })), startNew: () => {} });
+            }}
             onCancel={() => setShortageGroup(null)}
-            onConfirm={(quantity, targetDate, vendorId) => {
+            onConfirm={(quantity, targetDate) => {
+              const vendorId: string | undefined = undefined;
               const g = shortageGroup;
               const n = g[0];
               setShortageGroup(null);
@@ -5397,11 +5418,16 @@ export default function App() {
               owed: 1,
               hasBatch: false,
             }}
-            vendors={vendors}
-            canManageVendors={canUserManageVendors(currentUser, users)}
-            onAddVendor={handleSaveVendor}
+            estimate={popupEstimate(lowToStart.productId, lowToStart.variantId)}
+            mergeTargets={popupMergeTargets(lowToStart.productId)}
+            onMerge={(batch, quantity) => {
+              const n = lowToStart;
+              setLowToStart(null);
+              joinExistingBatch({ batch, variantId: n.variantId, quantity, orders: [], startNew: () => {} });
+            }}
             onCancel={() => setLowToStart(null)}
-            onConfirm={(quantity, targetDate, vendorId) => {
+            onConfirm={(quantity, targetDate) => {
+              const vendorId: string | undefined = undefined;
               const n = lowToStart;
               setLowToStart(null);
               askJoinOrStartNew(n.productId, n.variantId, quantity, [], () => handleStartLowStockPurchase(n, quantity, targetDate, vendorId));
