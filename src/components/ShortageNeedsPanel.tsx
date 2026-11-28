@@ -130,31 +130,66 @@ export default function ShortageNeedsPanel({ notes: allNotes, canAct, onStart, l
 /** Catalog-grid card: "a batch is needed". Tap to list what to make, per order. */
 export function ShortageCard(props: Omit<Props, 'collapsible'>) {
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<'item' | 'order'>('item');
   const notes = props.notes.filter((n) => !n.hasBatch);
   if (notes.length === 0) return null;
   const orders = new Set(notes.map((n) => n.bookingId)).size;
   const items = notes.length;
+  const preview = Array.from(new Set(notes.map((n) => n.productName))).slice(0, 3).join(', ');
+  const byItem = new Map<string, { name: string; size: string; color: string; total: number; orders: OrderShortageNote[] }>();
+  notes.forEach((n) => {
+    const e = byItem.get(n.variantId) || { name: n.productName, size: n.size, color: n.colorName, total: 0, orders: [] };
+    e.total += n.owed;
+    e.orders.push(n);
+    byItem.set(n.variantId, e);
+  });
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-left rounded-2xl border-2 border-rose-600 bg-rose-50 hover:bg-rose-100 p-4 sm:p-5 flex flex-col justify-between gap-3 min-h-[120px]"
+        className="text-left rounded-2xl border-2 border-rose-600 bg-rose-50 hover:bg-rose-100 p-4 flex flex-col gap-1.5"
       >
         <div className="flex items-center gap-2 text-rose-700 font-black text-sm">
           <AlertTriangle className="w-5 h-5 shrink-0" /> Batch needed
         </div>
-        <div>
-          <div className="text-2xl font-black text-rose-900">{items} item(s) to make</div>
-          <div className="text-xs font-semibold text-rose-950">
-            {orders > 0 ? `from ${orders} order(s). ` : ''}
-            {open ? 'Tap to close.' : 'Tap to see which.'}
-          </div>
+        <div className="text-xl font-black text-rose-900 leading-tight">{items} item(s) to make</div>
+        <div className="text-xs font-semibold text-rose-950">
+          from {orders} order(s){preview ? `: ${preview}` : ''}
         </div>
       </button>
       {open && (
-        <div className="col-span-full">
-          <ShortageNeedsPanel {...props} />
+        <div className="col-span-full rounded-2xl border border-rose-300 bg-rose-50 p-3.5 space-y-3">
+          <div className="flex gap-1.5">
+            {(['item', 'order'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black border ${
+                  view === v ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-900 border-rose-200'
+                }`}
+              >
+                {v === 'item' ? 'By item' : 'By order'}
+              </button>
+            ))}
+          </div>
+          {view === 'order' ? (
+            <ShortageNeedsPanel {...props} />
+          ) : (
+            <div className="space-y-2">
+              {Array.from(byItem.values()).map((e) => (
+                <div key={e.name + e.size + e.color} className="p-2.5 rounded-xl bg-white border border-rose-200 text-xs text-slate-900">
+                  <span className="font-black">{e.name}</span> ({e.size}{e.color ? ` / ${e.color}` : ''}): make{' '}
+                  <span className="font-black font-mono">{e.total}</span>
+                  <div className="text-slate-600 mt-0.5">
+                    For: {e.orders.map((o) => `#${o.bookingNumber}${o.clientName ? ` (${o.clientName})` : ''} x${o.owed}`).join(', ')}
+                  </div>
+                </div>
+              ))}
+              <div className="text-[11px] font-semibold text-slate-500">To start a purchase, open the "By order" view.</div>
+            </div>
+          )}
         </div>
       )}
     </>
