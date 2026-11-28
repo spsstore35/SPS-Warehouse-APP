@@ -30,6 +30,7 @@ import {
   Phone,
   AtSign,
   Search,
+  KeyRound,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { isFullAccessAdmin, isUserAdmin, normalizePhoneNumber, normalizeRole, normalizeUsername } from '../utils/security';
@@ -134,6 +135,39 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
   const [createError, setCreateError] = useState('');
   const [isSubmittingNewUser, setIsSubmittingNewUser] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [userToSetPw, setUserToSetPw] = useState<User | null>(null);
+  const [setPwValue, setSetPwValue] = useState('');
+  const [setPwError, setSetPwError] = useState('');
+  const [setPwBusy, setSetPwBusy] = useState(false);
+  const [setPwDone, setSetPwDone] = useState(false);
+  const canSetPassword = isFullAccessAdmin(currentUser);
+  const closeSetPw = () => {
+    setUserToSetPw(null);
+    setSetPwValue('');
+    setSetPwError('');
+    setSetPwBusy(false);
+    setSetPwDone(false);
+  };
+  const submitSetPw = async () => {
+    if (!userToSetPw) return;
+    const pw = setPwValue.trim();
+    if (pw.length < 8) {
+      setSetPwError('Password must be at least 8 characters.');
+      return;
+    }
+    setSetPwBusy(true);
+    setSetPwError('');
+    try {
+      const { callAdminUsers } = await import('../services/authService');
+      await callAdminUsers({ action: 'set_password', userId: userToSetPw.id, password: pw });
+      setSetPwDone(true);
+      setSetPwValue('');
+    } catch (e: any) {
+      setSetPwError(e?.message || 'Could not set the password.');
+    } finally {
+      setSetPwBusy(false);
+    }
+  };
   const [userToEditRole, setUserToEditRole] = useState<User | null>(null);
   const [editUsername, setEditUsername] = useState('');
   const [editPhone, setEditPhone] = useState('');
@@ -1371,6 +1405,16 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                               <Edit3 className="w-4 h-4 text-amber-600" />
                             </button>
                           )}
+                          {canSetPassword && (
+                            <button
+                              type="button"
+                              onClick={() => setUserToSetPw(user)}
+                              className="p-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-xl border border-sky-200 transition-colors shadow-2xs"
+                              title="Set a new password for this account"
+                            >
+                              <KeyRound className="w-4 h-4 text-sky-600" />
+                            </button>
+                          )}
                           {onDeleteUser && (
                             <button
                               onClick={() => setUserToDelete(user)}
@@ -1916,6 +1960,55 @@ export const ApprovalsView: React.FC<ApprovalsViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Set Password modal (full admin only; calls the admin-users function) */}
+      {userToSetPw && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
+            <h3 className="text-base font-bold text-slate-900">Set password</h3>
+            <p className="text-sm text-slate-600">
+              Account: <span className="font-bold">{userToSetPw.name}</span>
+              {userToSetPw.username ? ` (@${userToSetPw.username})` : ''}
+            </p>
+            {setPwDone ? (
+              <p className="text-sm font-bold text-emerald-700">
+                Done. Give this person the new password. They can change it themselves from the account menu after signing in.
+              </p>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  value={setPwValue}
+                  onChange={(e) => setSetPwValue(e.target.value)}
+                  placeholder="New password (min 8 characters)"
+                  className="w-full px-3 py-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+                {setPwError && <p className="text-xs font-bold text-rose-600">{setPwError}</p>}
+              </>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeSetPw}
+                className="px-4 py-2 text-sm font-bold rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700"
+              >
+                {setPwDone ? 'Close' : 'Cancel'}
+              </button>
+              {!setPwDone && (
+                <button
+                  type="button"
+                  disabled={setPwBusy}
+                  onClick={submitSetPw}
+                  className="px-4 py-2 text-sm font-bold rounded-xl bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50"
+                >
+                  {setPwBusy ? 'Saving...' : 'Set password'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

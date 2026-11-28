@@ -32,7 +32,7 @@ New in the database after the switch: `profiles.id` must match a Supabase Auth u
 3. Deploy the 3 Edge Functions (Supabase > Edge Functions, or CLI `supabase functions deploy auth-gate --no-verify-jwt`, `admin-users`, `notify-push`). `auth-gate` must have "Verify JWT" OFF. Set secret `ALLOWED_ORIGIN` = your site URL. Optional: `TURNSTILE_SECRET_KEY`.
 4. Auth dashboard: turn OFF "Allow new users to sign up" (signups go through auth-gate), set rate limits, optionally enable captcha (Cloudflare Turnstile) and put the site key in Vercel as `VITE_TURNSTILE_SITE_KEY`.
 5. Open the Vercel PREVIEW of this branch and test every role (table below). The preview needs the switch to be done to show full protection; before the switch, logins already work through Supabase Auth with the same passwords.
-6. Users whose old password was stored without a bcrypt hash (old SHA-256 / none) cannot sign in. Reset them from the Accounts screen (set password) or use Supabase > Auth > Users.
+6. Users whose old password was stored without a bcrypt hash (old SHA-256 / none) cannot sign in. Reset them as a full admin: Account Approvals > the blue key button on the account row > type a new password (min 8 characters) > Set password. Or use Supabase > Auth > Users. There is no forced change at first login; each person can change their own password from the account menu.
 7. Merge the PR when you are happy (Vercel deploys the new frontend).
 8. THE SWITCH (do it right after the merge, a few minutes of short outage possible):
    `insert into private.app_settings(key,value) values ('allow_lockdown','yes') on conflict (key) do update set value='yes';`
