@@ -133,10 +133,51 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
 
     try {
       // html2canvas-pro understands modern CSS colors (oklch) that the old html2canvas crashed on.
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import('html2canvas-pro'),
-        import('jspdf'),
-      ]);
+      let libs: [typeof import('html2canvas-pro'), typeof import('jspdf')];
+      try {
+        libs = await Promise.all([import('html2canvas-pro'), import('jspdf')]);
+      } catch (loadErr) {
+        // The app was updated while this tab was open: the old file is gone. Reload to get the new one.
+        console.warn('PDF library load failed (stale app version):', loadErr);
+        alert('The app was just updated. It will refresh now, then please tap the button again.');
+        window.location.reload();
+        return;
+      }
+      const html2canvas = libs[0].default;
+      const { jsPDF } = libs[1];
+      // One broken or cross-site picture must never stop the whole PDF: load each picture
+      // safely (as a local copy); if it cannot be loaded, leave that picture out.
+      const imgs = Array.from(clone.querySelectorAll('img')) as HTMLImageElement[];
+      await Promise.all(
+        imgs.map(async (img) => {
+          const src = img.getAttribute('src') || '';
+          if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 8000);
+            const res = await fetch(src, { mode: 'cors', signal: ctrl.signal });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error('bad status');
+            const blob = await res.blob();
+            const dataUrl: string = await new Promise((resolve, reject) => {
+              const fr = new FileReader();
+              fr.onload = () => resolve(String(fr.result));
+              fr.onerror = () => reject(fr.error);
+              fr.readAsDataURL(blob);
+            });
+            img.removeAttribute('srcset');
+            img.setAttribute('src', dataUrl);
+          } catch {
+            img.style.display = 'none';
+          }
+        })
+      );
+      // Make sure the local copies are decoded before drawing.
+      await Promise.all(
+        imgs
+          .filter((i) => i.style.display !== 'none')
+          .map((i) => (i.decode ? i.decode().catch(() => { i.style.display = 'none'; }) : Promise.resolve()))
+      );
       const canvas = await html2canvas(clone, {
         scale: 2,
         useCORS: true,
@@ -144,6 +185,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
         scrollX: 0,
         scrollY: 0,
         backgroundColor: '#ffffff',
+        imageTimeout: 8000,
       });
       const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
       const pageW = pdf.internal.pageSize.getWidth();
@@ -177,7 +219,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
       }
     } catch (err) {
       console.warn('PDF export failed:', err);
-      alert('Could not create the PDF file. Please try again, or use the Print button.');
+      alert('Could not create the PDF file. Please try again, or use the Print button.' + (err && (err as any).message ? ' (' + String((err as any).message).slice(0, 120) + ')' : ''));
     } finally {
       if (document.body.contains(container)) {
         document.body.removeChild(container);
