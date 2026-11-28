@@ -128,9 +128,9 @@ export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = 
 export function ShortageCard(props: Omit<Props, 'collapsible'>) {
   const [open, setOpen] = useState(false);
   const { notes, lowNotes = [] } = props;
-  if (notes.length === 0 && lowNotes.length === 0) return null;
+  if (notes.length === 0) return null;
   const orders = new Set(notes.map((n) => n.bookingId)).size;
-  const items = notes.length + lowNotes.length;
+  const items = notes.length;
   return (
     <>
       <button
@@ -152,6 +152,35 @@ export function ShortageCard(props: Omit<Props, 'collapsible'>) {
       {open && (
         <div className="col-span-full">
           <ShortageNeedsPanel {...props} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Separate amber card in the catalog grid for low-stock items (not tied to any order). */
+export function LowStockCard(props: Omit<Props, 'collapsible' | 'notes'>) {
+  const [open, setOpen] = useState(false);
+  const { lowNotes = [] } = props;
+  if (lowNotes.length === 0) return null;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-left rounded-2xl border-2 border-amber-500 bg-amber-50 hover:bg-amber-100 p-4 sm:p-5 flex flex-col justify-between gap-3 min-h-[120px]"
+      >
+        <div className="flex items-center gap-2 text-amber-800 font-black text-sm">
+          <AlertTriangle className="w-5 h-5 shrink-0" /> Low stock
+        </div>
+        <div>
+          <div className="text-2xl font-black text-amber-900">{lowNotes.length} low-stock item(s)</div>
+          <div className="text-xs font-semibold text-amber-950">to make or buy. {open ? 'Tap to close.' : 'Tap to see which.'}</div>
+        </div>
+      </button>
+      {open && (
+        <div className="col-span-full">
+          <ShortageNeedsPanel {...props} notes={[]} />
         </div>
       )}
     </>

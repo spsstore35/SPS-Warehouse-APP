@@ -140,7 +140,7 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
-import ShortageNeedsPanel, { ShortageCard, type LowStockNote } from './components/ShortageNeedsPanel';
+import ShortageNeedsPanel, { ShortageCard, LowStockCard, type LowStockNote } from './components/ShortageNeedsPanel';
 import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
@@ -5270,14 +5270,21 @@ export default function App() {
           <div className="space-y-4">
           <SourcingOperationsView
             needsCard={
-              <ShortageCard
-                batches={productionBatches}
-                lowNotes={lowStockNotes}
-                onStartLow={(n) => setLowToStart(n)}
-                notes={shortageNotes}
-                canAct={canUserStartShortagePurchase(currentUser, users)}
-                onStart={(n) => setShortageToStart(n)}
-              />
+              <>
+                <ShortageCard
+                  batches={productionBatches}
+                  notes={shortageNotes}
+                  canAct={canUserStartShortagePurchase(currentUser, users)}
+                  onStart={(n) => setShortageToStart(n)}
+                />
+                <LowStockCard
+                  batches={productionBatches}
+                  lowNotes={lowStockNotes}
+                  onStartLow={(n) => setLowToStart(n)}
+                  canAct={canUserStartShortagePurchase(currentUser, users)}
+                  onStart={(n) => setShortageToStart(n)}
+                />
+              </>
             }
             products={products}
             vendors={vendors}
