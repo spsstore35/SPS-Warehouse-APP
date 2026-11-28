@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Booking, Category, Product } from '../types/inventory';
 import { compressImage } from '../utils/imageCompressor';
 import { supabase } from '../services/supabaseClient';
-import { Link2, Copy, Check, FileText, ExternalLink } from 'lucide-react';
+import { Link2, Copy, Check, FileText, ExternalLink, Download } from 'lucide-react';
 
 interface Props {
   products: Product[];
@@ -74,6 +74,34 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
   );
   const paid = orders.filter((b) => b.depositPaid);
   const waiting = orders.filter((b) => !b.depositPaid);
+  const exportCsv = () => {
+    const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const phone = (v: string) => (v && v !== 'N/A' ? `="${v.replace(/"/g, '')}"` : '');
+    const team = (b: Booking) => (b.troopGroup === '3ashera 1' ? 'Ashira 1' : b.troopGroup === '3ashera 2' ? 'Ashira 2' : b.troopGroup || '');
+    const header = ['Order number', 'Customer', 'Phone', 'Team', 'Raht', 'Items (size x qty)', 'Total EGP', 'To pay now EGP', 'Paid status', 'Date', 'Payment method'];
+    const rows = shownOrders.map((b) => [
+      b.bookingNumber,
+      b.clientName,
+      phone(b.clientPhone),
+      team(b),
+      b.teamName || '',
+      b.items.map((i) => `${i.productName}${i.size && i.size !== 'One Size' ? ` (${i.size})` : ''} x${i.quantity}`).join(' | '),
+      Math.round(b.total * 100) / 100,
+      Math.round((b.depositRequired || 0) * 100) / 100,
+      b.depositPaid ? 'Paid' : 'Awaiting payment',
+      b.createdAt ? new Date(b.createdAt).toLocaleDateString('en-GB') : '',
+      b.paymentMethod === 'instapay' ? 'Instapay' : b.paymentMethod === 'cash' ? 'Cash' : '',
+    ]);
+    const csv = '\uFEFF' + [header, ...rows].map((r) => r.map((c, idx) => (idx === 2 ? String(c) : q(c))).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `public-orders-${orderFilter}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
   const shownOrders = orderFilter === 'paid' ? paid : orderFilter === 'waiting' ? waiting : orders;
   const sum = (l: Booking[], f: (b: Booking) => number) => l.reduce((a, b) => a + f(b), 0);
 
@@ -163,23 +191,41 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
         <div className="font-bold text-slate-900 mb-2">
           Orders from the link{orderFilter === 'paid' ? ' · Paid' : orderFilter === 'waiting' ? ' · Awaiting payment' : ''}
         </div>
+        <button
+          type="button"
+          onClick={exportCsv}
+          disabled={shownOrders.length === 0}
+          className="mb-3 w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-sm font-black flex items-center justify-center gap-2"
+        >
+          <Download className="w-4 h-4" /> Download Excel (CSV) · {shownOrders.length} orders
+        </button>
         {orders.length === 0 && <div className="text-sm text-slate-500">No orders yet.</div>}
         {orders.length > 0 && shownOrders.length === 0 && (
           <div className="text-sm text-slate-500">No orders in this group.</div>
         )}
         <div className="space-y-2">
           {shownOrders.map((b) => (
-            <button
+            <div
               key={b.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => onOpenOrder(b.id)}
-              className="w-full text-left border border-slate-200 hover:border-slate-300 active:bg-slate-50 rounded-xl px-3.5 py-3 flex items-center justify-between gap-3 transition-colors"
+              className="w-full cursor-pointer text-left border border-slate-200 hover:border-slate-300 active:bg-slate-50 rounded-xl px-3.5 py-3 flex items-center justify-between gap-3 transition-colors"
             >
               <div className="min-w-0">
                 <div className="font-black text-slate-900 truncate">{b.clientName}</div>
                 <div className="text-xs text-slate-500 mt-0.5 truncate">{b.clientPhone}</div>
                 <div className="text-[11px] font-mono text-slate-400 mt-0.5">{b.bookingNumber}</div>
               </div>
+              <button
+                type="button"
+                aria-label="Open invoice"
+                title="Invoice"
+                onClick={(e) => { e.stopPropagation(); onOpenInvoice(b); }}
+                className="ml-auto mr-1 w-10 h-10 shrink-0 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 active:scale-95 flex items-center justify-center text-slate-700"
+              >
+                <FileText className="w-5 h-5" />
+              </button>
               <div className="text-right shrink-0">
                 <div className="font-black text-slate-900">{money(b.total)}</div>
                 <span
@@ -190,7 +236,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
                   {b.depositPaid ? 'Paid' : 'Awaiting payment'}
                 </span>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       </div>

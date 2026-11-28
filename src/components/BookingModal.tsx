@@ -524,6 +524,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setFormError('Please enter client or organization name.');
       return;
     }
+    if (clientPhone.replace(/\D/g, '').length < 8) {
+      setFormError('Please enter the customer phone number (needed to contact them).');
+      return;
+    }
     if (!troopGroup.trim() && (!isEditMode || Boolean(bookingToEdit?.troopGroup))) {
       setFormError('Please select a Scout Fera2 / Troop Group.');
       return;
@@ -986,12 +990,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Phone Number
+                  Phone Number <span className="text-rose-600">*</span>
                 </label>
                 <div className="relative">
                   <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="tel"
+                    required
                     value={clientPhone}
                     onChange={(e) => setClientPhone(e.target.value)}
                     placeholder="e.g. 012 3456 7890"
