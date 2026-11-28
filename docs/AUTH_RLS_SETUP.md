@@ -78,6 +78,8 @@ Run Part 1 BEFORE deploying the new site (the site calls this function).
 
 - Low stock in the same box: a variant whose stock is at or below its own minimum (the existing `minThreshold`) is listed, with a "Start purchase" button (any quantity, vendor picker as above) until a purchase for it is running.
 
+- Batch "Steps & costs" (Sourcing screen, button on each batch): per stage start/finish dates, days taken, vendor, notes and cost lines (bought / transport with from-to / other). Shows total cost, finished pieces, cost per piece, total days and a comparison with the previous batch of the same item. Saved inside the batch's existing stage data (no database change). Edit: purchases admin and full admin; others view only.
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).

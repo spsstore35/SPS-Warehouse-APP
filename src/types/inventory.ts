@@ -352,7 +352,20 @@ export interface VendorPriceEntry {
   notes?: string;
 }
 
+export interface BatchCostLine {
+  id: string;
+  kind: 'purchase' | 'transport' | 'other';
+  label: string; // what was bought / which trip
+  amount: number; // EGP
+  from?: string; // transport: from where
+  to?: string; // transport: to where
+  note?: string;
+}
+
 export interface BatchStageAssignment {
+  startedAt?: string; // YYYY-MM-DD
+  endedAt?: string; // YYYY-MM-DD
+  costLines?: BatchCostLine[];
   vendorId?: string;
   customVendorName?: string;
   cost?: number;

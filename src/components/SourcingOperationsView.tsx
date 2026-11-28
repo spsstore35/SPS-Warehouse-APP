@@ -24,7 +24,8 @@ import {
   getVendorTagInfo,
   inferDefaultWorkflowType,
 } from '../utils/sourcing';
-import { isUserAdmin } from '../utils/security';
+import { isUserAdmin, canUserManageVendors } from '../utils/security';
+import BatchCostModal from './BatchCostModal';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
   AdvanceStageModal,
@@ -146,6 +147,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   const [isStartBatchOpen, setIsStartBatchOpen] = useState(false);
   const [editingBatch, setEditingBatch] = useState<ProductionBatch | null>(null);
   const [stockInBatch, setStockInBatch] = useState<ProductionBatch | null>(null);
+  const [costBatchId, setCostBatchId] = useState<string | null>(null);
   const [advancingBatchContext, setAdvancingBatchContext] = useState<{
     batch: ProductionBatch;
     currentStageKey: OperationStageKey;
@@ -1670,6 +1672,14 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                             </div>
 
                             <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setCostBatchId(batch.id)}
+                                className="px-2 py-1 rounded-lg text-[11px] font-bold text-emerald-800 hover:bg-emerald-50 inline-flex items-center gap-1"
+                                title="Steps, durations and costs"
+                              >
+                                <span>Steps &amp; costs</span>
+                              </button>
                               {batch.status === 'in_progress' && (
                                 <button
                                   type="button"
@@ -2457,6 +2467,23 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               onClose={() => setAdvancingBatchContext(null)}
               onConfirm={handleConfirmAdvanceBatchStage}
             />
+
+            {costBatchId && batches.find((b) => b.id === costBatchId) && (
+              <BatchCostModal
+                batch={batches.find((b) => b.id === costBatchId)!}
+                allBatches={batches}
+                stages={workflow.activeStages}
+                customStages={workflow.customStages}
+                vendors={vendors}
+                canEdit={canUserManageVendors(currentUser, users)}
+                onClose={() => setCostBatchId(null)}
+                onSave={(updated) => {
+                  setCostBatchId(null);
+                  onSaveBatch(updated);
+                  onShowToast?.(`Saved steps and costs for ${updated.batchCode}.`);
+                }}
+              />
+            )}
 
             {/* Complete & Stock In (Gard) Modal */}
             <CompleteStockInModal
