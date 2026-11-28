@@ -1,3 +1,4 @@
+import { getAssignableMembers } from '../utils/security';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Product,
@@ -968,7 +969,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                           <option value="">
                             {activeFare2Meta ? 'Auto / Unassigned' : 'Not assigned'}
                           </option>
-                          {activeMembers.map((u) => (
+                          {getAssignableMembers(users, activeFare2Meta?.id, [
+                            assignedToId,
+                            activeFare2Meta ? fare2Leaders[activeFare2Meta.id]?.userId : undefined,
+                          ]).map((u) => (
                             <option key={u.id} value={u.id}>
                               {u.name}
                             </option>

@@ -58,7 +58,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import { canUserManageOrders, canUserConfirmPayments, canUserRequestPayments, getUserSubTeams, isBookingInMySubTeam } from '../utils/security';
+import { canUserManageOrders, canUserConfirmPayments, canUserRequestPayments, getUserSubTeams, isBookingInMySubTeam, getAssignableMembers } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 
 interface BookingsViewProps {
@@ -1540,7 +1540,11 @@ This is our official Scout Store number. Through this chat, you can:
                                 ? `Leader: ${fare2Leaders[resolvedMeta.id].userName}`
                                 : 'Auto / Unassigned'}
                             </option>
-                            {activeMembers.map((u) => (
+                            {getAssignableMembers(users, resolvedMeta?.id, [
+                              editAssignedToId,
+                              resolvedMeta ? fare2Leaders[resolvedMeta.id]?.userId : undefined,
+                              activeBooking.assignedToId,
+                            ]).map((u) => (
                               <option key={u.id} value={u.id}>
                                 {u.name}
                               </option>
