@@ -61,7 +61,7 @@ export const ALL_OPERATION_STAGES: OperationStageMeta[] = [
 
 export const DEFAULT_STAGE_KEYS: Record<WorkflowType, OperationStageKey[]> = {
   manufactured: ['raw_material', 'manufacturing', 'tailor', 'packaging', 'stock_in'],
-  ready_made: ['supplier_sourcing', 'packaging', 'stock_in'],
+  ready_made: ['supplier_sourcing', 'stock_in'], // bought goods go straight to stock (add packaging per item if needed)
 };
 
 export function getStageMeta(

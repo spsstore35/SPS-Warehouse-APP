@@ -80,6 +80,8 @@ Run Part 1 BEFORE deploying the new site (the site calls this function).
 
 - Batch "Steps & costs" (Sourcing screen, button on each batch): per stage start/finish dates, days taken, vendor, notes and cost lines (bought / transport with from-to / other). Shows total cost, finished pieces, cost per piece, total days and a comparison with the previous batch of the same item. Saved inside the batch's existing stage data (no database change). Edit: purchases admin and full admin; others view only.
 
+- Ready-made purchases (Sourcing batch form, items with the ready-made flow): units per box, number of boxes (pieces are calculated) and the supplier's lead time for this order (days, typed each time, sets the target date). Stored on the supplier stage of the batch (no database change). The default ready-made flow is now supplier then stock-in (packaging can still be added per item).
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).

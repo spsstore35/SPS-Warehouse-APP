@@ -363,6 +363,9 @@ export interface BatchCostLine {
 }
 
 export interface BatchStageAssignment {
+  leadTimeDays?: number; // ready-made: days the supplier needs for THIS order (typed each time)
+  unitsPerBox?: number; // ready-made: pieces in one box/carton
+  boxes?: number; // ready-made: number of boxes ordered
   startedAt?: string; // YYYY-MM-DD
   endedAt?: string; // YYYY-MM-DD
   costLines?: BatchCostLine[];

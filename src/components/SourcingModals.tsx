@@ -314,6 +314,11 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
   const [targetDate, setTargetDate] = useState<string>('');
   const [assignments, setAssignments] = useState<Record<string, BatchStageAssignment>>({});
   const [error, setError] = useState('');
+  // Ready-made purchase details (stored on the supplier stage): units per box, boxes, lead time for this order.
+  const isReadyMade = activeStages.includes('supplier_sourcing');
+  const [unitsPerBox, setUnitsPerBox] = useState<number>(0);
+  const [boxes, setBoxes] = useState<number>(0);
+  const [leadDays, setLeadDays] = useState<number>(0);
 
   const totalLeadDays = activeStages.reduce(
     (sum, k) => sum + Math.max(0, Number(stageLeadTimes?.[k] || 0)),
@@ -338,6 +343,10 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
         }
       });
       setAssignments(mergedAssignments);
+      const rm = mergedAssignments['supplier_sourcing'];
+      setUnitsPerBox(Number(rm?.unitsPerBox) || 0);
+      setBoxes(Number(rm?.boxes) || 0);
+      setLeadDays(Number(rm?.leadTimeDays) || 0);
       setError('');
       return;
     }
@@ -400,6 +409,14 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
       return;
     }
 
+    if (isReadyMade && (unitsPerBox > 0 || boxes > 0 || leadDays > 0)) {
+      assignments['supplier_sourcing'] = {
+        ...(assignments['supplier_sourcing'] || {}),
+        unitsPerBox: unitsPerBox > 0 ? unitsPerBox : undefined,
+        boxes: boxes > 0 ? boxes : undefined,
+        leadTimeDays: leadDays > 0 ? leadDays : undefined,
+      };
+    }
     const batch: ProductionBatch = initialBatch
       ? {
           ...initialBatch,
@@ -458,6 +475,60 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
                 className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-mono text-slate-900 focus:outline-none focus:border-slate-900"
               />
             </div>
+
+            {isReadyMade && (
+              <div className="col-span-full p-3 rounded-xl border border-indigo-200 bg-indigo-50/60 space-y-2">
+                <div className="text-xs font-black text-indigo-900">Ready-made purchase (from a supplier)</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Units per box
+                    <input
+                      type="number"
+                      min={0}
+                      value={unitsPerBox || ''}
+                      onChange={(e) => {
+                        const u = Math.max(0, Number(e.target.value) || 0);
+                        setUnitsPerBox(u);
+                        if (u > 0 && boxes > 0) setQuantity(u * boxes);
+                      }}
+                      className="mt-0.5 w-full px-2 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                  </label>
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Number of boxes
+                    <input
+                      type="number"
+                      min={0}
+                      value={boxes || ''}
+                      onChange={(e) => {
+                        const b = Math.max(0, Number(e.target.value) || 0);
+                        setBoxes(b);
+                        if (b > 0 && unitsPerBox > 0) setQuantity(unitsPerBox * b);
+                      }}
+                      className="mt-0.5 w-full px-2 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                  </label>
+                  <label className="text-[11px] font-bold text-slate-700">
+                    Supplier needs (days)
+                    <input
+                      type="number"
+                      min={0}
+                      value={leadDays || ''}
+                      onChange={(e) => {
+                        const d = Math.max(0, Number(e.target.value) || 0);
+                        setLeadDays(d);
+                        if (d > 0) setTargetDate(new Date(Date.now() + d * 86400000).toISOString().slice(0, 10));
+                      }}
+                      className="mt-0.5 w-full px-2 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                    />
+                  </label>
+                </div>
+                <div className="text-[11px] text-slate-600">
+                  {unitsPerBox > 0 && boxes > 0 ? `${boxes} box(es) x ${unitsPerBox} = ${unitsPerBox * boxes} pcs. ` : ''}
+                  Lead time is typed per order and sets the target date below (you can still change it). Choose the supplier in the stage list. When received, the goods go straight into stock.
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
