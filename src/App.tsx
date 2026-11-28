@@ -5296,7 +5296,18 @@ export default function App() {
           <div className="space-y-4">
           <SourcingOperationsView
             needsTiles={<NeedsTiles notes={shortageNotes} lowNotes={lowStockNotes} open={needsOpen} setOpen={setNeedsOpen} />}
-            needsList={<NeedsList kind={needsOpen} notes={shortageNotes} lowNotes={lowStockNotes} canAct={canUserStartShortagePurchase(currentUser, users)} onStart={(n) => setShortageToStart(n)} onStartLow={(n) => setLowToStart(n)} />}
+            needsProductIds={
+              needsOpen === 'order'
+                ? new Set(shortageNotes.filter((n) => !n.hasBatch).map((n) => n.productId))
+                : needsOpen === 'low'
+                ? new Set(lowStockNotes.filter((n) => !n.hasBatch).map((n) => n.productId))
+                : null
+            }
+            needsDetail={(pid) =>
+              needsOpen ? (
+                <NeedsList kind={needsOpen} productId={pid} notes={shortageNotes} lowNotes={lowStockNotes} canAct={canUserStartShortagePurchase(currentUser, users)} onStart={(n) => setShortageToStart(n)} onStartLow={(n) => setLowToStart(n)} />
+              ) : null
+            }
             products={products}
             vendors={vendors}
             workflows={productWorkflows}

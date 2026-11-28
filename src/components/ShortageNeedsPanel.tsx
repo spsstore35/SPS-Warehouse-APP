@@ -157,16 +157,18 @@ export function NeedsTiles({ notes, lowNotes, open, setOpen }: { notes: OrderSho
 }
 
 /** Plain list shown under the stat row when a tile is open. */
-export function NeedsList({ kind, notes, lowNotes, canAct, onStart, onStartLow }: {
-  kind: NeedsKind; notes: OrderShortageNote[]; lowNotes: LowStockNote[]; canAct: boolean;
+export function NeedsList({ kind, productId, notes: allNotes, lowNotes: allLow, canAct, onStart, onStartLow }: {
+  kind: NeedsKind; productId?: string; notes: OrderShortageNote[]; lowNotes: LowStockNote[]; canAct: boolean;
   onStart: (n: OrderShortageNote) => void; onStartLow?: (n: LowStockNote) => void;
 }) {
   if (!kind) return null;
+  const notes = productId ? allNotes.filter((x) => x.productId === productId) : allNotes;
+  const lowNotes = productId ? allLow.filter((x) => x.productId === productId) : allLow;
   const btn = 'shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs min-h-[40px]';
   const rows = kind === 'order' ? notes.filter((x) => !x.hasBatch) : lowNotes.filter((x) => !x.hasBatch);
   return (
     <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-      {rows.length === 0 && <div className="p-3 text-xs text-slate-500">Nothing needs a batch.</div>}
+      {rows.length === 0 && <div className="p-3 text-xs text-slate-500">Nothing needs a batch here.</div>}
       {kind === 'order' && (rows as OrderShortageNote[]).map((n) => (
         <div key={`${n.bookingId}|${n.variantId}`} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-900">
           <div>

@@ -64,7 +64,8 @@ import {
 
 interface SourcingOperationsViewProps {
   needsTiles?: React.ReactNode;
-  needsList?: React.ReactNode;
+  needsProductIds?: Set<string> | null;
+  needsDetail?: (productId: string) => React.ReactNode;
   products: Product[];
   vendors: Vendor[];
   workflows: ProductWorkflow[];
@@ -101,7 +102,8 @@ type CatalogFilter = 'all' | 'manufactured' | 'ready_made' | 'active_batches';
 
 export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   needsTiles,
-  needsList,
+  needsProductIds,
+  needsDetail,
   products,
   vendors,
   workflows,
@@ -219,6 +221,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       const wf = getEffectiveWorkflow(product);
       const activeBatchCount = activeBatchesCountByProduct.get(product.id) || 0;
 
+      if (needsProductIds && !needsProductIds.has(product.id)) return false;
       if (catalogFilter === 'manufactured' && wf.workflowType !== 'manufactured') return false;
       if (catalogFilter === 'ready_made' && wf.workflowType !== 'ready_made') return false;
       if (catalogFilter === 'active_batches' && activeBatchCount === 0) return false;
@@ -233,6 +236,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
     });
   }, [
     activeCatalogProducts,
+    needsProductIds,
     catalogFilter,
     catalogSearch,
     workflows,
@@ -747,8 +751,6 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
             </div>
           </div>
 
-          {needsList}
-
           {/* Search & Filter Controls */}
           <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
             <div className="relative flex-1">
@@ -948,6 +950,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
 
         return (
           <div className="space-y-6">
+            {needsDetail?.(selectedProduct.id)}
             {/* Workspace Top Bar */}
             <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5 min-w-0">
