@@ -140,7 +140,7 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
-import ShortageNeedsPanel, { ShortageCard, LowStockCard, type LowStockNote } from './components/ShortageNeedsPanel';
+import ShortageNeedsPanel, { NeedsTiles, NeedsList, type NeedsKind, type LowStockNote } from './components/ShortageNeedsPanel';
 import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
@@ -2140,6 +2140,7 @@ export default function App() {
   // Inventory Mgmt -> Purchases Team & Calendar Handoff when stock shortage exists
   // "Needs action" list: paid orders still waiting for stock (from order_stock_owed).
   const [shortageNotes, setShortageNotes] = useState<OrderShortageNote[]>([]);
+  const [needsOpen, setNeedsOpen] = useState<NeedsKind>(null);
   const [shortageToStart, setShortageToStart] = useState<OrderShortageNote | null>(null);
   const refreshShortageNotes = () => {
     if (!currentUser) return;
@@ -5259,24 +5260,8 @@ export default function App() {
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <div className="space-y-4">
           <SourcingOperationsView
-            needsCard={(openItem) => (
-              <>
-                <ShortageCard
-                  batches={productionBatches}
-                  notes={shortageNotes}
-                  canAct={canUserStartShortagePurchase(currentUser, users)}
-                  onStart={(n) => setShortageToStart(n)}
-                  onOpenItem={openItem}
-                />
-                <LowStockCard
-                  batches={productionBatches}
-                  lowNotes={lowStockNotes}
-                  onStartLow={(n) => setLowToStart(n)}
-                  canAct={canUserStartShortagePurchase(currentUser, users)}
-                  onStart={(n) => setShortageToStart(n)}
-                />
-              </>
-            )}
+            needsTiles={<NeedsTiles notes={shortageNotes} lowNotes={lowStockNotes} open={needsOpen} setOpen={setNeedsOpen} />}
+            needsList={<NeedsList kind={needsOpen} notes={shortageNotes} lowNotes={lowStockNotes} canAct={canUserStartShortagePurchase(currentUser, users)} onStart={(n) => setShortageToStart(n)} onStartLow={(n) => setLowToStart(n)} />}
             products={products}
             vendors={vendors}
             workflows={productWorkflows}

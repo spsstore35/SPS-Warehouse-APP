@@ -128,118 +128,62 @@ export default function ShortageNeedsPanel({ notes: allNotes, canAct, onStart, l
   );
 }
 
-/** Catalog-grid card: "a batch is needed". Tap to list what to make, per order. */
-export function ShortageCard(props: Omit<Props, 'collapsible'>) {
-  const [open, setOpen] = useState(false);
-  const [sel, setSel] = useState<string | null>(null);
-  const notes = props.notes.filter((n) => !n.hasBatch);
-  if (notes.length === 0) return null;
-  const orders = new Set(notes.map((n) => n.bookingId)).size;
-  const items = notes.length;
-  const preview = Array.from(new Set(notes.map((n) => n.productName))).slice(0, 3).join(', ');
-  const byItem = new Map<string, { name: string; size: string; color: string; total: number; orders: OrderShortageNote[] }>();
-  notes.forEach((n) => {
-    const e = byItem.get(n.variantId) || { name: n.productName, size: n.size, color: n.colorName, total: 0, orders: [] };
-    e.total += n.owed;
-    e.orders.push(n);
-    byItem.set(n.variantId, e);
-  });
+export type NeedsKind = 'order' | 'low' | null;
+
+/** Two stat tiles for the Sourcing stat row (same style as the others). */
+export function NeedsTiles({ notes, lowNotes, open, setOpen }: { notes: OrderShortageNote[]; lowNotes: LowStockNote[]; open: NeedsKind; setOpen: (k: NeedsKind) => void }) {
+  const n = notes.filter((x) => !x.hasBatch).length;
+  const l = lowNotes.filter((x) => !x.hasBatch).length;
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-left rounded-2xl border-2 border-rose-600 bg-rose-50 hover:bg-rose-100 p-4 flex flex-col justify-between gap-1.5 min-h-[132px]"
+        onClick={() => setOpen(open === 'order' ? null : 'order')}
+        className={`p-4 rounded-xl border text-left ${open === 'order' ? 'bg-rose-100 border-rose-500' : 'bg-white border-slate-200 hover:bg-rose-50'}`}
       >
-        <div className="flex items-center gap-2 text-rose-700 font-black text-sm">
-          <AlertTriangle className="w-5 h-5 shrink-0" /> Batch needed
-        </div>
-        <div className="text-xl font-black text-rose-900 leading-tight">{items} item(s) to make</div>
-        <div className="text-xs font-semibold text-rose-950">
-          from {orders} order(s){preview ? `: ${preview}` : ''}
-        </div>
+        <div className="text-xs font-medium text-slate-500">Batch needed</div>
+        <div className={`text-2xl font-bold font-mono tabular-nums mt-1 ${n > 0 ? 'text-rose-700' : 'text-slate-900'}`}>{n}</div>
       </button>
-      {open && (
-        <div className="col-span-full rounded-2xl border border-rose-300 bg-rose-50 p-3.5 space-y-2">
-          {Array.from(byItem.entries()).map(([vid, e]) => (
-            <div key={vid} className="rounded-xl bg-white border border-rose-200 text-xs text-slate-900">
-              <button
-                type="button"
-                onClick={() => setSel((cur) => (cur === vid ? null : vid))}
-                className="w-full flex items-center justify-between gap-2 p-2.5 text-left"
-              >
-                <span>
-                  <span className="font-black">{e.name}</span> ({e.size}{e.color ? ` / ${e.color}` : ''}): make{' '}
-                  <span className="font-black font-mono">{e.total}</span>
-                </span>
-                <span className="text-rose-700 font-black">{sel === vid ? 'Close' : 'Open'}</span>
-              </button>
-              {sel === vid && (
-                <div className="border-t border-rose-100 p-2.5 space-y-2">
-                  <div className="font-bold text-slate-700">Needed for these orders:</div>
-                  {e.orders.map((o) => (
-                    <div key={o.bookingId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <span>
-                        Order <span className="font-black">#{o.bookingNumber}</span>
-                        {o.clientName ? ` (${o.clientName})` : ''}: <span className="font-black font-mono">{o.owed}</span>
-                      </span>
-                      {props.canAct ? (
-                        <button
-                          type="button"
-                          onClick={() => props.onStart(o)}
-                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs min-h-[40px]"
-                        >
-                          <ShoppingCart className="w-4 h-4" /> Start batch
-                        </button>
-                      ) : (
-                        <span className="text-[11px] font-bold text-slate-500">View only</span>
-                      )}
-                    </div>
-                  ))}
-                  {props.onOpenItem && (
-                    <button
-                      type="button"
-                      onClick={() => props.onOpenItem!(e.orders[0].productId)}
-                      className="text-[11px] font-black text-blue-700 hover:underline"
-                    >
-                      Open this item in Sourcing
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <button
+        type="button"
+        onClick={() => setOpen(open === 'low' ? null : 'low')}
+        className={`p-4 rounded-xl border text-left ${open === 'low' ? 'bg-amber-100 border-amber-500' : 'bg-white border-slate-200 hover:bg-amber-50'}`}
+      >
+        <div className="text-xs font-medium text-slate-500">Low stock</div>
+        <div className={`text-2xl font-bold font-mono tabular-nums mt-1 ${l > 0 ? 'text-amber-700' : 'text-slate-900'}`}>{l}</div>
+      </button>
     </>
   );
 }
 
-/** Separate amber card in the catalog grid for low-stock items (not tied to any order). */
-export function LowStockCard(props: Omit<Props, 'collapsible' | 'notes'>) {
-  const [open, setOpen] = useState(false);
-  const lowNotes = (props.lowNotes || []).filter((n) => !n.hasBatch);
-  if (lowNotes.length === 0) return null;
+/** Plain list shown under the stat row when a tile is open. */
+export function NeedsList({ kind, notes, lowNotes, canAct, onStart, onStartLow }: {
+  kind: NeedsKind; notes: OrderShortageNote[]; lowNotes: LowStockNote[]; canAct: boolean;
+  onStart: (n: OrderShortageNote) => void; onStartLow?: (n: LowStockNote) => void;
+}) {
+  if (!kind) return null;
+  const btn = 'shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs min-h-[40px]';
+  const rows = kind === 'order' ? notes.filter((x) => !x.hasBatch) : lowNotes.filter((x) => !x.hasBatch);
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-left rounded-2xl border-2 border-amber-500 bg-amber-50 hover:bg-amber-100 p-4 flex flex-col justify-between gap-1.5 min-h-[132px]"
-      >
-        <div className="flex items-center gap-2 text-amber-800 font-black text-sm">
-          <AlertTriangle className="w-5 h-5 shrink-0" /> Low stock
+    <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+      {rows.length === 0 && <div className="p-3 text-xs text-slate-500">Nothing needs a batch.</div>}
+      {kind === 'order' && (rows as OrderShortageNote[]).map((n) => (
+        <div key={`${n.bookingId}|${n.variantId}`} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-900">
+          <div>
+            <span className="font-black">{n.productName}</span> ({n.size}{n.colorName ? ` / ${n.colorName}` : ''}): short <span className="font-black font-mono">{n.owed}</span>
+            <div className="text-slate-600">Order #{n.bookingNumber}{n.clientName ? ` (${n.clientName})` : ''}</div>
+          </div>
+          {canAct ? <button type="button" onClick={() => onStart(n)} className={btn}><ShoppingCart className="w-4 h-4" /> Start batch</button> : <span className="text-[11px] font-bold text-slate-500">View only</span>}
         </div>
-        <div>
-          <div className="text-2xl font-black text-amber-900">{lowNotes.length} low-stock item(s)</div>
-          <div className="text-xs font-semibold text-amber-950">to make or buy. {open ? 'Tap to close.' : 'Tap to see which.'}</div>
+      ))}
+      {kind === 'low' && (rows as LowStockNote[]).map((n) => (
+        <div key={n.variantId} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-900">
+          <div>
+            <span className="font-black">{n.productName}</span> ({n.size}{n.colorName ? ` / ${n.colorName}` : ''}): <span className="font-black font-mono">{n.quantity}</span> left (minimum {n.minThreshold})
+          </div>
+          {canAct && onStartLow ? <button type="button" onClick={() => onStartLow(n)} className={btn}><ShoppingCart className="w-4 h-4" /> Start batch</button> : <span className="text-[11px] font-bold text-slate-500">View only</span>}
         </div>
-      </button>
-      {open && (
-        <div className="col-span-full">
-          <ShortageNeedsPanel {...props} notes={[]} />
-        </div>
-      )}
-    </>
+      ))}
+    </div>
   );
 }

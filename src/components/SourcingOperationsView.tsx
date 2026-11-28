@@ -63,7 +63,8 @@ import {
 } from 'lucide-react';
 
 interface SourcingOperationsViewProps {
-  needsCard?: (openItem: (productId: string) => void) => React.ReactNode;
+  needsTiles?: React.ReactNode;
+  needsList?: React.ReactNode;
   products: Product[];
   vendors: Vendor[];
   workflows: ProductWorkflow[];
@@ -99,7 +100,8 @@ type TopTab = 'catalog' | 'vendors';
 type CatalogFilter = 'all' | 'manufactured' | 'ready_made' | 'active_batches';
 
 export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
-  needsCard,
+  needsTiles,
+  needsList,
   products,
   vendors,
   workflows,
@@ -713,7 +715,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       {topTab === 'catalog' && !selectedProduct && (
         <div className="space-y-5">
           {/* Summary KPI Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {needsTiles}
             <div className="p-4 rounded-xl bg-white border border-slate-200">
               <div className="text-xs font-medium text-slate-500">Catalog Products</div>
               <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-1">
@@ -743,6 +746,8 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               </div>
             </div>
           </div>
+
+          {needsList}
 
           {/* Search & Filter Controls */}
           <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
@@ -820,7 +825,6 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {needsCard?.((pid) => { setSelectedProductId(pid); })}
               {filteredCatalogProducts.map((product) => {
                 const wf = getEffectiveWorkflow(product);
                 const activeBatchCount = activeBatchesCountByProduct.get(product.id) || 0;
