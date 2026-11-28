@@ -378,6 +378,15 @@ export function canUserManageOrders(
   return getUserAssignedTeams(user).includes('troops');
 }
 
+// Who may start the purchase for a shortage: full_admin, Scout Fera2 admin, purchases admin.
+export function canUserStartShortagePurchase(user?: User | null, allUsers?: User[]): boolean {
+  if (!user || isUserLeader(user)) return false;
+  if (isFullAccessAdmin(user, allUsers)) return true;
+  if (!isUserAdmin(user)) return false;
+  const teams = Array.isArray(user.adminTeams) ? user.adminTeams : getUserAssignedTeams(user);
+  return teams.includes('troops') || teams.includes('purchases');
+}
+
 export function canUserManageTeamScope(
   user: User | null | undefined,
   teamScope: StoreTeamId,

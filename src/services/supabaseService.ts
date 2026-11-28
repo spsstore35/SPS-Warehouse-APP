@@ -707,6 +707,37 @@ export async function fetchOrderStockOwedFromDb(): Promise<Record<string, number
   return out;
 }
 
+export interface OrderShortageNote {
+  bookingId: string;
+  bookingNumber: string;
+  clientName: string;
+  productId: string;
+  variantId: string;
+  productName: string;
+  size: string;
+  colorName: string;
+  owed: number;
+  hasBatch: boolean;
+}
+
+/** Paid orders still waiting for stock ("Needs action" list). */
+export async function fetchOrderShortagesFromDb(): Promise<OrderShortageNote[]> {
+  const { data, error } = await supabase.rpc('list_order_shortages');
+  if (error) throw error;
+  return (data || []).map((r: any) => ({
+    bookingId: String(r.booking_id),
+    bookingNumber: String(r.booking_number),
+    clientName: String(r.client_name || ''),
+    productId: String(r.product_id),
+    variantId: String(r.variant_id),
+    productName: String(r.product_name || 'Item'),
+    size: String(r.size || 'Std'),
+    colorName: String(r.color_name || ''),
+    owed: Number(r.owed),
+    hasBatch: Boolean(r.has_batch),
+  }));
+}
+
 /** Before receiving a batch: how many units go straight to the waiting order. */
 export async function previewBatchReceiveInDb(
   batchId: string,

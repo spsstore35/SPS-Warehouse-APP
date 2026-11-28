@@ -1061,6 +1061,30 @@ end $$;
 drop trigger if exists guard_batch_min_quantity on public.production_batches;
 create trigger guard_batch_min_quantity before insert or update of quantity on public.production_batches
   for each row execute function public.guard_batch_min_quantity();
+
+-- "Needs action" list: every paid order still waiting for stock, with the item/size and whether a
+-- purchase has been started. Readable by anyone who may see orders or purchases (the app decides
+-- who gets the action button).
+create or replace function public.list_order_shortages()
+returns table (booking_id text, booking_number text, client_name text, product_id text, variant_id text,
+               product_name text, size text, color_name text, owed integer, has_batch boolean)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.app_member_of_any(array['troops','budgeting','inventory','purchases']) then
+    raise exception 'Not allowed.' using errcode = '42501';
+  end if;
+  return query
+    select o.booking_id::text, b.booking_number::text, b.client_name::text, bi.product_id::text, o.variant_id::text,
+           bi.product_name::text, bi.size::text, bi.color_name::text, o.owed::integer,
+           exists (select 1 from public.production_batches pb
+                    where pb.linked_booking_id = o.booking_id and pb.variant_id = o.variant_id and pb.status = 'in_progress')
+      from public.order_stock_owed o
+      join public.bookings b on b.id = o.booking_id
+      join lateral (select * from public.booking_items i where i.booking_id = o.booking_id and i.variant_id = o.variant_id limit 1) bi on true
+     order by b.created_at desc;
+end $$;
+revoke all on function public.list_order_shortages() from public, anon;
+grant execute on function public.list_order_shortages() to authenticated;
 drop trigger if exists guard_booking_update on public.bookings;
 create trigger guard_booking_update before update on public.bookings
   for each row execute function public.guard_booking_update();

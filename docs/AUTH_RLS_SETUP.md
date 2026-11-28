@@ -74,6 +74,8 @@ Run Part 1 BEFORE deploying the new site (the site calls this function).
 
 - Minimum purchase quantity: a purchase batch linked to an order cannot have a quantity below what that order still needs for that item (checked on the screen AND in the database). 20 or more is fine.
 
+- "Needs action" box: paid orders still waiting for stock are listed on the home screen and the Sourcing screen (`list_order_shortages()`), e.g. "Order #12 (client) needs 20 x Shirt (S)". Full admin, Fera2 admin and purchases admin get a "Start purchase" button that opens a form with item, size and the quantity prefilled (minimum = amount owed). Other members of troops/budgeting/inventory/purchases see it read-only.
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).

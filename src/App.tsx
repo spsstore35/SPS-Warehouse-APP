@@ -46,6 +46,7 @@ import {
   canUserEditBookings,
   canUserManageOrders,
   canUserConfirmPayments,
+  canUserStartShortagePurchase,
   canUserManageTeamScope,
   isFullAccessAdmin,
   normalizeRole,
@@ -64,6 +65,8 @@ import {
   updateVariantQuantityInDb,
   applyStockChangeInDb,
   recordOrderShortfallInDb,
+  fetchOrderShortagesFromDb,
+  type OrderShortageNote,
   previewBatchReceiveInDb,
   receiveBatchStockInDb,
   fetchAdjustmentRequestsFromDb,
@@ -136,6 +139,8 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
+import ShortageNeedsPanel from './components/ShortageNeedsPanel';
+import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
 import {
@@ -2132,6 +2137,19 @@ export default function App() {
   };
 
   // Inventory Mgmt -> Purchases Team & Calendar Handoff when stock shortage exists
+  // "Needs action" list: paid orders still waiting for stock (from order_stock_owed).
+  const [shortageNotes, setShortageNotes] = useState<OrderShortageNote[]>([]);
+  const [shortageToStart, setShortageToStart] = useState<OrderShortageNote | null>(null);
+  const refreshShortageNotes = () => {
+    if (!currentUser) return;
+    fetchOrderShortagesFromDb().then(setShortageNotes).catch(() => setShortageNotes([]));
+  };
+  useEffect(() => {
+    refreshShortageNotes();
+    const t = setInterval(refreshShortageNotes, 60000);
+    return () => clearInterval(t);
+  }, [currentUser?.id, bookings.length, productionBatches.length]);
+
   const handleSendShortageToPurchases = (
     booking: Booking,
     targetDate?: string,
@@ -2174,7 +2192,10 @@ export default function App() {
           const matchedShort = shortItems.find(
             (s) => s.item.productId === cfg.productId && s.item.variantId === cfg.variantId
           );
-          const minShort = matchedShort?.shortQty ?? 1;
+          const owedNote = shortageNotes.find(
+            (n) => n.bookingId === booking.id && n.variantId === cfg.variantId
+          );
+          const minShort = owedNote?.owed ?? matchedShort?.shortQty ?? 1;
           return {
             productId: cfg.productId,
             variantId: cfg.variantId,
@@ -2284,19 +2305,23 @@ export default function App() {
       )
     );
 
-    lastBookingMutationAtRef.current = Date.now();
-    const updatedBooking: Booking = {
-      ...booking,
-      stockCheckStatus: 'in_production',
-      updatedAt: new Date().toISOString(),
-    };
-    setBookings((prev) => prev.map((b) => (b.id === booking.id ? updatedBooking : b)));
-    updateBookingInDb(booking.id, updatedBooking).catch((err) =>
-      showToast(`Database booking sync error: ${err?.message || 'Sync error'}`)
-    );
+    const bookingVisible = bookings.some((b) => b.id === booking.id);
+    if (bookingVisible) {
+      lastBookingMutationAtRef.current = Date.now();
+      const updatedBooking: Booking = {
+        ...booking,
+        stockCheckStatus: 'in_production',
+        updatedAt: new Date().toISOString(),
+      };
+      setBookings((prev) => prev.map((b) => (b.id === booking.id ? updatedBooking : b)));
+      updateBookingInDb(booking.id, updatedBooking).catch((err) =>
+        showToast(`Database booking sync error: ${err?.message || 'Sync error'}`)
+      );
+      syncOrderTaskToScoutFera2(updatedBooking);
+    }
 
     upsertCalendarItemsBatch(createdCalendarTasks);
-    syncOrderTaskToScoutFera2(updatedBooking);
+    setTimeout(refreshShortageNotes, 1500);
 
     showToast(
       `Created ${createdBatches.length} open batch(es) in Sourcing & Purchases Calendar (Target: ${expectedDate}).`
@@ -4343,6 +4368,13 @@ export default function App() {
         {/* VIEW 1: CATALOG & INVENTORY */}
         {effectiveView === 'inventory' && (
           <div className="space-y-6">
+            {!isLeader && (
+              <ShortageNeedsPanel
+                notes={shortageNotes}
+                canAct={canUserStartShortagePurchase(currentUser, users)}
+                onStart={(n) => setShortageToStart(n)}
+              />
+            )}
             {/* KPI Metric Strip in Clean Light Mode (hidden for Scout Leader) */}
             {!isLeader && (
             <div className={`grid grid-cols-2 ${showQueueKpiCard ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
@@ -4985,6 +5017,36 @@ export default function App() {
           />
         )}
 
+        {shortageToStart && (
+          <ShortageStartModal
+            note={shortageToStart}
+            onCancel={() => setShortageToStart(null)}
+            onConfirm={(quantity, targetDate) => {
+              const n = shortageToStart;
+              setShortageToStart(null);
+              const stub = {
+                id: n.bookingId,
+                bookingNumber: n.bookingNumber,
+                clientName: n.clientName,
+                items: [
+                  {
+                    productId: n.productId,
+                    variantId: n.variantId,
+                    productName: n.productName,
+                    size: n.size,
+                    colorName: n.colorName,
+                    quantity: n.owed,
+                  },
+                ],
+              } as unknown as Booking;
+              const real = bookings.find((b) => b.id === n.bookingId);
+              handleSendShortageToPurchases(real || stub, targetDate, [
+                { productId: n.productId, variantId: n.variantId, quantity, stageAssignments: {}, targetDate },
+              ]);
+            }}
+          />
+        )}
+
         {/* VIEW 5: CLIENT BOOKINGS & QUOTATIONS */}
         {effectiveView === 'bookings' && canUserAccessView(currentUser, 'bookings', users) && (
           <BookingsView
@@ -5095,6 +5157,12 @@ export default function App() {
         )}
 
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
+          <div className="space-y-4">
+          <ShortageNeedsPanel
+            notes={shortageNotes}
+            canAct={canUserStartShortagePurchase(currentUser, users)}
+            onStart={(n) => setShortageToStart(n)}
+          />
           <SourcingOperationsView
             products={products}
             vendors={vendors}
@@ -5120,6 +5188,7 @@ export default function App() {
             onCompleteBatchStockIn={handleCompleteBatchStockIn}
             onShowToast={(msg) => showToast(msg)}
           />
+          </div>
         )}
 
         {effectiveView === 'marketing' && canUserAccessView(currentUser, 'marketing', users) && (
