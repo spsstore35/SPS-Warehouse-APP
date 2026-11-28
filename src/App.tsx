@@ -2636,7 +2636,7 @@ export default function App() {
         });
       });
       newBooking.inventoryDeducted = true;
-      saveOrderShortfalls(newBooking.id, shortfalls);
+      saveOrderShortfalls(newBooking.id, shortfalls, newBooking);
     }
 
     lastBookingMutationAtRef.current = Date.now();
@@ -3691,10 +3691,45 @@ export default function App() {
     showToast(`Deleted batch ${target?.batchCode || ''}.`);
   };
 
+  // Tell the purchases team (Calendar & Board task, same mechanism used for inventory/Fera2) that production must start.
+  const notifyPurchasesOfShortage = (bookingId: string, items: { variantId: string; owed: number }[], bk?: Booking) => {
+    const booking = bk || bookings.find((b) => b.id === bookingId);
+    const today = new Date().toISOString().slice(0, 10);
+    const lines = items.map((it) => {
+      const prod = products.find((p) => p.variants.some((v) => v.id === it.variantId));
+      const v = prod?.variants.find((x) => x.id === it.variantId);
+      return `• ${prod?.name || 'Item'} (${v?.size || 'Std'}${v?.colorName ? ' / ' + v.colorName : ''}): make ${it.owed}`;
+    });
+    const total = items.reduce((sum, i) => sum + i.owed, 0);
+    const purchMember = users.find((u) => u.status === 'active' && (u.assignedTeams || []).includes('purchases') && isUserAdmin(u));
+    const task: CalendarItem = {
+      id: `task_purch_${bookingId}`,
+      title: `[Batch needed] Order #${booking?.bookingNumber || ''} (${total} pcs short)`,
+      itemType: 'task',
+      startDate: today,
+      endDate: today,
+      allDay: true,
+      completed: false,
+      boardStatus: 'upcoming',
+      team: 'purchases',
+      assignedToId: purchMember?.id,
+      assignedToName: purchMember?.name,
+      linkedBookingId: bookingId,
+      workflowStage: 'purchase_needed',
+      notes: `Deposit confirmed, stock was not enough. Start a purchase/production batch in Sourcing & Operations.\n${booking ? `Order #${booking.bookingNumber} · ${booking.clientName}\n` : ''}${lines.join('\n')}`,
+      createdById: currentUser?.id || 'system',
+      createdByName: currentUser?.name || 'System',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    upsertCalendarItemsBatch([task]);
+  };
+
   // Stock was short when the deposit was confirmed: remember what the order still waits for.
   // The order row is saved a moment after, so retry a few times.
-  const saveOrderShortfalls = (bookingId: string, items: { variantId: string; owed: number }[]) => {
+  const saveOrderShortfalls = (bookingId: string, items: { variantId: string; owed: number }[], bk?: Booking) => {
     if (items.length === 0) return;
+    notifyPurchasesOfShortage(bookingId, items, bk);
     const total = items.reduce((sum, i) => sum + i.owed, 0);
     showToast(
       `Stock was not enough: ${total} unit(s) are still needed for this order. They will be taken automatically when the linked purchase is received.`
