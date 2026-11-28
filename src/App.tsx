@@ -55,6 +55,7 @@ import {
   getRoleDisplayName,
   normalizeUsername,
   normalizePhoneNumber,
+  isBookingInMySubTeam,
 } from './utils/security';
 import {
   checkSupabaseConnection,
@@ -2763,7 +2764,8 @@ export default function App() {
   };
 
   const handleSaveEditedBooking = (editedBooking: Booking, bypassApproval = false) => {
-    if (!bypassApproval && !canUserManageOrders(currentUser, users)) {
+    const existingForTeam = bookings.find((b) => b.id === editedBooking.id);
+    if (!bypassApproval && (!canUserManageOrders(currentUser, users) || !isBookingInMySubTeam(currentUser, existingForTeam))) {
       if (canUserEditBookings(currentUser, users)) {
         handleSubmitTeamRequest({
           teamScope: 'troops',
@@ -2771,7 +2773,7 @@ export default function App() {
           actionType: 'update',
           targetId: editedBooking.id,
           title: `Edit Order #${editedBooking.bookingNumber}`,
-          summary: `Client: ${editedBooking.clientName} · ${editedBooking.total.toFixed(2)} EGP`,
+          summary: `Client: ${editedBooking.clientName} · ${editedBooking.total.toFixed(2)} EGP${isBookingInMySubTeam(currentUser, existingForTeam) ? '' : ` · NOT requester's team (order of ${existingForTeam?.troopGroup || existingForTeam?.assignedFare2 || 'another team'})`}`,
           payload: { booking: editedBooking },
         });
       } else {
@@ -4365,6 +4367,13 @@ export default function App() {
       return;
     }
     if (req.status !== 'pending') return;
+    if (req.entityType.startsWith('booking_') && req.targetId) {
+      const reqBooking = bookings.find((b) => b.id === req.targetId);
+      if (reqBooking && !isBookingInMySubTeam(currentUser, reqBooking)) {
+        showToast("This is another team's order. Only that team's admin or the full admin can approve it.");
+        return;
+      }
+    }
 
     switch (req.entityType) {
       case 'calendar_item':

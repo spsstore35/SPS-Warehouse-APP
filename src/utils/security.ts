@@ -416,3 +416,31 @@ export function getRoleDisplayName(role?: Role | string): string {
   if (norm === 'leader') return 'Scout Leader (Read-Only)';
   return 'Warehouse Staff';
 }
+
+/**
+ * Scout sub-teams (Ashbal, Kashafeen, ...) the user belongs to, lower-cased. Empty = not assigned to any.
+ */
+export function getUserSubTeams(user?: Pick<User, 'assignedFare2'> | null): string[] {
+  if (!user || !Array.isArray(user.assignedFare2)) return [];
+  return user.assignedFare2.map((t) => String(t || '').trim().toLowerCase()).filter(Boolean);
+}
+
+/**
+ * Is this booking in the user's own sub-team? Full admins, users with no sub-team set, and bookings
+ * with no sub-team yet all count as "own" (nobody gets locked out, no warning shown).
+ */
+export function isBookingInMySubTeam(
+  user: User | null | undefined,
+  booking?: { troopGroup?: string; assignedFare2?: string } | null
+): boolean {
+  if (!user || !booking) return true;
+  if (isExplicitFullAdmin(user)) return true;
+  const mine = getUserSubTeams(user);
+  if (mine.length === 0) return true;
+  const tg = String(booking.troopGroup || '').trim().toLowerCase();
+  const af = String(booking.assignedFare2 || '').trim().toLowerCase();
+  const known = ['ashbal', 'zahrat', 'kashafeen', 'morshedat', '3ashera 1', '3ashera 2'];
+  const bookingTeam = known.includes(tg) ? tg : known.includes(af) ? af : '';
+  if (!bookingTeam) return true;
+  return mine.includes(bookingTeam);
+}

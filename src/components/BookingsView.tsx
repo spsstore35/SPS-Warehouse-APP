@@ -58,7 +58,7 @@ import {
   Users,
 } from 'lucide-react';
 
-import { canUserManageOrders, canUserConfirmPayments, canUserRequestPayments } from '../utils/security';
+import { canUserManageOrders, canUserConfirmPayments, canUserRequestPayments, getUserSubTeams, isBookingInMySubTeam } from '../utils/security';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 
 interface BookingsViewProps {
@@ -138,6 +138,13 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   const canPay = canUserConfirmPayments(currentUser);
   const canAskPay = canUserRequestPayments(currentUser);
   const allowEditBookings = canEditBookings ?? isAdmin;
+  // Sub-team (Kashafeen, Ashbal...) logic: default list = my own sub-team; other teams' orders get a red note
+  // and edits/deletes/status moves go through the request flow instead of applying directly.
+  const mySubTeams = getUserSubTeams(currentUser);
+  const hasMyTeam = mySubTeams.length > 0;
+  const isOwnTeam = (b: Booking) => isBookingInMySubTeam(currentUser, b);
+  const directFor = (b: Booking) => isAdmin && isOwnTeam(b);
+  const teamNameOf = (b: Booking) => b.troopGroup && b.troopGroup !== 'Afrad' ? b.troopGroup : b.assignedFare2 || b.troopGroup || 'another team';
   const activeMembers = useMemo(
     () =>
       users
@@ -157,7 +164,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     allowEditBookings && b.status === 'pending' && !b.depositPaid;
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
-  const [troopFilter, setTroopFilter] = useState<string>('All Troops');
+  const [troopFilter, setTroopFilter] = useState<string>(hasMyTeam ? 'My Team' : 'All Troops');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialSelectedBookingId || null);
 
@@ -437,6 +444,7 @@ This is our official Scout Store number. Through this chat, you can:
     const matchesStatus = statusFilter === 'all' || b.status === statusFilter;
     const matchesTroop =
       troopFilter === 'All Troops' ||
+      (troopFilter === 'My Team' && isOwnTeam(b)) ||
       (b.troopGroup && b.troopGroup.toLowerCase() === troopFilter.toLowerCase());
     return matchesSearch && matchesStatus && matchesTroop;
   });
@@ -659,7 +667,7 @@ This is our official Scout Store number. Through this chat, you can:
       assignedToName: finalName,
       updatedAt: new Date().toISOString(),
     };
-    if (!isAdmin && onSubmitTeamRequest) {
+    if (!directFor(activeBooking) && onSubmitTeamRequest) {
       onSubmitTeamRequest({
         teamScope: 'troops',
         entityType: 'booking_edit',
@@ -809,12 +817,14 @@ This is our official Scout Store number. Through this chat, you can:
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1">
             Troop:
           </span>
-          {['All Troops', 'Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'].map((troop) => {
+          {[...(hasMyTeam ? ['My Team'] : []), 'All Troops', 'Ashbal', 'Zahrat', 'Kashafeen', 'Morshedat', '3ashera 1', '3ashera 2', 'Afrad'].map((troop) => {
             const isSelected = troopFilter === troop;
             const fm = getScoutFare2Meta(troop);
             const count =
               troop === 'All Troops'
                 ? bookings.length
+                : troop === 'My Team'
+                ? bookings.filter((b) => isOwnTeam(b)).length
                 : bookings.filter((b) => b.troopGroup?.toLowerCase() === troop.toLowerCase()).length;
             return (
               <button
@@ -966,6 +976,11 @@ This is our official Scout Store number. Through this chat, you can:
                             }
                             return (
                               <>
+                                {!isOwnTeam(b) && (
+                                  <span className="text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-300 px-2 py-0.5 rounded-md">
+                                    Not your team
+                                  </span>
+                                )}
                                 {b.troopGroup && (
                                   <span className="text-[11px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
                                     {b.troopGroup}
@@ -1018,7 +1033,7 @@ This is our official Scout Store number. Through this chat, you can:
                                 e.stopPropagation();
                                 setBookingToConfirmEdit(b);
                               }}
-                              title={isAdmin ? 'Edit Booking (Admin Only — Unpaid)' : 'Request Booking Edit (Unpaid)'}
+                              title={directFor(b) ? 'Edit Booking (Admin Only — Unpaid)' : 'Request Booking Edit (Unpaid)'}
                               aria-label="Edit booking"
                               className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 flex items-center justify-center transition-all shadow-xs active:scale-95"
                             >
@@ -1031,7 +1046,7 @@ This is our official Scout Store number. Through this chat, you can:
                               e.stopPropagation();
                               setBookingToDelete(b);
                             }}
-                            title={isAdmin ? 'Delete Booking (Admin Only — Unpaid)' : 'Request Booking Deletion (Unpaid)'}
+                            title={directFor(b) ? 'Delete Booking (Admin Only — Unpaid)' : 'Request Booking Deletion (Unpaid)'}
                             aria-label="Delete booking"
                             className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center transition-all shadow-xs active:scale-95"
                           >
@@ -2115,6 +2130,11 @@ This is our official Scout Store number. Through this chat, you can:
                 </div>
               )}
 
+              {!isOwnTeam(activeBooking) && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-xs font-bold text-rose-700">
+                  Careful: this is not your team. This order belongs to {teamNameOf(activeBooking)}. Your change will be sent as a request to that team's admin and the full admin.
+                </div>
+              )}
               {/* Edit & Delete Booking Options - Strictly Locked Once Any Payment Is Confirmed */}
               {canModifyUnpaidBooking(activeBooking) ? (
                 <div className="pt-1 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
@@ -2125,7 +2145,7 @@ This is our official Scout Store number. Through this chat, you can:
                       className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-black bg-amber-400 hover:bg-amber-500 text-slate-950 border border-amber-500 shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
                     >
                       <Edit3 className="w-3.5 h-3.5 stroke-[2.5]" />
-                      <span>{isAdmin ? 'Edit Booking' : 'Request Edit'}</span>
+                      <span>{directFor(activeBooking) ? 'Edit Booking' : 'Request Edit'}</span>
                     </button>
                   )}
                   <button
@@ -2134,7 +2154,7 @@ This is our official Scout Store number. Through this chat, you can:
                     className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition-all flex items-center justify-center gap-1.5 active:scale-95"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>{isAdmin ? 'Delete Booking Record' : 'Request Delete'}</span>
+                    <span>{directFor(activeBooking) ? 'Delete Booking Record' : 'Request Delete'}</span>
                   </button>
                 </div>
               ) : (
@@ -2356,6 +2376,9 @@ This is our official Scout Store number. Through this chat, you can:
               </div>
             </div>
 
+            <div className="mb-3 p-3 rounded-xl bg-rose-50 border border-rose-300 text-xs font-bold text-rose-700" hidden={isOwnTeam(pendingStatusConfirm.booking)}>
+              Careful: this is not your team ({teamNameOf(pendingStatusConfirm.booking)}). This will be sent as a request to that team's admin and the full admin.
+            </div>
             <div className="grid grid-cols-2 gap-2.5 pt-1">
               <button
                 type="button"
@@ -2369,14 +2392,14 @@ This is our official Scout Store number. Through this chat, you can:
                 onClick={() => {
                   const { booking, nextStatus } = pendingStatusConfirm;
                   setPendingStatusConfirm(null);
-                  if (!isAdmin && onSubmitTeamRequest) {
+                  if (!directFor(booking) && onSubmitTeamRequest) {
                     onSubmitTeamRequest({
                       teamScope: 'troops',
                       entityType: 'booking_status',
                       actionType: 'update',
                       targetId: booking.id,
                       title: `Move Order #${booking.bookingNumber} to ${nextStatus === 'delivered' ? 'Delivered' : 'Completed'}`,
-                      summary: `Client: ${booking.clientName} · Total: ${booking.total.toFixed(2)} EGP`,
+                      summary: `Client: ${booking.clientName} · Total: ${booking.total.toFixed(2)} EGP${isOwnTeam(booking) ? '' : ` · NOT requester's team (order of ${teamNameOf(booking)})`}`,
                       payload: { bookingId: booking.id, nextStatus },
                     });
                     return;
@@ -2386,7 +2409,7 @@ This is our official Scout Store number. Through this chat, you can:
                 className="py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-1.5 min-h-[44px]"
               >
                 <Check className="w-4 h-4 stroke-[3]" />
-                <span>{isAdmin ? 'Yes, Confirm' : 'Submit Request'}</span>
+                <span>{directFor(pendingStatusConfirm.booking) ? 'Yes, Confirm' : 'Submit Request'}</span>
               </button>
             </div>
           </div>
@@ -2419,6 +2442,9 @@ This is our official Scout Store number. Through this chat, you can:
               )}
             </div>
 
+            <div className="mb-3 p-3 rounded-xl bg-rose-50 border border-rose-300 text-xs font-bold text-rose-700" hidden={isOwnTeam(bookingToDelete)}>
+              Careful: this is not your team ({teamNameOf(bookingToDelete)}). This will be sent as a request to that team's admin and the full admin.
+            </div>
             <div className="flex items-center gap-2.5 pt-1">
               <button
                 type="button"
@@ -2433,14 +2459,14 @@ This is our official Scout Store number. Through this chat, you can:
                   const target = bookingToDelete;
                   setBookingToDelete(null);
                   setSelectedBookingId(null);
-                  if (!isAdmin && onSubmitTeamRequest) {
+                  if (!directFor(target) && onSubmitTeamRequest) {
                     onSubmitTeamRequest({
                       teamScope: 'troops',
                       entityType: 'booking_delete',
                       actionType: 'delete',
                       targetId: target.id,
                       title: `Delete Order #${target.bookingNumber}`,
-                      summary: `Client: ${target.clientName} · Total: ${target.total.toFixed(2)} EGP`,
+                      summary: `Client: ${target.clientName} · Total: ${target.total.toFixed(2)} EGP${isOwnTeam(target) ? '' : ` · NOT requester's team (order of ${teamNameOf(target)})`}`,
                       payload: { bookingId: target.id },
                     });
                     return;
@@ -2450,7 +2476,7 @@ This is our official Scout Store number. Through this chat, you can:
                 className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-black text-xs shadow-md shadow-rose-600/20 transition-all flex items-center justify-center gap-1.5 min-h-[42px]"
               >
                 <Trash2 className="w-4 h-4" />
-                <span>{isAdmin ? 'Yes, Delete' : 'Request Delete'}</span>
+                <span>{directFor(bookingToDelete) ? 'Yes, Delete' : 'Request Delete'}</span>
               </button>
             </div>
           </div>
@@ -2494,6 +2520,9 @@ This is our official Scout Store number. Through this chat, you can:
               </div>
             </div>
 
+            <div className="mb-3 p-3 rounded-xl bg-rose-50 border border-rose-300 text-xs font-bold text-rose-700" hidden={isOwnTeam(bookingToConfirmEdit)}>
+              Careful: this is not your team ({teamNameOf(bookingToConfirmEdit)}). This will be sent as a request to that team's admin and the full admin.
+            </div>
             <div className="grid grid-cols-2 gap-2.5 pt-1">
               <button
                 type="button"
