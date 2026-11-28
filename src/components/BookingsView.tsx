@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { fetchOrderStockOwedFromDb } from '../services/supabaseService';
 import {
   BatchStageAssignment,
   Booking,
@@ -184,6 +185,14 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
     d.setDate(d.getDate() + 5);
     return d.toISOString().slice(0, 10);
   });
+  // What each paid order still waits for (stock was short at deposit time): "bookingId|variantId" -> units.
+  const [owedMap, setOwedMap] = useState<Record<string, number>>({});
+  const refreshOwed = () => {
+    fetchOrderStockOwedFromDb().then(setOwedMap).catch(() => {});
+  };
+  useEffect(() => {
+    refreshOwed();
+  }, [bookings.length, batches.length]);
   const [shortageBatchDraft, setShortageBatchDraft] = useState<{
     booking: Booking;
     targetDate: string;
@@ -217,7 +226,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       const prod = products.find((p) => p.id === it.productId);
       const variant = prod?.variants.find((v) => v.id === it.variantId);
       const liveAvail = variant ? variant.quantity : it.availableStock ?? 0;
-      const deficit = booking.inventoryDeducted ? 0 : Math.max(0, (it.quantity || 0) - liveAvail);
+      const deficit = booking.inventoryDeducted ? owedMap[`${booking.id}|${it.variantId}`] || 0 : Math.max(0, (it.quantity || 0) - liveAvail);
       if (deficit <= 0) return;
 
       const wf = workflows.find((w) => w.productId === it.productId);
@@ -279,7 +288,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       const prod = products.find((p) => p.id === it.productId);
       const variant = prod?.variants.find((v) => v.id === it.variantId);
       const liveAvail = variant ? variant.quantity : it.availableStock ?? 0;
-      const deficit = b.inventoryDeducted ? 0 : Math.max(0, (it.quantity || 0) - liveAvail);
+      const deficit = b.inventoryDeducted ? owedMap[`${b.id}|${it.variantId}`] || 0 : Math.max(0, (it.quantity || 0) - liveAvail);
       if (deficit > 0) {
         shortageItems.push({
           productName: it.productName,
@@ -1578,7 +1587,7 @@ This is our official Scout Store number. Through this chat, you can:
                               key={i}
                               className="px-2 py-0.5 rounded-md bg-white border border-rose-200 text-[11px] font-semibold font-mono tabular-nums"
                             >
-                              {si.productName} ({si.size}/{si.colorName}): -{si.deficit} pcs
+                              {si.productName} ({si.size}/{si.colorName}): need {si.deficit} more pcs
                             </span>
                           ))}
                         </div>
@@ -2617,7 +2626,7 @@ This is our official Scout Store number. Through this chat, you can:
                             {item.size} / {item.colorName}
                           </span>
                           <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-mono font-bold text-[11px]">
-                            Min Shortage: {item.minShortage} pcs
+                            Still needed: {item.minShortage} pcs (cannot order less)
                           </span>
                         </div>
                       </div>
@@ -2629,7 +2638,7 @@ This is our official Scout Store number. Through this chat, you can:
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number"
-                            min={1}
+                            min={item.minShortage || 1}
                             value={item.orderQty || ''}
                             onChange={(e) => {
                               const nextVal = Math.max(0, Number(e.target.value) || 0);
@@ -2810,7 +2819,7 @@ This is our official Scout Store number. Through this chat, you can:
               </button>
               <button
                 type="button"
-                disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0)}
+                disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0 || it.orderQty < it.minShortage)}
                 onClick={() => {
                   if (!shortageBatchDraft || !onSendShortageToPurchases) return;
                   const configs: ShortageBatchConfig[] = shortageBatchDraft.items.map((it) => ({
@@ -2833,7 +2842,7 @@ This is our official Scout Store number. Through this chat, you can:
               {onOpenSourcing && (
                 <button
                   type="button"
-                  disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0)}
+                  disabled={shortageBatchDraft.items.some((it) => !it.orderQty || it.orderQty <= 0 || it.orderQty < it.minShortage)}
                   onClick={() => {
                     if (!shortageBatchDraft || !onSendShortageToPurchases) return;
                     const configs: ShortageBatchConfig[] = shortageBatchDraft.items.map((it) => ({

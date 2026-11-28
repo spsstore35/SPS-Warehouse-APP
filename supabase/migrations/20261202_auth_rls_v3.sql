@@ -1039,6 +1039,29 @@ begin
 end $$;
 revoke all on function public.receive_batch_stock(text, text, integer) from public, anon;
 grant execute on function public.receive_batch_stock(text, text, integer) to authenticated;
+
+-- Staff can SEE what orders still wait for (read-only), so the app can show "small shirt: need 20".
+drop policy if exists owed_select on public.order_stock_owed;
+create policy owed_select on public.order_stock_owed for select to authenticated
+  using (public.app_member_of_any(array['troops','budgeting','inventory','purchases']));
+grant select on public.order_stock_owed to authenticated;
+
+-- A purchase batch linked to an order may never order LESS than the order still needs.
+create or replace function public.guard_batch_min_quantity() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_owed integer;
+begin
+  if auth.uid() is null or new.linked_booking_id is null or new.variant_id is null then return new; end if;
+  select owed into v_owed from public.order_stock_owed where booking_id = new.linked_booking_id and variant_id = new.variant_id;
+  if v_owed is not null and new.quantity < v_owed then
+    raise exception 'This item is still needed by the order: the quantity must be at least % (you entered %).', v_owed, new.quantity
+      using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_batch_min_quantity on public.production_batches;
+create trigger guard_batch_min_quantity before insert or update of quantity on public.production_batches
+  for each row execute function public.guard_batch_min_quantity();
 drop trigger if exists guard_booking_update on public.bookings;
 create trigger guard_booking_update before update on public.bookings
   for each row execute function public.guard_booking_update();

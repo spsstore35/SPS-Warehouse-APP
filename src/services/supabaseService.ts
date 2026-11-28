@@ -696,6 +696,17 @@ export async function recordOrderShortfallInDb(bookingId: string, variantId: str
   if (error) throw error;
 }
 
+/** Units each order still waits for, keyed "bookingId|variantId". */
+export async function fetchOrderStockOwedFromDb(): Promise<Record<string, number>> {
+  const { data, error } = await supabase.from('order_stock_owed').select('booking_id, variant_id, owed');
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  (data || []).forEach((r: any) => {
+    out[`${r.booking_id}|${r.variant_id}`] = Number(r.owed);
+  });
+  return out;
+}
+
 /** Before receiving a batch: how many units go straight to the waiting order. */
 export async function previewBatchReceiveInDb(
   batchId: string,
