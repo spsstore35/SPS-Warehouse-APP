@@ -4435,16 +4435,6 @@ export default function App() {
         {/* VIEW 1: CATALOG & INVENTORY */}
         {effectiveView === 'inventory' && (
           <div className="space-y-6">
-            {!isLeader && (
-              <ShortageNeedsPanel
-                batches={productionBatches}
-                lowNotes={lowStockNotes}
-                onStartLow={(n) => setLowToStart(n)}
-                notes={shortageNotes}
-                canAct={canUserStartShortagePurchase(currentUser, users)}
-                onStart={(n) => setShortageToStart(n)}
-              />
-            )}
             {/* KPI Metric Strip in Clean Light Mode (hidden for Scout Leader) */}
             {!isLeader && (
             <div className={`grid grid-cols-2 ${showQueueKpiCard ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
