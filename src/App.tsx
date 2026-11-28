@@ -5267,6 +5267,7 @@ export default function App() {
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <div className="space-y-4">
           <ShortageNeedsPanel
+            collapsible
             batches={productionBatches}
             lowNotes={lowStockNotes}
             onStartLow={(n) => setLowToStart(n)}

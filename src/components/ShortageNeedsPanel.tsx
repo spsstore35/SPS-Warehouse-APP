@@ -1,5 +1,5 @@
-import React from 'react';
-import { AlertTriangle, ShoppingCart, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertTriangle, ShoppingCart, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import type { OrderShortageNote } from '../services/supabaseService';
 import type { ProductionBatch } from '../types/inventory';
 import DeliveryEstimateLine from './DeliveryEstimateLine';
@@ -22,19 +22,45 @@ interface Props {
   notes: OrderShortageNote[];
   canAct: boolean;
   onStart: (note: OrderShortageNote) => void;
+  /** Big red banner that opens/closes the list (Sourcing page). */
+  collapsible?: boolean;
 }
 
-export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = [], onStartLow, batches = [] }: Props) {
+export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = [], onStartLow, batches = [], collapsible = false }: Props) {
+  const [openList, setOpenList] = useState(false);
   if (notes.length === 0 && lowNotes.length === 0) return null;
+  const orderCount = new Set(notes.filter((n) => !n.hasBatch).map((n) => n.bookingId)).size;
   const open = [...notes.filter((n) => !n.hasBatch), ...lowNotes.filter((n) => !n.hasBatch)];
   return (
-    <div className="rounded-2xl border border-rose-300 bg-rose-50 p-3.5 space-y-2.5">
-      <div className="flex items-center gap-2 font-black text-rose-950 text-sm">
-        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-        <span>Needs action: {open.length} item(s) need purchase / production</span>
-      </div>
-      <div className="space-y-2">
-        {notes.map((n) => (
+    <div className={`rounded-2xl border ${collapsible ? 'border-rose-700 bg-rose-100' : 'border-rose-300 bg-rose-50'} p-3.5 space-y-2.5`}>
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setOpenList((v) => !v)}
+          className="w-full flex items-center justify-between gap-2 px-3 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-sm text-left"
+        >
+          <span className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 shrink-0" />
+            {orderCount > 0
+              ? `A batch is needed: ${orderCount} order(s) are short on stock`
+              : `Needs action: ${open.length} item(s) need purchase / production`}
+          </span>
+          {openList ? <ChevronUp className="w-5 h-5 shrink-0" /> : <ChevronDown className="w-5 h-5 shrink-0" />}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 font-black text-rose-950 text-sm">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span>Needs action: {open.length} item(s) need purchase / production</span>
+        </div>
+      )}
+      <div className="space-y-2" style={collapsible && !openList ? { display: 'none' } : undefined}>
+        {[...notes].sort((a, b) => String(a.bookingNumber).localeCompare(String(b.bookingNumber))).map((n, i, arr) => (
+          <React.Fragment key={`${n.bookingId}|${n.variantId}`}>
+          {collapsible && (i === 0 || arr[i - 1].bookingId !== n.bookingId) && (
+            <div className="text-[11px] font-black text-rose-900 pt-1">
+              Order #{n.bookingNumber}{n.clientName ? ` (${n.clientName})` : ''}: {arr.filter((x) => x.bookingId === n.bookingId).length} item(s) short
+            </div>
+          )}
           <div
             key={`${n.bookingId}|${n.variantId}`}
             className="p-2.5 rounded-xl bg-white border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
@@ -63,6 +89,7 @@ export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = 
               <span className="shrink-0 text-[11px] font-bold text-slate-500">View only</span>
             )}
           </div>
+          </React.Fragment>
         ))}
         {lowNotes.map((n) => (
           <div
