@@ -194,7 +194,7 @@ grant execute on function public.admin_set_user_teams(uuid, text[], text[]), pub
 -- two things, with checks, and writes the audit row. Delivery/handover does not change stock.
 create or replace function public.apply_stock_change(p_variant_id text, p_delta integer, p_kind text, p_ref text)
 returns integer language plpgsql security definer set search_path = public as $$
-declare v_new integer; v_ok boolean := false; v_allowed integer;
+declare v_new integer; v_ok boolean := false; v_allowed integer; v_cur integer; v_adj integer; v_left integer; v_give integer; r record;
 begin
   if not public.app_is_staff_or_above() then raise exception 'Not allowed.' using errcode = '42501'; end if;
   if p_delta is null or p_delta = 0 then raise exception 'Nothing to change.'; end if;
@@ -227,8 +227,50 @@ begin
     v_ok := true;
   end if;
   if not v_ok then raise exception 'Unknown stock change type.'; end if;
+  v_adj := p_delta;
+  if p_kind = 'inventory_adjust' then
+    select quantity into v_cur from public.product_variants where id = p_variant_id for update;
+    if v_cur is null then raise exception 'Unknown item.'; end if;
+    if p_delta > 0 then
+      -- Pieces found by hand go FIRST to orders of this size that still wait (earliest deposit first).
+      v_left := p_delta;
+      for r in select o.booking_id, o.owed from public.order_stock_owed o
+                 join public.bookings b on b.id = o.booking_id
+                where o.variant_id = p_variant_id and b.status not in ('delivered','done')
+                order by coalesce(b.deposit_paid_at, b.created_at), o.booking_id
+                for update of o loop
+        exit when v_left <= 0;
+        v_give := least(r.owed, v_left);
+        if v_give >= r.owed then
+          delete from public.order_stock_owed where booking_id = r.booking_id and variant_id = p_variant_id;
+        else
+          update public.order_stock_owed set owed = owed - v_give where booking_id = r.booking_id and variant_id = p_variant_id;
+        end if;
+        v_left := v_left - v_give;
+      end loop;
+      v_adj := v_left;
+    elsif v_cur + p_delta < 0 then
+      -- Less stock than even the free stock: the shortage lands on the LATEST paid orders that are not
+      -- delivered yet (their owed grows, the delivered lock comes back). Delivered orders are never touched.
+      v_left := -(v_cur + p_delta);
+      v_adj := -v_cur;
+      for r in select b.id as booking_id, sum(i.quantity)::integer as cap
+                 from public.bookings b join public.booking_items i on i.booking_id = b.id and i.variant_id = p_variant_id
+                where b.status = 'preparing' and b.inventory_deducted
+                group by b.id, b.deposit_paid_at, b.created_at
+                order by coalesce(b.deposit_paid_at, b.created_at) desc, b.id loop
+        exit when v_left <= 0;
+        v_give := least(r.cap - coalesce((select owed from public.order_stock_owed where booking_id = r.booking_id and variant_id = p_variant_id), 0), v_left);
+        if v_give > 0 then
+          insert into public.order_stock_owed(booking_id, variant_id, owed) values (r.booking_id, p_variant_id, v_give)
+          on conflict (booking_id, variant_id) do update set owed = public.order_stock_owed.owed + excluded.owed;
+          v_left := v_left - v_give;
+        end if;
+      end loop;
+    end if;
+  end if;
   perform set_config('app.stock_fn', 'on', true);
-  update public.product_variants set quantity = greatest(0, quantity + p_delta), updated_at = now()
+  update public.product_variants set quantity = greatest(0, quantity + v_adj), updated_at = now()
    where id = p_variant_id returning quantity into v_new;
   perform set_config('app.stock_fn', 'off', true);
   if v_new is null then raise exception 'Unknown item.'; end if;

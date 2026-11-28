@@ -1507,6 +1507,24 @@ export default function App() {
     );
   };
 
+  // Manual stock change (count correction): done by the database so waiting orders are served first
+  // (more stock) or the shortage grows on the latest paid orders (less than the free stock).
+  const syncManualStockChange = (productId: string, variantId: string, delta: number) => {
+    if (!delta) return;
+    applyStockChangeInDb(variantId, delta, 'inventory_adjust', variantId)
+      .then((newQty) => {
+        setProducts((prev) =>
+          prev.map((p) => {
+            if (p.id !== productId) return p;
+            const vs = p.variants.map((v) => (v.id === variantId ? { ...v, quantity: newQty } : v));
+            return { ...p, variants: vs, totalQuantity: vs.reduce((t, v) => t + v.quantity, 0) };
+          })
+        );
+        setTimeout(refreshShortageNotes, 600);
+      })
+      .catch((err) => showToast(`Stock change was not saved: ${err?.message || 'sync failed'}`));
+  };
+
   // Admin directly adjusts stock without approval step (Persisted to Supabase)
   const handleAdminDirectAdjust = (data: {
     productId: string;
@@ -1547,9 +1565,7 @@ export default function App() {
     setProducts(nextProducts);
 
     // Persist variant update to Supabase
-    updateVariantQuantityInDb(data.variantId, data.newQuantity).catch((err) => {
-      console.warn('Supabase variant update error:', err.message);
-    });
+    syncManualStockChange(data.productId, data.variantId, data.newQuantity - oldQty);
 
     // Audit log
     const delta = data.newQuantity - oldQty;
@@ -1640,9 +1656,11 @@ export default function App() {
     updateAdjustmentRequestInDb(requestId, 'approved', currentUser || undefined, adminNote).catch((err) => {
       console.warn('Supabase approval error:', err.message);
     });
-    updateVariantQuantityInDb(targetReq.variantId, targetReq.requestedQuantity).catch((err) => {
-      console.warn('Supabase variant quantity update error:', err.message);
-    });
+    syncManualStockChange(
+      targetReq.productId,
+      targetReq.variantId,
+      targetReq.requestedQuantity - (products.find((p) => p.id === targetReq.productId)?.variants.find((v) => v.id === targetReq.variantId)?.quantity ?? targetReq.currentQuantity)
+    );
 
     // 4. Record Audit Log
     const matchedProd = products.find((p) => p.id === targetReq.productId);
