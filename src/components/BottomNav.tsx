@@ -26,6 +26,8 @@ interface BottomNavProps {
   pendingStockCount?: number;
   pendingAccountsCount?: number;
   pendingAuditNotificationsCount?: number;
+  pendingPublicBookingReqCount?: number;
+  pendingClientBookingReqCount?: number;
   pendingShortageCount?: number; // shortage requests waiting for Purchases (0 unless the user may start them)
   approvalsTab?: 'stock' | 'staff';
   users?: User[];
@@ -43,6 +45,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   pendingAccountsCount = 0,
   pendingAuditNotificationsCount = 0,
   pendingShortageCount = 0,
+  pendingPublicBookingReqCount = 0,
+  pendingClientBookingReqCount = 0,
   approvalsTab = 'stock',
   users = [],
   onOpenAddProduct,
@@ -202,12 +206,15 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                 {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : 'U'}
               </div>
               {((canAccountApprovals && pendingAccountsCount > 0) ||
+                pendingPublicBookingReqCount + pendingClientBookingReqCount > 0 ||
                 (canAudit && pendingAuditNotificationsCount > 0) ||
                 (canSourcing && pendingShortageCount > 0)) && (
                 <span className="absolute -top-1 -right-1.5 w-3.5 h-3.5 flex items-center justify-center bg-rose-600 text-white font-black text-[8px] rounded-full">
                   {(canAccountApprovals ? pendingAccountsCount : 0) +
                     (canAudit ? pendingAuditNotificationsCount : 0) +
-                    (canSourcing ? pendingShortageCount : 0)}
+                    (canSourcing ? pendingShortageCount : 0) +
+                    pendingPublicBookingReqCount +
+                    pendingClientBookingReqCount}
                 </span>
               )}
             </div>
@@ -334,6 +341,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                         <CalendarCheck className="w-4 h-4 text-blue-600" />
                         <span>Client Bookings &amp; Quotations</span>
                       </span>
+                      {pendingClientBookingReqCount > 0 && (
+                        <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingClientBookingReqCount}</span>
+                      )}
                     </button>
                   )}
 
@@ -350,6 +360,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                         <Link2 className="w-4 h-4 text-indigo-600" />
                         <span>Public Booking (order link)</span>
                       </span>
+                      {pendingPublicBookingReqCount > 0 && (
+                        <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingPublicBookingReqCount}</span>
+                      )}
                     </button>
                   )}
 

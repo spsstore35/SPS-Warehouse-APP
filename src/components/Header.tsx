@@ -26,6 +26,8 @@ interface HeaderProps {
   pendingAccountsCount?: number;
   pendingBookingsCount?: number;
   pendingAuditNotificationsCount?: number;
+  pendingPublicBookingReqCount?: number;
+  pendingClientBookingReqCount?: number;
   pendingShortageCount?: number;
   approvalsTab?: 'stock' | 'staff';
   users?: User[];
@@ -42,6 +44,8 @@ export const Header: React.FC<HeaderProps> = ({
   pendingBookingsCount = 0,
   pendingAuditNotificationsCount = 0,
   pendingShortageCount = 0,
+  pendingPublicBookingReqCount = 0,
+  pendingClientBookingReqCount = 0,
   approvalsTab = 'stock',
   users = [],
 }) => {
@@ -187,6 +191,9 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <CalendarCheck className="w-4 h-4 text-blue-600" />
                   <span>Client Bookings</span>
+                  {pendingClientBookingReqCount > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingClientBookingReqCount}</span>
+                  )}
                   {pendingBookingsCount > 0 && (
                     <span className="inline-flex items-center justify-center px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[11px] rounded-full min-w-[18px]">
                       {pendingBookingsCount}
@@ -205,6 +212,9 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Link2 className="w-4 h-4 text-indigo-600" />
                   <span>Public Booking</span>
+                  {pendingPublicBookingReqCount > 0 && (
+                    <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingPublicBookingReqCount}</span>
+                  )}
                 </button>
               )}
 
@@ -508,6 +518,9 @@ export const Header: React.FC<HeaderProps> = ({
                           <CalendarCheck className="w-3.5 h-3.5 text-blue-600" />
                           <span>Client Bookings &amp; Quotations</span>
                         </span>
+                        {pendingClientBookingReqCount > 0 && (
+                          <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingClientBookingReqCount}</span>
+                        )}
                         {pendingBookingsCount > 0 && (
                           <span className="px-1.5 py-0.2 bg-blue-600 text-white font-bold text-[10px] rounded-full">
                             {pendingBookingsCount}
@@ -529,6 +542,9 @@ export const Header: React.FC<HeaderProps> = ({
                           <Link2 className="w-3.5 h-3.5 text-indigo-600" />
                           <span>Public Booking</span>
                         </span>
+                        {pendingPublicBookingReqCount > 0 && (
+                          <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-rose-600 text-white font-black text-[10px] rounded-full animate-pulse">{pendingPublicBookingReqCount}</span>
+                        )}
                       </button>
                     )}
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Booking, Category, Product, TeamChangeRequest } from '../types/inventory';
+import { TeamRequestsPanel } from './TeamRequestsPanel';
+import { Booking, Category, Product, TeamChangeRequest, User } from '../types/inventory';
 import { compressImage } from '../utils/imageCompressor';
 import { supabase } from '../services/supabaseClient';
 import { Link2, Copy, Check, FileText, ExternalLink, Download } from 'lucide-react';
@@ -13,6 +14,11 @@ interface Props {
   onOpenOrder: (bookingId: string) => void;
   onShowToast: (msg: string) => void;
   canManage?: boolean;
+  currentUser?: User | null;
+  users?: User[];
+  teamRequests?: TeamChangeRequest[];
+  onApproveTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
+  onRejectTeamRequest?: (req: TeamChangeRequest, adminNote?: string) => void;
   onSubmitTeamRequest?: (draft: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>) => void;
 }
 
@@ -25,7 +31,7 @@ interface SaleItem {
 
 const money = (n: number) => `${Math.round(n * 100) / 100} EGP`;
 
-export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast, canManage = false, onSubmitTeamRequest }) => {
+export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast, canManage = false, onSubmitTeamRequest, currentUser, users, teamRequests = [], onApproveTeamRequest, onRejectTeamRequest }) => {
   const [reqKind, setReqKind] = useState('open');
   const [reqProduct, setReqProduct] = useState('');
   const [reqPct, setReqPct] = useState(100);
@@ -142,6 +148,17 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
 
   return (
     <div className="max-w-5xl mx-auto p-3 sm:p-5 space-y-5">
+      {currentUser && onApproveTeamRequest && onRejectTeamRequest && (
+        <TeamRequestsPanel
+          currentUser={currentUser}
+          users={users}
+          teamScopes={['troops']}
+          requests={teamRequests.filter((r) => r.entityType.startsWith('public_sale_') || Boolean(r.payload?.fromPublic))}
+          onApproveRequest={onApproveTeamRequest}
+          onRejectRequest={onRejectTeamRequest}
+          title="Public Booking requests"
+        />
+      )}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-2 font-bold text-slate-900">
           <Link2 className="w-5 h-5 text-indigo-600" /> Public order link
@@ -252,7 +269,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
                         targetId: b.id,
                         title: `Confirm payment for Order #${b.bookingNumber}`,
                         summary: `Public Booking order · Client: ${b.clientName} · Total: ${money(b.total)}`,
-                        payload: { bookingId: b.id, nextStatus: 'preparing' },
+                        payload: { bookingId: b.id, nextStatus: 'preparing', fromPublic: true },
                       });
                     }}
                     className="text-[11px] font-bold px-2.5 py-2 rounded-lg border border-amber-400 text-amber-800 bg-amber-50"

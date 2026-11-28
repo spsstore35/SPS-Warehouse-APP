@@ -4614,6 +4614,22 @@ export default function App() {
       Boolean(b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending')
   ).length;
 
+  // Staff requests waiting for THIS admin (team admin of the scope, or full admin).
+  const myPendingTeamRequests = teamChangeRequests.filter((r) => {
+    if (r.status !== 'pending' || !currentUser) return false;
+    if (!isFullAccessAdmin(currentUser, users) && !canUserManageTeamScope(currentUser, r.teamScope, users)) return false;
+    if (r.entityType.startsWith('booking_') && r.targetId) {
+      const bk = bookings.find((b) => b.id === r.targetId);
+      if (bk && !isBookingInMySubTeam(currentUser, bk)) return false;
+    }
+    return true;
+  });
+  const isPublicReq = (r: TeamChangeRequest) => r.entityType.startsWith('public_sale_') || Boolean(r.payload?.fromPublic);
+  const pendingPublicBookingReqCount = myPendingTeamRequests.filter(isPublicReq).length;
+  const pendingClientBookingReqCount = myPendingTeamRequests.filter(
+    (r) => r.entityType.startsWith('booking_') && !isPublicReq(r)
+  ).length;
+
   // Order shortages still waiting for Purchases to start a batch; only shown to people who may start them.
   const pendingShortageRequestsCount = canUserStartShortagePurchase(currentUser, users)
     ? shortageNotes.filter((n) => !n.hasBatch).length
@@ -4772,6 +4788,8 @@ export default function App() {
         pendingBookingsCount={bookings.filter((b) => b.status === 'pending' || Boolean(b.pendingDepositPercentage) || Boolean(b.paymentVerificationRequested && !b.depositPaid)).length}
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         pendingShortageCount={pendingShortageRequestsCount}
+        pendingPublicBookingReqCount={pendingPublicBookingReqCount}
+        pendingClientBookingReqCount={pendingClientBookingReqCount}
         approvalsTab={approvalsTab}
       />
 
@@ -5757,6 +5775,11 @@ export default function App() {
             onShowToast={showToast}
             canManage={canUserManageOrders(currentUser, users)}
             onSubmitTeamRequest={handleSubmitTeamRequest}
+            currentUser={currentUser}
+            users={users}
+            teamRequests={teamChangeRequests}
+            onApproveTeamRequest={handleApproveTeamRequest}
+            onRejectTeamRequest={handleRejectTeamRequest}
           />
         )}
 
@@ -5833,6 +5856,8 @@ export default function App() {
         pendingAccountsCount={pendingUsersCount}
         pendingAuditNotificationsCount={pendingStaffBookingRequestsCount}
         pendingShortageCount={pendingShortageRequestsCount}
+        pendingPublicBookingReqCount={pendingPublicBookingReqCount}
+        pendingClientBookingReqCount={pendingClientBookingReqCount}
         approvalsTab={approvalsTab}
         onOpenAddProduct={() => {
           if (!canUserAccessView(currentUser, 'add-product', users)) return;
