@@ -130,7 +130,7 @@ export function ShortageCard(props: Omit<Props, 'collapsible'>) {
   const { notes, lowNotes = [] } = props;
   if (notes.length === 0 && lowNotes.length === 0) return null;
   const orders = new Set(notes.map((n) => n.bookingId)).size;
-  const items = new Set([...notes.map((n) => n.variantId), ...lowNotes.map((n) => n.variantId)]).size;
+  const items = notes.length + lowNotes.length;
   return (
     <>
       <button
@@ -141,9 +141,12 @@ export function ShortageCard(props: Omit<Props, 'collapsible'>) {
         <div className="flex items-center gap-2 text-rose-700 font-black text-sm">
           <AlertTriangle className="w-5 h-5 shrink-0" /> Batch needed
         </div>
-        <div className="text-xs font-semibold text-rose-950">
-          {orders > 0 ? `${orders} order(s) short on stock, ` : ''}
-          {items} item(s) to make or buy. {open ? 'Tap to close.' : 'Tap to see what.'}
+        <div>
+          <div className="text-2xl font-black text-rose-900">{items} item(s) to make</div>
+          <div className="text-xs font-semibold text-rose-950">
+            {orders > 0 ? `from ${orders} order(s). ` : ''}
+            {open ? 'Tap to close.' : 'Tap to see which.'}
+          </div>
         </div>
       </button>
       {open && (
