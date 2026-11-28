@@ -20,6 +20,13 @@ async function call(body: unknown): Promise<any> {
   try { data = await res.json(); } catch (_) { /* ignore */ }
   return { ok: res.ok, data };
 }
+const firstImage = (v: string | null): string | null => {
+  if (!v) return null;
+  if (v.trim().startsWith('[')) {
+    try { const a = JSON.parse(v); return typeof a[0] === 'string' ? a[0] : null; } catch (_) { return null; }
+  }
+  return v;
+};
 const money = (n: number) => `${Math.round(n * 100) / 100} EGP`;
 const vLabel = (v: Variant) => [v.size && v.size !== 'One Size' ? v.size : '', v.color && v.color !== 'Standard' ? v.color : ''].filter(Boolean).join(' · ') || 'Standard';
 
@@ -45,7 +52,7 @@ export const PublicOrderPage: React.FC = () => {
     call({ action: 'list' }).then(({ ok, data }) => {
       if (!ok) return setLoadErr(true);
       setOpen(Boolean(data.open));
-      setItems(data.items || []);
+      setItems((data.items || []).map((i: Item) => ({ ...i, image: firstImage(i.image) })));
     });
   }, []);
 

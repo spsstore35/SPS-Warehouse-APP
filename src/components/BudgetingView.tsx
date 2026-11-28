@@ -313,7 +313,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = (props) => {
                 </div>
                 <input
                   type={showPasscode ? 'text' : 'password'}
-                  inputMode="numeric"
+                  inputMode="text" autoComplete="off" autoCapitalize="none" autoCorrect="off"
                   autoFocus
                   value={passcodeInput}
                   onChange={(e) => {
@@ -345,7 +345,7 @@ export const BudgetingView: React.FC<BudgetingViewProps> = (props) => {
                   </div>
                   <input
                     type={showPasscode ? 'text' : 'password'}
-                    inputMode="numeric"
+                    inputMode="text" autoComplete="off" autoCapitalize="none" autoCorrect="off"
                     value={confirmPasscodeInput}
                     onChange={(e) => {
                       setConfirmPasscodeInput(e.target.value);
