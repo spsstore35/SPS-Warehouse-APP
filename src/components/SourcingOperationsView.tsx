@@ -243,10 +243,11 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
       if (vendorTagFilter !== 'all' && !v.tags.includes(vendorTagFilter)) return false;
       if (vendorProductFilter !== 'all' && !stageVendors.some((psv) => psv.vendorId === v.id && psv.productId === vendorProductFilter)) return false;
       if (!q) return true;
-      const hay = `${v.name} ${v.contactPerson || ''} ${v.location || ''} ${v.phone || ''} ${v.generalNotes || ''}`.toLowerCase();
+      const items = stageVendors.filter((psv) => psv.vendorId === v.id).map((psv) => products.find((pr) => pr.id === psv.productId)?.name || '').join(' ');
+      const hay = `${v.name} ${v.contactPerson || ''} ${v.location || ''} ${v.phone || ''} ${v.generalNotes || ''} ${items}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [vendors, vendorSearch, vendorTagFilter, vendorProductFilter, stageVendors]);
+  }, [vendors, vendorSearch, vendorTagFilter, vendorProductFilter, stageVendors, products]);
 
   const getLatestPriceForPsv = (psvId: string): VendorPriceEntry | undefined => {
     return priceHistory
