@@ -214,6 +214,8 @@ export function getAllowedViewsForUser(user?: User | null, allUsers?: User[]): S
     return allowed;
   }
 
+  // Anyone in a team can view the Public Booking orders; managing items needs the troops admin (database rule).
+  allowed.add('public-sales');
   teams.forEach((team) => {
     switch (team) {
       case 'purchases':

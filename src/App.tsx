@@ -5718,6 +5718,7 @@ export default function App() {
               handleNavigate('bookings');
             }}
             onShowToast={showToast}
+            canManage={canUserManageOrders(currentUser, users)}
           />
         )}
 

@@ -12,6 +12,7 @@ interface Props {
   onOpenInvoice: (booking: Booking) => void;
   onOpenOrder: (bookingId: string) => void;
   onShowToast: (msg: string) => void;
+  canManage?: boolean;
 }
 
 interface SaleItem {
@@ -23,7 +24,7 @@ interface SaleItem {
 
 const money = (n: number) => `${Math.round(n * 100) / 100} EGP`;
 
-export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast }) => {
+export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast, canManage = false }) => {
   const [items, setItems] = useState<Record<string, SaleItem>>({});
   const [ordersOpen, setOrdersOpen] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -156,13 +157,17 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
             <ExternalLink className="w-3.5 h-3.5" /> Preview
           </a>
         </div>
+        {canManage ? (
         <label className="flex items-center gap-2 text-sm font-semibold">
           <input type="checkbox" checked={ordersOpen} onChange={(e) => saveOpen(e.target.checked)} />
           Orders are open (untick to close the whole page at once)
         </label>
+        ) : (
+          <div className="text-xs text-slate-500">View only. Only admins can open/close items or the whole page.</div>
+        )}
         <p className="text-xs text-slate-500">
           Customers pay by Instapay and send the screenshot to +201215556301. Their order stays &quot;Awaiting payment&quot; and nothing is deducted
-          until you tap Paid.
+          until an admin confirms payment.
         </p>
       </div>
 
@@ -241,6 +246,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
         </div>
       </div>
 
+      {canManage && (
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
         <div className="font-bold text-slate-900 mb-1">Items on the public page</div>
         <p className="text-xs text-slate-500 mb-2">Tick an item to open it for customers. Choose how much of the price they must pay first.</p>
@@ -291,6 +297,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 };

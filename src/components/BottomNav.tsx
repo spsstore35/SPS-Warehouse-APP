@@ -337,6 +337,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     </button>
                   )}
 
+                  {canUserAccessView(currentUser, 'public-sales', users) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountSheet(false);
+                        onNavigate('public-sales');
+                      }}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-200 text-indigo-950 font-bold text-xs hover:bg-indigo-100 transition-colors"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Link2 className="w-4 h-4 text-indigo-600" />
+                        <span>Public Booking (order link)</span>
+                      </span>
+                    </button>
+                  )}
+
                   {canCalendar && (
                     <button
                       type="button"
@@ -436,21 +452,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                     </button>
                   )}
 
-                  {canUserAccessView(currentUser, 'public-sales', users) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAccountSheet(false);
-                        onNavigate('public-sales');
-                      }}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-200 text-indigo-950 font-bold text-xs hover:bg-indigo-100 transition-colors"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <Link2 className="w-4 h-4 text-indigo-600" />
-                        <span>Public Sales (order link)</span>
-                      </span>
-                    </button>
-                  )}
 
                   {canStockApprovals && (
                     <button
