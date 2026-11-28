@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Captcha, captchaEnabled } from './Captcha';
 
-const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://tvlfxyfbyhotqgigurec.supabase.co';
-const ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
-const ENDPOINT = `${SUPABASE_URL}/functions/v1/public-order`;
+import { SUPABASE_CONFIG, SUPABASE_PUBLISHABLE_KEY } from '../services/supabaseClient';
+const ANON_KEY = SUPABASE_PUBLISHABLE_KEY;
+const ENDPOINT = `${SUPABASE_CONFIG.url}/functions/v1/public-order`;
 const WHATSAPP = '+201215556301';
 
 interface Variant { id: string; size: string; color: string; hex: string }

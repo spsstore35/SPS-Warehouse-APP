@@ -13,7 +13,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.4';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const TURNSTILE_SECRET = Deno.env.get('TURNSTILE_SECRET_KEY') || '';
-const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') || 'https://sps-warehouse.vercel.app';
+const ALLOWED_ORIGIN = 'https://sps-warehouse.vercel.app';
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
 const cors = {
