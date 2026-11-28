@@ -107,7 +107,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-2 md:gap-4 h-14 md:h-16">
           {/* Left spacer on mobile to keep centered brand perfectly balanced with right avatar */}
-          <div className="w-9 sm:w-10 md:hidden shrink-0" aria-hidden="true" />
+          
 
           {/* Zone 1: Brand title & logo (centered on mobile, left on desktop) */}
           <div className="flex items-center justify-center md:justify-start gap-2 sm:gap-2.5 flex-1 md:flex-none shrink-0">
@@ -384,7 +384,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Zone 3: Interactive User Profile Avatar (always pinned right, never clipped) */}
-          <div className="flex items-center justify-end shrink-0">
+          <div className="hidden md:flex items-center justify-end shrink-0">
             {/* Clickable User Avatar Initial with Popover Menu */}
             <div className="relative" ref={profileMenuRef}>
               <button
