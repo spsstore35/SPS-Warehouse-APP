@@ -6,6 +6,9 @@ interface Props {
   note: OrderShortageNote;
   /** Several orders for the same item: one batch covers all of them. */
   groupOrders?: OrderShortageNote[];
+  /** Current warehouse stock and the item's minimum stock, for the advisory hint. */
+  currentStock?: number;
+  minStock?: number;
   mode?: 'order' | 'low';
   suggestedQty?: number;
   leftInStock?: number;
@@ -16,7 +19,7 @@ interface Props {
   onConfirm: (quantity: number, targetDate: string, vendorId?: string) => void;
 }
 
-export default function ShortageStartModal({ groupOrders, note, mode = 'order', suggestedQty, leftInStock, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
+export default function ShortageStartModal({ currentStock = 0, minStock, groupOrders, note, mode = 'order', suggestedQty, leftInStock, vendors, canManageVendors, onAddVendor, onCancel, onConfirm }: Props) {
   const [vendorId, setVendorId] = useState<string>('');
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
@@ -44,6 +47,9 @@ export default function ShortageStartModal({ groupOrders, note, mode = 'order', 
   const [date, setDate] = useState<string>(new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
   const minQty = mode === 'low' ? 1 : note.owed;
   const tooLow = !qty || qty < minQty;
+  const reservedForOrders = mode === 'low' ? 0 : note.owed;
+  const stockAfter = Math.max(0, currentStock + (qty || 0) - reservedForOrders);
+  const suggested = mode === 'low' ? undefined : minStock && minStock > 0 ? note.owed + Math.max(0, minStock - currentStock) : undefined;
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4">
       <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-4 shadow-2xl">
@@ -127,6 +133,17 @@ export default function ShortageStartModal({ groupOrders, note, mode = 'order', 
               </div>
             </div>
           )}
+        </div>
+        <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-[11px] text-slate-800 space-y-1">
+          {mode !== 'low' && <div>Needed: <span className="font-black font-mono">{note.owed}</span></div>}
+          {suggested !== undefined && suggested > note.owed && (
+            <div>
+              Suggested: <span className="font-black font-mono">{suggested}</span> so you keep {suggested - note.owed} in stock (minimum is {minStock}).{' '}
+              <button type="button" onClick={() => setQty(suggested)} className="font-black text-sky-700 underline">Use suggested</button>
+            </div>
+          )}
+          <div>Stock after receiving: <span className="font-black font-mono">{stockAfter}</span>{minStock && minStock > 0 && stockAfter < minStock ? ` (below the minimum of ${minStock})` : ''}</div>
+          <div className="text-slate-500">This is only a hint. You can order any quantity from the minimum up.</div>
         </div>
         {tooLow && <div className="text-[11px] font-bold text-rose-700">Quantity must be at least {minQty}.</div>}
         <div className="grid grid-cols-2 gap-2.5">

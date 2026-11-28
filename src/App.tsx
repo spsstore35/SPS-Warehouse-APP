@@ -5122,6 +5122,8 @@ export default function App() {
 
         {shortageToStart && (
           <ShortageStartModal
+            currentStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageToStart.variantId)?.quantity ?? 0}
+            minStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageToStart.variantId)?.minThreshold}
             note={shortageToStart}
             vendors={vendors}
             canManageVendors={canUserManageVendors(currentUser, users)}
@@ -5164,6 +5166,8 @@ export default function App() {
         {shortageGroup && shortageGroup.length > 0 && (
           <ShortageStartModal
             note={{ ...shortageGroup[0], owed: shortageGroup.reduce((sum, x) => sum + x.owed, 0) }}
+            currentStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageGroup[0].variantId)?.quantity ?? 0}
+            minStock={products.flatMap((p) => p.variants).find((v) => v.id === shortageGroup[0].variantId)?.minThreshold}
             groupOrders={shortageGroup}
             vendors={vendors}
             canManageVendors={canUserManageVendors(currentUser, users)}
@@ -5203,6 +5207,8 @@ export default function App() {
         {lowToStart && (
           <ShortageStartModal
             mode="low"
+            currentStock={lowToStart.quantity}
+            minStock={lowToStart.minThreshold}
             leftInStock={lowToStart.quantity}
             suggestedQty={Math.max(1, lowToStart.minThreshold * 2 - lowToStart.quantity)}
             note={{
