@@ -238,7 +238,7 @@ async function handleSignup(body: any, ip: string) {
   // The role the person asked for is only a request.
   const { error: profErr } = await admin.from('profiles').insert({
     id,
-    email: email || null,
+    email: authEmail, // profiles.email is NOT NULL: same placeholder as the login record when no email given
     username: username || null,
     phone: phone || null,
     full_name: name,

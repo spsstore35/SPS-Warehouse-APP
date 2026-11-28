@@ -63,13 +63,14 @@ Deno.serve(async (req) => {
         if (data?.length) return json({ error: 'duplicate', message: `An account with this ${col} already exists.` }, 409);
       }
 
+      const authEmail = email || `${crypto.randomUUID()}@noemail.sps.local`;
       const { data: created, error: cErr } = await admin.auth.admin.createUser({
-        email: email || `${crypto.randomUUID()}@noemail.sps.local`, password, email_confirm: true, user_metadata: { full_name: name },
+        email: authEmail, password, email_confirm: true, user_metadata: { full_name: name },
       });
       const id = created?.user?.id;
       if (cErr || !id) return json({ error: 'create_failed', message: cErr?.message || 'Could not create the account.' }, 400);
       const { error: pErr } = await admin.from('profiles').insert({
-        id, email: email || null, username: username || null, phone: phone || null, full_name: name,
+        id, email: authEmail, username: username || null, phone: phone || null, full_name: name,
         role, status: 'active', requested_role: role,
         avatar_color: role === 'full_admin' ? '#b45309' : role === 'admin' ? '#d97706' : role === 'leader' ? '#059669' : '#0284c7',
         approved_at: new Date().toISOString(), approved_by_name: caller.full_name,
