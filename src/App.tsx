@@ -4427,6 +4427,43 @@ export default function App() {
           handleAdvanceBookingStatus(req.payload.bookingId, req.payload.nextStatus, true);
         }
         break;
+      case 'public_sale_item':
+        if (req.payload?.productId) {
+          const pid = String(req.payload.productId);
+          void (async () => {
+            const { data: cur } = await supabase
+              .from('public_sale_items')
+              .select('is_open,required_pct,size_chart_url')
+              .eq('product_id', pid)
+              .maybeSingle();
+            const next: any = {
+              product_id: pid,
+              is_open: cur?.is_open ?? false,
+              required_pct: cur?.required_pct ?? 100,
+              size_chart_url: cur?.size_chart_url ?? null,
+              updated_at: new Date().toISOString(),
+            };
+            if (typeof req.payload.isOpen === 'boolean') next.is_open = req.payload.isOpen;
+            if (typeof req.payload.requiredPct === 'number') next.required_pct = req.payload.requiredPct;
+            const { error } = await supabase.from('public_sale_items').upsert(next);
+            if (error) showToast('Could not apply item change: ' + error.message);
+          })();
+        }
+        break;
+      case 'public_sale_settings':
+        if (typeof req.payload?.ordersOpen === 'boolean') {
+          void supabase
+            .from('sale_settings')
+            .update({ orders_open: req.payload.ordersOpen })
+            .eq('id', 1)
+            .then(({ error }) => {
+              if (error) showToast('Could not apply page change: ' + error.message);
+            });
+        }
+        break;
+      case 'public_sale_other':
+        showToast('Approved. This one needs the change made by hand (see the request text).');
+        break;
       case 'booking_delete':
         if (req.payload?.bookingId || req.targetId) {
           handleDeleteBooking(req.payload?.bookingId || req.targetId || '', true);
@@ -5719,6 +5756,7 @@ export default function App() {
             }}
             onShowToast={showToast}
             canManage={canUserManageOrders(currentUser, users)}
+            onSubmitTeamRequest={handleSubmitTeamRequest}
           />
         )}
 

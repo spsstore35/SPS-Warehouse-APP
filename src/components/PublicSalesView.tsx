@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Booking, Category, Product } from '../types/inventory';
+import { Booking, Category, Product, TeamChangeRequest } from '../types/inventory';
 import { compressImage } from '../utils/imageCompressor';
 import { supabase } from '../services/supabaseClient';
 import { Link2, Copy, Check, FileText, ExternalLink, Download } from 'lucide-react';
@@ -13,6 +13,7 @@ interface Props {
   onOpenOrder: (bookingId: string) => void;
   onShowToast: (msg: string) => void;
   canManage?: boolean;
+  onSubmitTeamRequest?: (draft: Omit<TeamChangeRequest, 'id' | 'status' | 'requestedById' | 'requestedByName' | 'requestedAt'>) => void;
 }
 
 interface SaleItem {
@@ -24,7 +25,11 @@ interface SaleItem {
 
 const money = (n: number) => `${Math.round(n * 100) / 100} EGP`;
 
-export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast, canManage = false }) => {
+export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast, canManage = false, onSubmitTeamRequest }) => {
+  const [reqKind, setReqKind] = useState('open');
+  const [reqProduct, setReqProduct] = useState('');
+  const [reqPct, setReqPct] = useState(100);
+  const [reqNote, setReqNote] = useState('');
   const [items, setItems] = useState<Record<string, SaleItem>>({});
   const [ordersOpen, setOrdersOpen] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -163,7 +168,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
           Orders are open (untick to close the whole page at once)
         </label>
         ) : (
-          <div className="text-xs text-slate-500">View only. Only admins can open/close items or the whole page.</div>
+          <div className="text-xs text-slate-500">View only. Changes go through a request (below).</div>
         )}
         <p className="text-xs text-slate-500">
           Customers pay by Instapay and send the screenshot to +201215556301. Their order stays &quot;Awaiting payment&quot; and nothing is deducted
@@ -233,6 +238,26 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
               </button>
               <div className="text-right shrink-0">
                 <div className="font-black text-slate-900">{money(b.total)}</div>
+                {!canManage && !b.depositPaid && onSubmitTeamRequest && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSubmitTeamRequest({
+                        teamScope: 'troops',
+                        entityType: 'booking_status',
+                        actionType: 'update',
+                        targetId: b.id,
+                        title: `Confirm payment for Order #${b.bookingNumber}`,
+                        summary: `Public Booking order · Client: ${b.clientName} · Total: ${money(b.total)}`,
+                        payload: { bookingId: b.id, nextStatus: 'preparing' },
+                      });
+                    }}
+                    className="mt-1 text-[11px] font-bold px-2 py-1 rounded-lg border border-amber-400 text-amber-800 bg-amber-50"
+                  >
+                    Request Paid
+                  </button>
+                )}
                 <span
                   className={`inline-block mt-1 text-[11px] font-black px-2 py-0.5 rounded-full ${
                     b.depositPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
@@ -245,6 +270,79 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
           ))}
         </div>
       </div>
+
+      {!canManage && onSubmitTeamRequest && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+          <div className="font-bold text-slate-900">Request a change</div>
+          <p className="text-xs text-slate-500">Goes to the team admin or the full admin. Either one can approve it, and the change happens when they do.</p>
+          <select className="w-full border border-slate-300 rounded-lg text-sm px-2 py-2" value={reqKind} onChange={(e) => setReqKind(e.target.value)}>
+            <option value="open">Open an item for customers</option>
+            <option value="close">Close an item</option>
+            <option value="pct">Change an item's pay % (100/70/50)</option>
+            <option value="page_open">Open the whole page</option>
+            <option value="page_close">Close the whole page</option>
+            <option value="other">Other change (write it below)</option>
+          </select>
+          {['open', 'close', 'pct'].includes(reqKind) && (
+            <select className="w-full border border-slate-300 rounded-lg text-sm px-2 py-2" value={reqProduct} onChange={(e) => setReqProduct(e.target.value)}>
+              <option value="">Choose item…</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+          {reqKind === 'pct' && (
+            <select className="w-full border border-slate-300 rounded-lg text-sm px-2 py-2" value={reqPct} onChange={(e) => setReqPct(Number(e.target.value))}>
+              <option value={100}>Pay 100%</option>
+              <option value={70}>Pay 70%</option>
+              <option value={50}>Pay 50%</option>
+            </select>
+          )}
+          <input className="w-full border border-slate-300 rounded-lg text-sm px-2 py-2" placeholder="Note (optional, required for Other)" value={reqNote} onChange={(e) => setReqNote(e.target.value)} />
+          <button
+            type="button"
+            className="text-xs font-bold px-3 py-2 rounded-lg bg-slate-900 text-white"
+            onClick={() => {
+              const note = reqNote.trim();
+              const prod = products.find((p) => p.id === reqProduct);
+              const itemKind = ['open', 'close', 'pct'].includes(reqKind);
+              if (itemKind && !prod) return onShowToast('Choose an item first.');
+              if (reqKind === 'other' && !note) return onShowToast('Write the change you need.');
+              const base = { teamScope: 'troops' as const, actionType: 'update' as const };
+              if (itemKind && prod) {
+                const label = reqKind === 'open' ? 'Open' : reqKind === 'close' ? 'Close' : `Set pay ${reqPct}% for`;
+                onSubmitTeamRequest({
+                  ...base,
+                  entityType: 'public_sale_item',
+                  targetId: prod.id,
+                  title: `Public Booking: ${label} "${prod.name}"`,
+                  summary: note || 'Public Booking item change',
+                  payload: reqKind === 'pct' ? { productId: prod.id, requiredPct: reqPct } : { productId: prod.id, isOpen: reqKind === 'open' },
+                });
+              } else if (reqKind === 'page_open' || reqKind === 'page_close') {
+                onSubmitTeamRequest({
+                  ...base,
+                  entityType: 'public_sale_settings',
+                  title: `Public Booking: ${reqKind === 'page_open' ? 'Open' : 'Close'} the whole page`,
+                  summary: note || 'Public Booking page change',
+                  payload: { ordersOpen: reqKind === 'page_open' },
+                });
+              } else {
+                onSubmitTeamRequest({
+                  ...base,
+                  entityType: 'public_sale_other',
+                  title: 'Public Booking: change request',
+                  summary: note,
+                  payload: { note },
+                });
+              }
+              setReqNote('');
+            }}
+          >
+            Send request
+          </button>
+        </div>
+      )}
 
       {canManage && (
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
