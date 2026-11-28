@@ -189,6 +189,18 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
   });
   // What each paid order still waits for (stock was short at deposit time): "bookingId|variantId" -> units.
   const [owedMap, setOwedMap] = useState<Record<string, number>>({});
+  // Items of the open order whose stock is still missing (waiting on a purchase batch).
+  const deliveryBlockFor = (b: Booking | null | undefined): string[] => {
+    if (!b) return [];
+    return b.items
+      .map((it) => {
+        const owed = owedMap[`${b.id}|${it.variantId}`] || 0;
+        if (owed <= 0) return '';
+        const q = it.quantity || 0;
+        return `${it.productName} (${it.size}${it.colorName ? ` / ${it.colorName}` : ''}): need ${q}, have ${Math.max(0, q - owed)}, waiting on batch for ${owed}`;
+      })
+      .filter(Boolean);
+  };
   const refreshOwed = () => {
     fetchOrderStockOwedFromDb().then(setOwedMap).catch(() => {});
   };
@@ -440,6 +452,7 @@ This is our official Scout Store number. Through this chat, you can:
 
   // Active booking for details modal (keeps updated if status changes)
   const activeBooking = bookings.find((b) => b.id === selectedBookingId) || null;
+  const deliveryBlock = deliveryBlockFor(activeBooking);
   const activeDepositPct = activeBooking
     ? (activeBooking.depositPercentage ?? (activeBooking.depositRate ? Math.round(activeBooking.depositRate * 100) : 50))
     : 50;
@@ -1908,8 +1921,10 @@ This is our official Scout Store number. Through this chat, you can:
                 {allowEditBookings && activeBooking.status === 'preparing' && (
                   <button
                     type="button"
+                    disabled={deliveryBlock.length > 0}
+                    title={deliveryBlock.join(' | ')}
                     onClick={() => setPendingStatusConfirm({ booking: activeBooking, nextStatus: 'delivered' })}
-                    className="w-full p-3.5 sm:p-4 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-purple-600/20 transition-all"
+                    className="w-full p-3.5 sm:p-4 rounded-2xl bg-purple-600 hover:bg-purple-700 active:scale-[0.99] text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-md shadow-purple-600/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-purple-600"
                   >
                     <Package className="w-5 h-5" />
                     <span>
@@ -1920,6 +1935,14 @@ This is our official Scout Store number. Through this chat, you can:
                         : 'Request Move to Delivered (Admin Approval)'}
                     </span>
                   </button>
+                )}
+                {allowEditBookings && activeBooking.status === 'preparing' && deliveryBlock.length > 0 && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] font-bold text-rose-800 space-y-0.5">
+                    <div>Not enough stock to deliver yet:</div>
+                    {deliveryBlock.map((m) => (
+                      <div key={m}>{m}</div>
+                    ))}
+                  </div>
                 )}
 
                 {allowEditBookings && activeBooking.status === 'delivered' && (

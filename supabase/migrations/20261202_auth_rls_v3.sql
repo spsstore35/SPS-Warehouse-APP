@@ -1124,6 +1124,27 @@ drop trigger if exists guard_booking_update on public.bookings;
 create trigger guard_booking_update before update on public.bookings
   for each row execute function public.guard_booking_update();
 
+-- An order cannot be marked delivered (or completed) while stock was short at deposit time and the
+-- missing pieces have not been received yet (order_stock_owed still has rows for it). Stock was already
+-- deducted at the deposit (what existed) and the rest is "owed"; receiving the purchase batch clears it.
+create or replace function public.guard_booking_delivery() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_owed integer;
+begin
+  if auth.uid() is null then return new; end if;
+  if new.status in ('delivered','done') and new.status is distinct from old.status then
+    select coalesce(sum(owed), 0) into v_owed from public.order_stock_owed where booking_id = new.id;
+    if v_owed > 0 then
+      raise exception 'Not enough stock to deliver this order: % pcs are still missing and waiting on a purchase batch. Receive the batch first.', v_owed
+        using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_booking_delivery on public.bookings;
+create trigger guard_booking_delivery before update of status on public.bookings
+  for each row execute function public.guard_booking_delivery();
+
 -- Per-account throttle: at most N new rows per minute per person (default 20).
 create or replace function public.throttle_insert() returns trigger
 language plpgsql security definer set search_path = public as $$
