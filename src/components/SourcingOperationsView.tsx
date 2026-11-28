@@ -63,6 +63,7 @@ import {
 } from 'lucide-react';
 
 interface SourcingOperationsViewProps {
+  needsCard?: React.ReactNode;
   products: Product[];
   vendors: Vendor[];
   workflows: ProductWorkflow[];
@@ -98,6 +99,7 @@ type TopTab = 'catalog' | 'vendors';
 type CatalogFilter = 'all' | 'manufactured' | 'ready_made' | 'active_batches';
 
 export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
+  needsCard,
   products,
   vendors,
   workflows,
@@ -818,6 +820,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {needsCard}
               {filteredCatalogProducts.map((product) => {
                 const wf = getEffectiveWorkflow(product);
                 const activeBatchCount = activeBatchesCountByProduct.get(product.id) || 0;

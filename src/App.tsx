@@ -140,7 +140,7 @@ import { AdminAnalyticsView } from './components/AdminAnalyticsView';
 import { CalendarView } from './components/CalendarView';
 import { TeamBoardView } from './components/TeamBoardView';
 import { SourcingOperationsView } from './components/SourcingOperationsView';
-import ShortageNeedsPanel, { type LowStockNote } from './components/ShortageNeedsPanel';
+import ShortageNeedsPanel, { ShortageCard, type LowStockNote } from './components/ShortageNeedsPanel';
 import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
 import { BudgetingView } from './components/BudgetingView';
@@ -2147,9 +2147,11 @@ export default function App() {
   };
   useEffect(() => {
     refreshShortageNotes();
-    const t = setInterval(refreshShortageNotes, 60000);
-    return () => clearInterval(t);
-  }, [currentUser?.id, bookings.length, productionBatches.length]);
+    const t = setInterval(refreshShortageNotes, 20000);
+    const onVis = () => { if (document.visibilityState === 'visible') refreshShortageNotes(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [currentUser?.id, bookings.length, productionBatches.length, activeView]);
 
   // Low-stock items (variant stock at or below its own minimum) that have no purchase running yet.
   const [lowToStart, setLowToStart] = useState<LowStockNote | null>(null);
@@ -5266,16 +5268,17 @@ export default function App() {
 
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <div className="space-y-4">
-          <ShortageNeedsPanel
-            collapsible
-            batches={productionBatches}
-            lowNotes={lowStockNotes}
-            onStartLow={(n) => setLowToStart(n)}
-            notes={shortageNotes}
-            canAct={canUserStartShortagePurchase(currentUser, users)}
-            onStart={(n) => setShortageToStart(n)}
-          />
           <SourcingOperationsView
+            needsCard={
+              <ShortageCard
+                batches={productionBatches}
+                lowNotes={lowStockNotes}
+                onStartLow={(n) => setLowToStart(n)}
+                notes={shortageNotes}
+                canAct={canUserStartShortagePurchase(currentUser, users)}
+                onStart={(n) => setShortageToStart(n)}
+              />
+            }
             products={products}
             vendors={vendors}
             workflows={productWorkflows}

@@ -123,3 +123,34 @@ export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = 
     </div>
   );
 }
+
+/** Catalog-grid card: "a batch is needed". Tap to list what to make, per order. */
+export function ShortageCard(props: Omit<Props, 'collapsible'>) {
+  const [open, setOpen] = useState(false);
+  const { notes, lowNotes = [] } = props;
+  if (notes.length === 0 && lowNotes.length === 0) return null;
+  const orders = new Set(notes.map((n) => n.bookingId)).size;
+  const items = new Set([...notes.map((n) => n.variantId), ...lowNotes.map((n) => n.variantId)]).size;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-left rounded-2xl border-2 border-rose-600 bg-rose-50 hover:bg-rose-100 p-4 sm:p-5 flex flex-col justify-between gap-3 min-h-[120px]"
+      >
+        <div className="flex items-center gap-2 text-rose-700 font-black text-sm">
+          <AlertTriangle className="w-5 h-5 shrink-0" /> Batch needed
+        </div>
+        <div className="text-xs font-semibold text-rose-950">
+          {orders > 0 ? `${orders} order(s) short on stock, ` : ''}
+          {items} item(s) to make or buy. {open ? 'Tap to close.' : 'Tap to see what.'}
+        </div>
+      </button>
+      {open && (
+        <div className="col-span-full">
+          <ShortageNeedsPanel {...props} />
+        </div>
+      )}
+    </>
+  );
+}
