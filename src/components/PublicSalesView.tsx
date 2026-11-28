@@ -27,6 +27,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
   const [items, setItems] = useState<Record<string, SaleItem>>({});
   const [ordersOpen, setOrdersOpen] = useState(true);
   const [loaded, setLoaded] = useState(false);
+  const [orderFilter, setOrderFilter] = useState<'all' | 'waiting' | 'paid'>('all');
   const [copied, setCopied] = useState(false);
   const link = `${window.location.origin}/order`;
 
@@ -73,6 +74,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
   );
   const paid = orders.filter((b) => b.depositPaid);
   const waiting = orders.filter((b) => !b.depositPaid);
+  const shownOrders = orderFilter === 'paid' ? paid : orderFilter === 'waiting' ? waiting : orders;
   const sum = (l: Booking[], f: (b: Booking) => number) => l.reduce((a, b) => a + f(b), 0);
 
   const sellable = products.filter((p) => (p.price || 0) > 0);
@@ -136,25 +138,37 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
         </p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {[
-          ['Orders', String(orders.length)],
-          ['Awaiting payment', `${waiting.length} · ${money(sum(waiting, (b) => b.total))}`],
-          ['Paid', `${paid.length} · ${money(sum(paid, (b) => b.total))}`],
-          ['All orders total', money(sum(orders, (b) => b.total))],
-        ].map(([k, v]) => (
-          <div key={k} className="bg-white border border-slate-200 rounded-xl p-3">
-            <div className="text-[11px] text-slate-500 font-semibold">{k}</div>
-            <div className="text-sm font-black text-slate-900">{v}</div>
-          </div>
+      <div className="grid grid-cols-3 gap-2">
+        {([
+          ['all', 'All orders', orders],
+          ['waiting', 'Awaiting payment', waiting],
+          ['paid', 'Paid', paid],
+        ] as const).map(([key, label, list]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setOrderFilter(key)}
+            className={`text-left rounded-xl p-3 border-2 transition-colors ${
+              orderFilter === key ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className={`text-[11px] font-semibold ${orderFilter === key ? 'text-slate-300' : 'text-slate-500'}`}>{label}</div>
+            <div className="text-lg font-black leading-tight">{list.length}</div>
+            <div className="text-xs font-bold">{money(sum(list, (b) => b.total))}</div>
+          </button>
         ))}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
-        <div className="font-bold text-slate-900 mb-2">Orders from the link</div>
+        <div className="font-bold text-slate-900 mb-2">
+          Orders from the link{orderFilter === 'paid' ? ' · Paid' : orderFilter === 'waiting' ? ' · Awaiting payment' : ''}
+        </div>
         {orders.length === 0 && <div className="text-sm text-slate-500">No orders yet.</div>}
+        {orders.length > 0 && shownOrders.length === 0 && (
+          <div className="text-sm text-slate-500">No orders in this group.</div>
+        )}
         <div className="space-y-2">
-          {orders.map((b) => (
+          {shownOrders.map((b) => (
             <div key={b.id} className="border border-slate-200 rounded-xl p-3 text-sm">
               <div className="flex flex-wrap justify-between gap-2">
                 <div>
