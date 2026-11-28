@@ -421,37 +421,6 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
                     )}
                   </div>
 
-                  <div className="sm:text-right flex flex-col justify-between sm:items-end">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider font-black text-slate-400 mb-1">
-                        STATUS & PAYMENT TERMS
-                      </div>
-                      <div>
-                        <span
-                          className={`inline-block px-3 py-1 rounded-lg font-black text-xs uppercase tracking-wider border ${
-                            booking.status === 'pending'
-                              ? 'bg-amber-100/90 text-amber-950 border-amber-300'
-                              : booking.status === 'preparing'
-                              ? 'bg-blue-100 text-blue-950 border-blue-300'
-                              : booking.status === 'delivered'
-                              ? 'bg-purple-100 text-purple-950 border-purple-300'
-                              : 'bg-emerald-100 text-emerald-950 border-emerald-300'
-                          }`}
-                        >
-                          {booking.status === 'pending'
-                            ? (depositPct === 100 ? 'AWAITING FULL PAYMENT' : `AWAITING ${depositPct}% DEPOSIT`)
-                            : booking.status === 'preparing'
-                            ? 'IN PREPARATION / STOCK RESERVED'
-                            : booking.status === 'delivered'
-                            ? 'DELIVERED (AWAITING BALANCE)'
-                            : '✓ 100% FULLY PAID & SETTLED'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-2">
-                      Prepared By: <span className="font-bold text-slate-800">{booking.createdByName}</span> ({booking.createdByRole})
-                    </div>
-                  </div>
                 </div>
 
                 {/* Items Table: Mobile-Horizontal-Scrollable on screen, 100% full-width on print */}
