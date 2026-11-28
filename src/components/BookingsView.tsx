@@ -908,7 +908,8 @@ This is our official Scout Store number. Through this chat, you can:
               </button>
             )}
           </div>
-
+        </div>
+      </div>
 
       {/* Bookings List Cards matching exact screenshot layout with Arrow */}
       {filteredBookings.length === 0 ? (
