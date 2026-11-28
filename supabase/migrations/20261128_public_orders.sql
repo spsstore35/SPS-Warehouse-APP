@@ -45,6 +45,7 @@ declare
   v_phone text := btrim(coalesce(p->>'phone',''));
   v_ash text := btrim(coalesce(p->>'ashira',''));
   v_team text := btrim(coalesce(p->>'team',''));
+  v_pay text := lower(btrim(coalesce(p->>'payment','')));
   v_open boolean;
   v_it jsonb; v_var record; v_pct int; v_qty int; v_n int := 0;
   v_id text; v_num text; v_prefix text; v_seq int;
@@ -56,6 +57,7 @@ begin
   v_phone := public.normalize_egypt_phone(v_phone);
   if v_phone is null or v_phone !~ '^[0-9+]{8,16}$' then raise exception 'bad_phone' using errcode='P0001'; end if;
   if v_ash not in ('3ashera 1','3ashera 2') then raise exception 'bad_ashira' using errcode='P0001'; end if;
+  if v_pay not in ('cash','instapay') then raise exception 'bad_payment' using errcode='P0001'; end if;
   if length(v_team) < 2 or length(v_team) > 60 then raise exception 'bad_team' using errcode='P0001'; end if;
   if jsonb_typeof(p->'items') <> 'array' or jsonb_array_length(p->'items') = 0 or jsonb_array_length(p->'items') > 15 then
     raise exception 'bad_items' using errcode='P0001'; end if;
@@ -80,10 +82,10 @@ begin
   v_id := 'bk_' || (extract(epoch from clock_timestamp())*1000)::bigint::text || floor(random()*1000)::int::text;
   insert into bookings (id, booking_number, client_name, client_phone, notes, subtotal, discount, total,
     deposit_rate, deposit_percentage, deposit_required, deposit_paid, deposit_paid_amount, status, inventory_deducted,
-    created_by_id, created_by_name, created_by_role, troop_group, assigned_fare2, source, team_name)
-  values (v_id, v_num, v_name, v_phone, 'Public order link | ' || v_ash || ' | Team: ' || v_team,
+    created_by_id, created_by_name, created_by_role, troop_group, assigned_fare2, source, team_name, payment_method)
+  values (v_id, v_num, v_name, v_phone, 'Public order link | ' || v_ash || ' | Team: ' || v_team || ' | Payment: ' || v_pay,
     v_sub, 0, v_sub, round(v_req / v_sub, 4), round(v_req / v_sub * 100)::int, v_req, false, 0, 'pending', false,
-    (select id from profiles where role='full_admin' order by created_at limit 1), 'Public order link', 'worker', v_ash, v_ash, 'public_link', v_team);
+    (select id from profiles where role='full_admin' order by created_at limit 1), 'Public order link', 'worker', v_ash, v_ash, 'public_link', v_team, v_pay);
   for r in select * from jsonb_array_elements(v_rows) loop
     v_n := v_n + 1;
     insert into booking_items (id, booking_id, product_id, product_name, product_sku, product_image, variant_id, size,

@@ -56,6 +56,7 @@ const MSG: Record<string, string> = {
   bad_name: 'Please type your full name.',
   bad_phone: 'Please type a valid phone number.',
   bad_ashira: 'Please choose Ashira 1 or Ashira 2.',
+  bad_payment: 'Please choose Cash or Instapay.',
   bad_team: 'Please type your team name.',
   bad_items: 'Please choose at least one item.',
   bad_qty: 'Quantity must be between 1 and 10.',
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
   if (body.action === 'list') {
     if ((await since('ip', addr, 1)) > 60) return json({ error: 'rate' }, 429);
     const { data: st } = await admin.from('sale_settings').select('orders_open').eq('id', 1).single();
-    const { data: open } = await admin.from('public_sale_items').select('product_id, required_pct, sort').eq('is_open', true).order('sort');
+    const { data: open } = await admin.from('public_sale_items').select('product_id, required_pct, sort, size_chart_url').eq('is_open', true).order('sort');
     if (!open || open.length === 0) return json({ open: Boolean(st?.orders_open), items: [] });
     const ids = open.map((o) => o.product_id);
     const { data: prods } = await admin.from('products').select('id, name, price, image_url, description').in('id', ids).eq('status', 'active');
@@ -96,6 +97,7 @@ Deno.serve(async (req) => {
           image: p.image_url || null,
           description: p.description || null,
           required_pct: o.required_pct,
+          size_chart: o.size_chart_url || null,
           variants: (vars || []).filter((v) => v.product_id === p.id).map((v) => ({ id: v.id, size: v.size, color: v.color_name, hex: v.color_hex })),
         };
       })
@@ -133,7 +135,7 @@ Deno.serve(async (req) => {
       ? body.items.slice(0, 15).map((i: any) => ({ variant_id: String(i?.variant_id ?? ''), quantity: Number(i?.quantity) }))
       : [];
     const { data, error } = await admin.rpc('public_order_create', {
-      p: { name: String(body.name ?? ''), phone: String(body.phone ?? ''), ashira: String(body.ashira ?? ''), team: String(body.team ?? ''), items },
+      p: { name: String(body.name ?? ''), phone: String(body.phone ?? ''), ashira: String(body.ashira ?? ''), team: String(body.team ?? ''), payment: String(body.payment ?? ''), items },
     });
     if (error) {
       const code = Object.keys(MSG).find((k) => (error.message || '').includes(k));

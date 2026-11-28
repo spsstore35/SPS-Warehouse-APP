@@ -5671,6 +5671,7 @@ export default function App() {
         {effectiveView === 'public-sales' && canUserAccessView(currentUser, 'public-sales', users) && (
           <PublicSalesView
             products={products}
+            categories={categories}
             bookings={bookings}
             onMarkPaid={(id) => handleAdvanceBookingStatus(id, 'preparing')}
             onOpenInvoice={(booking) => {

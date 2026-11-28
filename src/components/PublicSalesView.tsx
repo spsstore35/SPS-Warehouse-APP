@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Booking, Product } from '../types/inventory';
+import { Booking, Category, Product } from '../types/inventory';
+import { compressImage } from '../utils/imageCompressor';
 import { supabase } from '../services/supabaseClient';
 import { Link2, Copy, Check, FileText, ExternalLink } from 'lucide-react';
 
 interface Props {
   products: Product[];
+  categories: Category[];
   bookings: Booking[];
   onMarkPaid: (bookingId: string) => void;
   onOpenInvoice: (booking: Booking) => void;
@@ -16,11 +18,12 @@ interface SaleItem {
   product_id: string;
   is_open: boolean;
   required_pct: number;
+  size_chart_url?: string | null;
 }
 
 const money = (n: number) => `${Math.round(n * 100) / 100} EGP`;
 
-export const PublicSalesView: React.FC<Props> = ({ products, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast }) => {
+export const PublicSalesView: React.FC<Props> = ({ products, categories, bookings, onMarkPaid, onOpenInvoice, onOpenOrder, onShowToast }) => {
   const [items, setItems] = useState<Record<string, SaleItem>>({});
   const [ordersOpen, setOrdersOpen] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -29,7 +32,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, bookings, onMarkPai
 
   const load = useCallback(async () => {
     const [a, b] = await Promise.all([
-      supabase.from('public_sale_items').select('product_id,is_open,required_pct'),
+      supabase.from('public_sale_items').select('product_id,is_open,required_pct,size_chart_url'),
       supabase.from('sale_settings').select('orders_open').eq('id', 1).maybeSingle(),
     ]);
     const map: Record<string, SaleItem> = {};
@@ -73,6 +76,33 @@ export const PublicSalesView: React.FC<Props> = ({ products, bookings, onMarkPai
   const sum = (l: Booking[], f: (b: Booking) => number) => l.reduce((a, b) => a + f(b), 0);
 
   const sellable = products.filter((p) => (p.price || 0) > 0);
+  const groups = useMemo(() => {
+    const cats = [...categories].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    const out: { id: string; name: string; list: Product[] }[] = cats
+      .map((c) => ({ id: c.id, name: c.name, list: sellable.filter((p) => p.categoryId === c.id) }))
+      .filter((g) => g.list.length > 0);
+    const known = new Set(cats.map((c) => c.id));
+    const rest = sellable.filter((p) => !p.categoryId || !known.has(p.categoryId));
+    if (rest.length) out.push({ id: 'other', name: 'Other', list: rest });
+    return out;
+  }, [categories, sellable]);
+  const [uploading, setUploading] = useState<string>('');
+  const uploadChart = async (productId: string, file: File) => {
+    setUploading(productId);
+    try {
+      const dataUrl = await compressImage(file, 1600, 1600, 0.85);
+      const blob = await (await fetch(dataUrl)).blob();
+      const path = `size-charts/${productId}-${Date.now()}.jpg`;
+      const up = await supabase.storage.from('product-images').upload(path, blob, { contentType: 'image/jpeg' });
+      if (up.error) throw up.error;
+      const url = supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl;
+      await saveItem(productId, { size_chart_url: url });
+      onShowToast('Size chart saved.');
+    } catch (e: any) {
+      onShowToast('Could not upload the size chart: ' + (e?.message || 'error'));
+    }
+    setUploading('');
+  };
 
   return (
     <div className="max-w-5xl mx-auto p-3 sm:p-5 space-y-5">
@@ -141,6 +171,7 @@ export const PublicSalesView: React.FC<Props> = ({ products, bookings, onMarkPai
                 <div className="text-right">
                   <div className="font-black">{money(b.total)}</div>
                   <div className="text-xs text-slate-600">To pay now: {money(b.depositRequired)}</div>
+                  <div className="text-xs text-slate-600">Method: {b.paymentMethod === 'instapay' ? 'Instapay' : b.paymentMethod === 'cash' ? 'Cash' : '-'}</div>
                   <div className={`text-xs font-bold ${b.depositPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
                     {b.depositPaid ? 'Paid' : 'Awaiting payment'}
                   </div>
@@ -168,28 +199,50 @@ export const PublicSalesView: React.FC<Props> = ({ products, bookings, onMarkPai
         <div className="font-bold text-slate-900 mb-1">Items on the public page</div>
         <p className="text-xs text-slate-500 mb-2">Tick an item to open it for customers. Choose how much of the price they must pay first.</p>
         {!loaded && <div className="text-sm text-slate-500">Loading…</div>}
-        <div className="divide-y divide-slate-100">
-          {sellable.map((p) => {
-            const it = items[p.id];
-            return (
-              <div key={p.id} className="flex items-center gap-3 py-2 text-sm">
-                <input type="checkbox" checked={Boolean(it?.is_open)} onChange={(e) => saveItem(p.id, { is_open: e.target.checked })} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold truncate">{p.name}</div>
-                  <div className="text-xs text-slate-500">{money(p.price || 0)}</div>
-                </div>
-                <select
-                  className="border border-slate-300 rounded-lg text-xs px-2 py-1"
-                  value={it?.required_pct ?? 100}
-                  onChange={(e) => saveItem(p.id, { required_pct: Number(e.target.value) })}
-                >
-                  <option value={100}>Pay 100%</option>
-                  <option value={70}>Pay 70%</option>
-                  <option value={50}>Pay 50%</option>
-                </select>
+        <div className="space-y-4">
+          {groups.map((g) => (
+            <div key={g.id}>
+              <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1">{g.name}</div>
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl px-3">
+                {g.list.map((p) => {
+                  const it = items[p.id];
+                  const thumb = (p.images && p.images[0]) || p.image;
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 py-2 text-sm">
+                      <input type="checkbox" className="w-5 h-5" checked={Boolean(it?.is_open)} onChange={(e) => saveItem(p.id, { is_open: e.target.checked })} />
+                      {thumb ? (
+                        <img src={thumb} alt="" className="w-12 h-12 rounded-lg object-cover bg-slate-100 shrink-0" loading="lazy" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-lg bg-slate-100 shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold truncate">{p.name}</div>
+                        <div className="text-xs text-slate-500">{money(p.price || 0)}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <label className="text-[11px] font-bold text-indigo-700 cursor-pointer">
+                            {uploading === p.id ? 'Uploading…' : it?.size_chart_url ? 'Change size chart' : '+ Size chart'}
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadChart(p.id, f); e.target.value = ''; }} />
+                          </label>
+                          {it?.size_chart_url && (
+                            <button type="button" className="text-[11px] font-bold text-red-600" onClick={() => saveItem(p.id, { size_chart_url: null })}>Remove</button>
+                          )}
+                        </div>
+                      </div>
+                      <select
+                        className="border border-slate-300 rounded-lg text-xs px-2 py-1"
+                        value={it?.required_pct ?? 100}
+                        onChange={(e) => saveItem(p.id, { required_pct: Number(e.target.value) })}
+                      >
+                        <option value={100}>Pay 100%</option>
+                        <option value={70}>Pay 70%</option>
+                        <option value={50}>Pay 50%</option>
+                      </select>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </div>
     </div>

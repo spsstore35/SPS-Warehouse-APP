@@ -1405,6 +1405,7 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
       items: lineItems,
       source: b.source || undefined,
       teamName: b.team_name || undefined,
+      paymentMethod: b.payment_method || undefined,
       subtotal: Number(b.subtotal) || 0,
       discount: Number(b.discount) || 0,
       total: Number(b.total) || 0,
