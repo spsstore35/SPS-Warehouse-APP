@@ -28,6 +28,9 @@ interface AdjustmentModalProps {
     reason: string;
     note: string;
   }) => void;
+  /** Pieces reserved for paid, not-yet-delivered orders per variant. The count you type is PHYSICAL (free + reserved). */
+  reservedMap?: Record<string, number>;
+  onPreviewMissing?: (variantId: string, newPhysical: number) => Promise<{ missing: number; orders: string }>;
 }
 
 const DECREASE_REASONS = [
@@ -65,6 +68,8 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
   onClose,
   onSubmitWorkerRequest,
   onAdminDirectAdjust,
+  reservedMap = {},
+  onPreviewMissing,
 }) => {
   const isAdmin = currentUser.role === 'admin' || currentUser.role === 'full_admin';
 
@@ -84,7 +89,8 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
   const activeVariant =
     variants.find((v) => v.id === selectedVariantId) || defaultVariant || variants[0];
 
-  const currentCount = activeVariant ? activeVariant.quantity : 0;
+  const reservedNow = activeVariant ? reservedMap[activeVariant.id] || 0 : 0;
+  const currentCount = activeVariant ? activeVariant.quantity + reservedNow : 0;
 
   // Colors list
   const uniqueColors = Array.from(
@@ -143,7 +149,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -170,6 +176,18 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
 
     const finalReason = resolvedReason !== '' ? resolvedReason : `Stock Adjustment: "${product.name}"`;
 
+    if (isAdmin && effectiveNewCount < reservedNow) {
+      let msg = `Counted ${effectiveNewCount} but ${reservedNow} are reserved for paid orders: ${reservedNow - effectiveNewCount} will be marked missing on the latest paid orders. Those orders will wait for a new batch and cannot be delivered until then.`;
+      try {
+        const pv = onPreviewMissing ? await onPreviewMissing(activeVariant.id, effectiveNewCount) : null;
+        if (pv && pv.orders) {
+          msg = `Counted ${effectiveNewCount} but ${reservedNow} are reserved: ${pv.missing} will be marked missing for orders ${pv.orders}. They cannot be delivered until a new batch arrives.`;
+        }
+      } catch {
+        /* keep the general message */
+      }
+      if (!window.confirm(`${msg}\n\nContinue?`)) return;
+    }
     if (isAdmin) {
       onAdminDirectAdjust({
         productId: product.id,
@@ -325,7 +343,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
                           : `Size ${v.size}`}
                       </div>
                       <div className={`text-[11px] font-mono mt-0.5 ${isSelected ? 'text-amber-300' : 'text-slate-500'}`}>
-                        {v.quantity} units
+                        {v.quantity + (reservedMap[v.id] || 0)} units
                       </div>
                     </button>
                   );
@@ -338,10 +356,15 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3.5">
             <div className="flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-slate-500 uppercase font-bold">Current Count</span>
+                <span className="text-[10px] text-slate-500 uppercase font-bold">In warehouse now (physical)</span>
                 <div className="text-xl font-bold font-mono tabular-nums text-slate-700">
                   {currentCount} <span className="text-xs font-sans text-slate-400 font-normal">units</span>
                 </div>
+                {reservedNow > 0 && (
+                  <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                    Reserved for paid orders: {reservedNow} · Free: {Math.max(0, currentCount - reservedNow)}
+                  </div>
+                )}
               </div>
 
               <div className="text-center">

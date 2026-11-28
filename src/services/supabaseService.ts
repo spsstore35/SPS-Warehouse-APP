@@ -2688,3 +2688,20 @@ export async function deleteTeamRequestFromDb(id: string): Promise<void> {
   await supabase.from('stock_audit_logs').delete().eq('id', id).eq('action', 'team_change_request');
 }
 
+
+/** Pieces reserved for paid, not-yet-delivered orders, per size/colour variant (variantId -> pcs). */
+export async function fetchStockReservedFromDb(): Promise<Record<string, number>> {
+  const { data, error } = await supabase.rpc('stock_reserved_all');
+  if (error) throw error;
+  const out: Record<string, number> = {};
+  (data || []).forEach((r: any) => { out[String(r.variant_id)] = Number(r.reserved); });
+  return out;
+}
+
+/** What a new physical count would do: how many reserved pieces turn into "missing" and for which orders. */
+export async function previewStockAdjustInDb(variantId: string, newPhysical: number): Promise<{ missing: number; orders: string }> {
+  const { data, error } = await supabase.rpc('stock_adjust_preview', { p_variant_id: variantId, p_new_physical: newPhysical });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return { missing: Number(row?.missing || 0), orders: String(row?.orders || '') };
+}

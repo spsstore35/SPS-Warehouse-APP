@@ -279,6 +279,65 @@ end $$;
 revoke all on function public.apply_stock_change(text, integer, text, text) from public, anon;
 grant execute on function public.apply_stock_change(text, integer, text, text) to authenticated;
 
+-- Physical count = free stock (product_variants.quantity) + pieces reserved for paid orders that are
+-- not delivered yet. Reserved = what each such order bought minus what it still owes.
+create or replace function public.stock_reserved_all()
+returns table (variant_id text, reserved integer)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.app_member_of_any(array['troops','budgeting','inventory','purchases']) then
+    raise exception 'Not allowed.' using errcode = '42501';
+  end if;
+  return query
+    select q.vid::text, sum(greatest(0, q.qty - coalesce(o.owed, 0)))::integer
+      from (select b.id as bid, i.variant_id as vid, sum(i.quantity)::integer as qty
+              from public.bookings b join public.booking_items i on i.booking_id = b.id
+             where b.status = 'preparing' and b.inventory_deducted
+             group by b.id, i.variant_id) q
+      left join public.order_stock_owed o on o.booking_id = q.bid and o.variant_id = q.vid
+     group by q.vid
+    having sum(greatest(0, q.qty - coalesce(o.owed, 0))) > 0;
+end $$;
+revoke all on function public.stock_reserved_all() from public, anon;
+grant execute on function public.stock_reserved_all() to authenticated;
+
+-- What would happen if the physical count of a size became p_new_physical? (read only, for the confirm step)
+create or replace function public.stock_adjust_preview(p_variant_id text, p_new_physical integer)
+returns table (physical integer, reserved integer, free integer, missing integer, orders text)
+language plpgsql stable security definer set search_path = public as $$
+declare v_free integer; v_res integer := 0; v_missing integer := 0; v_left integer; v_take integer; v_list text := ''; r record;
+begin
+  if not public.app_admin_of_any(array['inventory']) then
+    raise exception 'Not allowed.' using errcode = '42501';
+  end if;
+  select quantity into v_free from public.product_variants where id = p_variant_id;
+  if v_free is null then raise exception 'Unknown item.'; end if;
+  select coalesce(sum(greatest(0, q.qty - coalesce(o.owed, 0))), 0)::integer into v_res
+    from (select b.id as bid, sum(i.quantity)::integer as qty
+            from public.bookings b join public.booking_items i on i.booking_id = b.id and i.variant_id = p_variant_id
+           where b.status = 'preparing' and b.inventory_deducted group by b.id) q
+    left join public.order_stock_owed o on o.booking_id = q.bid and o.variant_id = p_variant_id;
+  v_missing := greatest(0, v_res - greatest(0, p_new_physical));
+  v_left := v_missing;
+  if v_left > 0 then
+    for r in select b.id as bid, b.booking_number::text as num, sum(i.quantity)::integer as qty
+               from public.bookings b join public.booking_items i on i.booking_id = b.id and i.variant_id = p_variant_id
+              where b.status = 'preparing' and b.inventory_deducted
+              group by b.id, b.booking_number, b.deposit_paid_at, b.created_at
+              order by coalesce(b.deposit_paid_at, b.created_at) desc, b.id loop
+      exit when v_left <= 0;
+      v_take := least(r.qty - coalesce((select owed from public.order_stock_owed where booking_id = r.bid and variant_id = p_variant_id), 0), v_left);
+      if v_take > 0 then
+        v_list := v_list || case when v_list = '' then '' else ', ' end || '#' || r.num || ' (' || v_take || ')';
+        v_left := v_left - v_take;
+      end if;
+    end loop;
+  end if;
+  return query select v_free + v_res, v_res, v_free, v_missing, v_list;
+end $$;
+revoke all on function public.stock_adjust_preview(text, integer) from public, anon;
+grant execute on function public.stock_adjust_preview(text, integer) to authenticated;
+
 -- 1.5 Copy existing accounts into Supabase Auth ---------------------------------
 -- Same id as the profile, same email (or a made-up @noemail.sps.local one), and the
 -- SAME bcrypt password hash, so everybody logs in with the password they already have.

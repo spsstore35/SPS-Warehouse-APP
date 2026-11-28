@@ -65,6 +65,8 @@ import {
   updateUserRoleInDb,
   updateVariantQuantityInDb,
   applyStockChangeInDb,
+  fetchStockReservedFromDb,
+  previewStockAdjustInDb,
   recordOrderShortfallInDb,
   fetchOrderShortagesFromDb,
   type OrderShortageNote,
@@ -1509,6 +1511,14 @@ export default function App() {
 
   // Manual stock change (count correction): done by the database so waiting orders are served first
   // (more stock) or the shortage grows on the latest paid orders (less than the free stock).
+  const [reservedMap, setReservedMap] = useState<Record<string, number>>({});
+  const refreshReserved = () => {
+    if (!currentUser) return;
+    fetchStockReservedFromDb().then(setReservedMap).catch(() => setReservedMap({}));
+  };
+  useEffect(() => {
+    refreshReserved();
+  }, [currentUser?.id, bookings.length, productionBatches.length, activeView]);
   const syncManualStockChange = (productId: string, variantId: string, delta: number) => {
     if (!delta) return;
     applyStockChangeInDb(variantId, delta, 'inventory_adjust', variantId)
@@ -1521,6 +1531,7 @@ export default function App() {
           })
         );
         setTimeout(refreshShortageNotes, 600);
+        setTimeout(refreshReserved, 700);
       })
       .catch((err) => showToast(`Stock change was not saved: ${err?.message || 'sync failed'}`));
   };
@@ -1544,12 +1555,13 @@ export default function App() {
 
       const nextVariants = prod.variants.map((v) => {
         if (v.id !== data.variantId) return v;
-        oldQty = v.quantity;
+        // The typed number is the PHYSICAL count: free stock + pieces reserved for paid orders.
+        oldQty = v.quantity + (reservedMap[v.id] || 0);
         variantSize = v.size;
         variantColor = v.colorName;
         return {
           ...v,
-          quantity: data.newQuantity,
+          quantity: Math.max(0, data.newQuantity - (reservedMap[v.id] || 0)),
         };
       });
 
@@ -1613,6 +1625,13 @@ export default function App() {
   const handleApproveRequest = (requestId: string, adminNote?: string) => {
     const targetReq = requests.find((r) => r.id === requestId);
     if (!targetReq) return;
+    const reservedNow = reservedMap[targetReq.variantId] || 0;
+    if (targetReq.requestedQuantity < reservedNow) {
+      const ok = window.confirm(
+        `Counted ${targetReq.requestedQuantity} but ${reservedNow} are reserved for paid orders: ${reservedNow - targetReq.requestedQuantity} will be marked missing on the latest paid orders (they will wait for a new batch). Continue?`
+      );
+      if (!ok) return;
+    }
 
     // 1. Update the actual product variant quantity
     const nextProducts = products.map((prod) => {
@@ -1622,7 +1641,7 @@ export default function App() {
         if (v.id !== targetReq.variantId) return v;
         return {
           ...v,
-          quantity: targetReq.requestedQuantity,
+          quantity: Math.max(0, targetReq.requestedQuantity - reservedNow),
         };
       });
 
@@ -1659,7 +1678,7 @@ export default function App() {
     syncManualStockChange(
       targetReq.productId,
       targetReq.variantId,
-      targetReq.requestedQuantity - (products.find((p) => p.id === targetReq.productId)?.variants.find((v) => v.id === targetReq.variantId)?.quantity ?? targetReq.currentQuantity)
+      targetReq.requestedQuantity - ((products.find((p) => p.id === targetReq.productId)?.variants.find((v) => v.id === targetReq.variantId)?.quantity ?? 0) + reservedNow)
     );
 
     // 4. Record Audit Log
@@ -5700,6 +5719,7 @@ export default function App() {
       {detailProduct && (
         <ProductDetailModal
           product={detailProduct}
+          reservedMap={reservedMap}
           userRole={normalizeRole(currentUser.role)}
           canEditMedia={canEditProductMedia}
           onClose={() => setDetailProduct(null)}
@@ -5730,6 +5750,8 @@ export default function App() {
           onClose={() => setAdjustmentTarget(null)}
           onSubmitWorkerRequest={handleSubmitWorkerRequest}
           onAdminDirectAdjust={handleAdminDirectAdjust}
+          reservedMap={reservedMap}
+          onPreviewMissing={previewStockAdjustInDb}
         />
       )}
 
