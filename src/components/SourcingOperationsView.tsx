@@ -99,6 +99,7 @@ interface SourcingOperationsViewProps {
     batchId: string;
     finalQuantity: number;
     variantId: string;
+    parts?: { variantId: string; qty: number }[];
   }) => void;
   onShowToast?: (msg: string) => void;
 }
@@ -1716,7 +1717,19 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                 <span className="font-mono tabular-nums font-bold text-slate-800">
                                   {batch.quantity} pcs
                                 </span>
-                                {targetVariant && (
+                                {batch.variantQty && Object.keys(batch.variantQty).length > 1 ? (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span>
+                                      {Object.entries(batch.variantQty)
+                                        .map(([vid, q]) => {
+                                          const vv = selectedProduct.variants.find((x) => x.id === vid);
+                                          return `${vv ? `${vv.size} ${vv.colorName}` : '?'}: ${q}`;
+                                        })
+                                        .join(' · ')}
+                                    </span>
+                                  </>
+                                ) : targetVariant && (
                                   <>
                                     <span aria-hidden="true">·</span>
                                     <span>
@@ -1757,9 +1770,9 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                                 const first = firstWorkingStage(workflow);
                                 const own = batchJoinBlockReason(batch, first);
                                 const others = batches.filter(
-                                  (o) => o.id !== batch.id && o.productId === batch.productId && o.variantId === batch.variantId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
+                                  (o) => o.id !== batch.id && o.productId === batch.productId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
                                 );
-                                const why = own ? `Cannot merge ${batch.batchCode}: ${own}.` : others.length === 0 ? `Cannot merge ${batch.batchCode}: there is no other open batch of the same size/color that is still at its first stage with no costs.` : 'Merge with another early batch';
+                                const why = own ? `Cannot merge ${batch.batchCode}: ${own}.` : others.length === 0 ? `Cannot merge ${batch.batchCode}: there is no other open batch of the same ITEM (any size/color) that is still at its first stage with no costs.` : 'Merge with another early batch';
                                 return (
                                   <button
                                     type="button"
@@ -2562,13 +2575,13 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
               if (!keep) return null;
               const first = firstWorkingStage(workflow);
               const cands = batches.filter(
-                (o) => o.id !== keep.id && o.productId === keep.productId && o.variantId === keep.variantId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
+                (o) => o.id !== keep.id && o.productId === keep.productId && o.status === 'in_progress' && !batchJoinBlockReason(o, first)
               );
               return (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/60 p-4">
                   <div className="w-full max-w-md rounded-3xl bg-white p-5 space-y-3 shadow-2xl">
                     <div className="text-base font-black text-slate-900">Merge into {keep.batchCode} ({keep.quantity} pcs)</div>
-                    <div className="text-xs text-slate-600">Quantities are added and the orders of both batches are linked to one batch. The other batch is removed. Pick the batch to add:</div>
+                    <div className="text-xs text-slate-600">Same item, any size/color. Quantities are added (kept per size), and the orders of both batches are linked to one batch. The other batch is removed. Pick the batch to add:</div>
                     {cands.map((c) => (
                       <button
                         key={c.id}
@@ -2576,7 +2589,7 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
                         onClick={() => { onMergeBatches?.(keep, c); setMergeBatchId(null); }}
                         className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-900"
                       >
-                        Add {c.batchCode} ({c.quantity} pcs) = {keep.quantity + c.quantity} pcs
+                        Add {c.batchCode} ({c.quantity} pcs{(() => { const v = selectedProduct.variants.find((x) => x.id === c.variantId); return v && !c.variantQty ? `, ${v.size} / ${v.colorName}` : ''; })()}) = {keep.quantity + c.quantity} pcs
                       </button>
                     ))}
                     <button type="button" onClick={() => setMergeBatchId(null)} className="w-full py-2.5 rounded-xl bg-slate-200 text-slate-900 font-black text-xs">Cancel</button>

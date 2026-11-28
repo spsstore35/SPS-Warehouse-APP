@@ -202,3 +202,31 @@ export function stageCostTotal(
   if (typeof a.cost === 'number') return a.cost * Math.max(1, batchQty);
   return 0;
 }
+
+/** Pieces per size/colour of a batch (one row when the batch has a single variant). */
+export function batchVariantParts(b: ProductionBatch): { variantId: string; qty: number }[] {
+  const vq = b.variantQty || {};
+  const rows = Object.entries(vq).filter(([, q]) => Number(q) > 0).map(([variantId, qty]) => ({ variantId, qty: Number(qty) }));
+  if (rows.length > 0) return rows;
+  return b.variantId ? [{ variantId: b.variantId, qty: b.quantity }] : [];
+}
+
+/** Add pieces of one variant to a batch breakdown. Returns the new quantity and breakdown. */
+export function addToBatchBreakdown(
+  b: ProductionBatch,
+  extra: { variantId?: string; qty: number }[]
+): { quantity: number; variantQty?: Record<string, number> } {
+  const map: Record<string, number> = {};
+  let loose = 0;
+  batchVariantParts(b).forEach((p) => { map[p.variantId] = (map[p.variantId] || 0) + p.qty; });
+  const known = Object.values(map).reduce((s, n) => s + n, 0);
+  loose += Math.max(0, b.quantity - known);
+  extra.forEach((e) => {
+    if (e.variantId) map[e.variantId] = (map[e.variantId] || 0) + e.qty;
+    else loose += e.qty;
+  });
+  const quantity = Object.values(map).reduce((s, n) => s + n, 0) + loose;
+  // Only keep a breakdown when every piece is assigned and there is more than one variant.
+  if (loose > 0 || Object.keys(map).length < 2) return { quantity };
+  return { quantity, variantQty: map };
+}

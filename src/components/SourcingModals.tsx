@@ -310,6 +310,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
 }) => {
   const [batchCode, setBatchCode] = useState('');
   const [quantity, setQuantity] = useState<number>(100);
+  const [variantQtyDraft, setVariantQtyDraft] = useState<Record<string, number> | null>(null);
   const [variantId, setVariantId] = useState<string>('');
   const [targetDate, setTargetDate] = useState<string>('');
   const [assignments, setAssignments] = useState<Record<string, BatchStageAssignment>>({});
@@ -330,6 +331,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
     if (initialBatch) {
       setBatchCode(initialBatch.batchCode);
       setQuantity(initialBatch.quantity);
+      setVariantQtyDraft(initialBatch.variantQty && Object.keys(initialBatch.variantQty).length > 1 ? { ...initialBatch.variantQty } : null);
       setVariantId(initialBatch.variantId || product.variants[0]?.id || '');
       setTargetDate(initialBatch.targetDate || '');
 
@@ -353,6 +355,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
 
     setBatchCode(`Batch #${105 + existingBatchCount}`);
     setQuantity(100);
+    setVariantQtyDraft(null);
     setVariantId(product.variants[0]?.id || '');
     const leadDaysToAdd = totalLeadDays > 0 ? totalLeadDays : 7;
     const defaultTarget = new Date(Date.now() + leadDaysToAdd * 86400000)
@@ -404,7 +407,15 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
       setError('Batch Code is required.');
       return;
     }
-    if (!quantity || quantity <= 0) {
+    const breakdown: Record<string, number> | undefined = variantQtyDraft
+      ? (Object.fromEntries(
+          Object.entries(variantQtyDraft)
+            .map(([k, n]) => [k, Math.max(0, Math.round(Number(n) || 0))] as [string, number])
+            .filter(([, n]) => n > 0)
+        ) as Record<string, number>)
+      : undefined;
+    const finalQty = breakdown ? Object.values(breakdown).reduce((s, n) => s + n, 0) : quantity;
+    if (!finalQty || finalQty <= 0) {
       setError('Batch quantity must be greater than 0.');
       return;
     }
@@ -422,7 +433,8 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
           ...initialBatch,
           batchCode: batchCode.trim(),
           variantId: variantId || undefined,
-          quantity: Math.round(quantity),
+          quantity: Math.round(finalQty),
+          variantQty: breakdown && Object.keys(breakdown).length > 1 ? breakdown : undefined,
           targetDate: targetDate || undefined,
           stageAssignments: assignments,
         }
@@ -431,7 +443,8 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
           batchCode: batchCode.trim(),
           productId: product.id,
           variantId: variantId || undefined,
-          quantity: Math.round(quantity),
+          quantity: Math.round(finalQty),
+          variantQty: breakdown && Object.keys(breakdown).length > 1 ? breakdown : undefined,
           targetDate: targetDate || undefined,
           currentStageKey: firstStage,
           status: 'in_progress',
@@ -530,6 +543,33 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
               </div>
             )}
 
+            {variantQtyDraft ? (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Quantity per size / color (pcs) *
+                </label>
+                <div className="space-y-1.5">
+                  {Object.entries(variantQtyDraft).map(([vid, q]) => {
+                    const vv = product.variants.find((x) => x.id === vid);
+                    return (
+                      <div key={vid} className="flex items-center gap-2">
+                        <span className="flex-1 text-xs font-semibold text-slate-800">{vv ? `Size ${vv.size} · ${vv.colorName}` : 'Item'}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={q || ''}
+                          onChange={(e) => setVariantQtyDraft({ ...variantQtyDraft, [vid]: Number(e.target.value) })}
+                          className="w-24 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-900"
+                        />
+                      </div>
+                    );
+                  })}
+                  <div className="text-xs font-bold text-slate-900">
+                    Total: {Object.values(variantQtyDraft).reduce((s, n) => s + (Number(n) || 0), 0)} pcs
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Quantity (pcs) *
@@ -542,6 +582,7 @@ export const StartBatchModal: React.FC<StartBatchModalProps> = ({
                 className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-900"
               />
             </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -758,6 +799,7 @@ interface CompleteStockInModalProps {
     batchId: string;
     finalQuantity: number;
     variantId: string;
+    parts?: { variantId: string; qty: number }[];
   }) => void;
 }
 
@@ -771,9 +813,11 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
 }) => {
   const [finalQuantity, setFinalQuantity] = useState<number>(0);
   const [variantId, setVariantId] = useState<string>('');
+  const [partsDraft, setPartsDraft] = useState<Record<string, number> | null>(null);
 
   useEffect(() => {
     if (!batch || !product) return;
+    setPartsDraft(batch.variantQty && Object.keys(batch.variantQty).length > 1 ? { ...batch.variantQty } : null);
     setFinalQuantity(batch.quantity);
     setVariantId(batch.variantId || product.variants[0]?.id || '');
   }, [batch, product]);
@@ -808,7 +852,29 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
             for <span className="font-bold text-slate-900">{product.name}</span>.
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {partsDraft && (
+            <div className="space-y-1.5">
+              <div className="text-xs font-bold text-slate-700">Final quantity received per size / color (pcs)</div>
+              {Object.entries(partsDraft).map(([vid, q]) => {
+                const vv = product.variants.find((x) => x.id === vid);
+                return (
+                  <div key={vid} className="flex items-center gap-2">
+                    <span className="flex-1 text-xs font-semibold text-slate-800">{vv ? `Size ${vv.size} · ${vv.colorName} (${vv.quantity} in stock)` : 'Item'}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={q || ''}
+                      onChange={(e) => setPartsDraft({ ...partsDraft, [vid]: Number(e.target.value) })}
+                      className="w-24 px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-mono tabular-nums text-slate-900 focus:outline-none focus:border-slate-900"
+                    />
+                  </div>
+                );
+              })}
+              <div className="text-xs font-bold text-slate-900">Total: {Object.values(partsDraft).reduce((s, n) => s + (Number(n) || 0), 0)} pcs. Each size goes to its own stock.</div>
+            </div>
+          )}
+
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${partsDraft ? 'hidden' : ''}`}>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Final QC Quantity (pcs)
@@ -884,14 +950,24 @@ export const CompleteStockInModal: React.FC<CompleteStockInModalProps> = ({
             </button>
             <button
               type="button"
-              disabled={!finalQuantity || finalQuantity <= 0}
-              onClick={() =>
+              disabled={partsDraft ? Object.values(partsDraft).reduce((s, n) => s + (Number(n) || 0), 0) <= 0 : !finalQuantity || finalQuantity <= 0}
+              onClick={() => {
+                if (partsDraft) {
+                  const parts = Object.entries(partsDraft).map(([vid, q]) => ({ variantId: vid, qty: Math.max(0, Math.round(Number(q) || 0)) })).filter((p) => p.qty > 0);
+                  onConfirm({
+                    batchId: batch.id,
+                    finalQuantity: parts.reduce((s, p) => s + p.qty, 0),
+                    variantId: parts[0]?.variantId || variantId,
+                    parts,
+                  });
+                  return;
+                }
                 onConfirm({
                   batchId: batch.id,
                   finalQuantity: Math.round(finalQuantity),
                   variantId,
-                })
-              }
+                });
+              }}
               className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 min-h-[40px]"
             >
               <Check className="w-4 h-4" />

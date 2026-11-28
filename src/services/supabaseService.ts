@@ -2138,6 +2138,7 @@ export async function fetchSourcingDataFromDb(): Promise<{
       productId: String(r.product_id),
       variantId: r.variant_id || undefined,
       quantity: Number(r.quantity || 0),
+      variantQty: r.variant_qty && typeof r.variant_qty === 'object' && Object.keys(r.variant_qty).length ? r.variant_qty : undefined,
       targetDate: r.target_date ? String(r.target_date).slice(0, 10) : undefined,
       currentStageKey: r.current_stage_key as OperationStageKey,
       status: r.status === 'completed' ? 'completed' : 'in_progress',
@@ -2294,12 +2295,15 @@ export async function upsertProductionBatchToDb(batch: ProductionBatch): Promise
     linked_booking_id: batch.linkedBookingId || null,
     linked_booking_number: batch.linkedBookingNumber || null,
     extra_booking_ids: batch.extraBookingIds || [],
+    variant_qty: batch.variantQty || {},
     requested_by_team: batch.requestedByTeam || null,
   });
   if (
     error &&
     !(batch.extraBookingIds && batch.extraBookingIds.length) &&
+    !(batch.variantQty && Object.keys(batch.variantQty).length) &&
     (error.message?.includes('linked_booking') ||
+      error.message?.includes('variant_qty') ||
       error.message?.includes('extra_booking') ||
       error.message?.includes('requested_by_team') ||
       (error as any).code === 'PGRST204' ||

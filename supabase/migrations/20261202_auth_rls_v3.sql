@@ -991,6 +991,8 @@ grant execute on function public.record_order_shortfall(text, text, integer) to 
 -- One purchase batch can cover several orders (same item): the first order is linked_booking_id,
 -- the others are listed in extra_booking_ids. Receiving covers every linked order.
 alter table public.production_batches add column if not exists extra_booking_ids text[] not null default '{}';
+-- One batch may cover several sizes/colours of the same item: {variant_id: pieces}. Empty = just variant_id.
+alter table public.production_batches add column if not exists variant_qty jsonb not null default '{}'::jsonb;
 
 -- What would be reserved for the waiting order if p_qty of this variant arrive in this batch?
 drop function if exists public.batch_receive_preview(text, text, integer);
@@ -1064,9 +1066,24 @@ grant select on public.order_stock_owed to authenticated;
 -- A purchase batch linked to an order may never order LESS than the order still needs.
 create or replace function public.guard_batch_min_quantity() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_owed integer;
+declare v_owed integer; v_have integer; r record;
 begin
-  if auth.uid() is null or new.linked_booking_id is null or new.variant_id is null then return new; end if;
+  if auth.uid() is null or new.linked_booking_id is null then return new; end if;
+  if new.status = 'completed' then return new; end if;
+  if new.variant_qty is not null and new.variant_qty <> '{}'::jsonb then
+    -- Several sizes in one batch: every size must cover what the linked orders still need of that size.
+    for r in select o.variant_id, sum(o.owed)::integer as owed from public.order_stock_owed o
+              where (o.booking_id = new.linked_booking_id or o.booking_id = any(coalesce(new.extra_booking_ids, '{}')))
+              group by o.variant_id loop
+      v_have := coalesce((new.variant_qty ->> r.variant_id)::integer, 0);
+      if r.owed > 0 and v_have < r.owed then
+        raise exception 'These orders still need % pcs of one of the sizes: the quantity for it must be at least that (you entered %).', r.owed, v_have
+          using errcode = '42501';
+      end if;
+    end loop;
+    return new;
+  end if;
+  if new.variant_id is null then return new; end if;
   select coalesce(sum(owed), 0) into v_owed from public.order_stock_owed
    where variant_id = new.variant_id
      and (booking_id = new.linked_booking_id or booking_id = any(coalesce(new.extra_booking_ids, '{}')));
@@ -1077,7 +1094,7 @@ begin
   return new;
 end $$;
 drop trigger if exists guard_batch_min_quantity on public.production_batches;
-create trigger guard_batch_min_quantity before insert or update of quantity, status, linked_booking_id, extra_booking_ids, variant_id on public.production_batches
+create trigger guard_batch_min_quantity before insert or update of quantity, status, linked_booking_id, extra_booking_ids, variant_id, variant_qty on public.production_batches
   for each row execute function public.guard_batch_min_quantity();
 
 -- "Needs action" list: every paid order still waiting for stock, with the item/size and whether a
@@ -1095,7 +1112,7 @@ begin
     select o.booking_id::text, b.booking_number::text, b.client_name::text, bi.product_id::text, o.variant_id::text,
            bi.product_name::text, bi.size::text, bi.color_name::text, o.owed::integer,
            exists (select 1 from public.production_batches pb
-                    where (pb.linked_booking_id = o.booking_id or o.booking_id = any(pb.extra_booking_ids)) and pb.variant_id = o.variant_id and pb.status = 'in_progress')
+                    where (pb.linked_booking_id = o.booking_id or o.booking_id = any(pb.extra_booking_ids)) and (pb.variant_id = o.variant_id or pb.variant_qty ? o.variant_id) and pb.status = 'in_progress')
       from public.order_stock_owed o
       join public.bookings b on b.id = o.booking_id
       join lateral (select * from public.booking_items i where i.booking_id = o.booking_id and i.variant_id = o.variant_id limit 1) bi on true

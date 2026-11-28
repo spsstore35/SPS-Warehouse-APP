@@ -384,6 +384,8 @@ export interface ProductionBatch {
   productId: string;
   variantId?: string;
   quantity: number;
+  /** Pieces per size/colour when one batch covers several variants of the same item (variantId -> pcs). Adds up to quantity. */
+  variantQty?: Record<string, number>;
   targetDate?: string;
   currentStageKey: OperationStageKey;
   status: 'in_progress' | 'completed';

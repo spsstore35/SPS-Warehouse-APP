@@ -34,7 +34,7 @@ import {
 import {
   clearLegacyLocalEntityCaches,
 } from './utils/storage';
-import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType, batchJoinBlockReason, firstWorkingStage } from './utils/sourcing';
+import { DEFAULT_STAGE_KEYS, getStageMeta, inferDefaultWorkflowType, batchJoinBlockReason, firstWorkingStage, batchVariantParts, addToBatchBreakdown } from './utils/sourcing';
 import { getEffectiveProductOffer } from './utils/offers';
 import { getScoutFare2Meta, isCoreScoutFare2 } from './utils/scoutFera2';
 import {
@@ -3689,7 +3689,7 @@ export default function App() {
     );
   };
 
-  // Merge two early batches of the same item: quantities add up, linked orders are combined.
+  // Merge two early batches of the same item (any size/colour): quantities add up, linked orders are combined.
   const handleMergeBatches = (keep: ProductionBatch, absorbed: ProductionBatch) => {
     const primary = keep.linkedBookingId || absorbed.linkedBookingId;
     const pairs: { id: string; num: string }[] = [];
@@ -3702,7 +3702,12 @@ export default function App() {
     (absorbed.extraBookingIds || []).forEach((id, i) => add(id, absorbed.extraBookingNumbers?.[i]));
     const merged: ProductionBatch = {
       ...keep,
-      quantity: keep.quantity + absorbed.quantity,
+      ...(() => {
+        const parts = [...batchVariantParts(absorbed)];
+        const loose = absorbed.quantity - parts.reduce((s, p) => s + p.qty, 0);
+        const r = addToBatchBreakdown(keep, loose > 0 ? [...parts, { qty: loose }] : parts);
+        return { quantity: r.quantity, variantQty: r.variantQty };
+      })(),
       linkedBookingId: primary,
       linkedBookingNumber: keep.linkedBookingId ? keep.linkedBookingNumber : absorbed.linkedBookingNumber,
       extraBookingIds: pairs.length ? pairs.map((p) => p.id) : undefined,
@@ -3726,6 +3731,7 @@ export default function App() {
   type JoinPrompt = {
     batch: ProductionBatch;
     blockedReason?: string;
+    variantId?: string;
     quantity: number;
     orders: { id: string; num: string }[];
     startNew: () => void;
@@ -3739,13 +3745,17 @@ export default function App() {
     startNew: () => void
   ) => {
     const open = productionBatches.filter(
-      (b) => b.productId === productId && b.variantId === variantId && b.status === 'in_progress'
+      (b) => b.productId === productId && b.status === 'in_progress'
     );
     if (open.length === 0) return startNew();
     const first = firstWorkingStage(productWorkflows.find((w) => w.productId === productId));
     const joinable = open.find((b) => !batchJoinBlockReason(b, first));
-    if (joinable) return setJoinPrompt({ batch: joinable, quantity, orders, startNew });
-    setJoinPrompt({ batch: open[0], blockedReason: batchJoinBlockReason(open[0], first) || undefined, quantity, orders, startNew });
+    if (joinable) return setJoinPrompt({ batch: joinable, variantId, quantity, orders, startNew });
+    setJoinPrompt({ batch: open[0], variantId, blockedReason: batchJoinBlockReason(open[0], first) || undefined, quantity, orders, startNew });
+  };
+  const joinVariantText = (productId: string, variantId?: string) => {
+    const v = products.find((x) => x.id === productId)?.variants.find((x) => x.id === variantId);
+    return v ? ` (size ${v.size} / ${v.colorName})` : '';
   };
   const joinExistingBatch = (p: JoinPrompt) => {
     const b = p.batch;
@@ -3763,7 +3773,8 @@ export default function App() {
     const extraNums = [...(b.extraBookingNumbers || (b.extraBookingIds || []).map(() => '')), ...list.map((o) => o.num)];
     const updated: ProductionBatch = {
       ...b,
-      quantity: b.quantity + p.quantity,
+      quantity: addToBatchBreakdown(b, [{ variantId: p.variantId, qty: p.quantity }]).quantity,
+      variantQty: addToBatchBreakdown(b, [{ variantId: p.variantId, qty: p.quantity }]).variantQty,
       linkedBookingId: primary,
       linkedBookingNumber: primaryNum,
       extraBookingIds: extraIds.length ? extraIds : undefined,
@@ -3772,7 +3783,7 @@ export default function App() {
     setProductionBatches((prev) => prev.map((x) => (x.id === b.id ? updated : x)));
     upsertProductionBatchToDb(updated)
       .then(() => {
-        showToast(`Added ${p.quantity} pcs to ${b.batchCode}: now ${updated.quantity} pcs.`);
+        showToast(`Added ${p.quantity} pcs${joinVariantText(b.productId, p.variantId)} to ${b.batchCode}: now ${updated.quantity} pcs.`);
         setTimeout(refreshShortageNotes, 1000);
       })
       .catch((err) => {
@@ -3849,7 +3860,32 @@ export default function App() {
     batchId: string;
     finalQuantity: number;
     variantId: string;
+    parts?: { variantId: string; qty: number }[];
   }) => {
+    if (args.parts && args.parts.length > 1) {
+      const parts = args.parts.map((p) => ({ variantId: p.variantId, qty: Math.max(0, Math.round(p.qty)) })).filter((p) => p.qty > 0);
+      Promise.all(parts.map((p) => previewBatchReceiveInDb(args.batchId, p.variantId, p.qty).catch(() => null))).then((pvs) => {
+        const reservedBy: Record<string, number> = {};
+        for (let i = 0; i < parts.length; i++) {
+          const pv = pvs[i];
+          const pr = products.find((x) => x.id === productionBatches.find((b) => b.id === args.batchId)?.productId);
+          const vv = pr?.variants.find((x) => x.id === parts[i].variantId);
+          const label = vv ? `size ${vv.size} / ${vv.colorName}` : 'one of the sizes';
+          if (pv && pv.owed > 0 && parts[i].qty < pv.owed) {
+            showToast(`Cannot complete: the orders on this purchase still need ${pv.owed} pcs of ${label} (Order #${pv.bookingNumber}). The quantity made for it must be at least ${pv.owed}.`);
+            return;
+          }
+          if (pv && pv.reserved > 0) reservedBy[parts[i].variantId] = pv.reserved;
+        }
+        const totalReserved = Object.values(reservedBy).reduce((s, n) => s + n, 0);
+        if (totalReserved > 0) {
+          const ok = window.confirm(`Heads up: ${totalReserved} pcs in total will be DEDUCTED for waiting orders and the rest goes to stock, per size.\n\nContinue?`);
+          if (!ok) return;
+        }
+        finishBatchStockIn({ ...args, parts }, reservedBy);
+      });
+      return;
+    }
     const qty = Math.max(1, Math.round(args.finalQuantity));
     previewBatchReceiveInDb(args.batchId, args.variantId, qty)
       .catch(() => null)
@@ -3866,7 +3902,7 @@ export default function App() {
           );
           if (!ok) return;
         }
-        finishBatchStockIn(args, pv?.reserved || 0);
+        finishBatchStockIn(args, { [args.variantId]: pv?.reserved || 0 });
       });
   };
 
@@ -3875,12 +3911,14 @@ export default function App() {
       batchId,
       finalQuantity,
       variantId,
+      parts: partsIn,
     }: {
       batchId: string;
       finalQuantity: number;
       variantId: string;
+      parts?: { variantId: string; qty: number }[];
     },
-    reserved: number
+    reservedBy: Record<string, number>
   ) => {
     const batch = productionBatches.find((b) => b.id === batchId);
     const product = products.find((p) => p.id === batch?.productId);
@@ -3889,20 +3927,21 @@ export default function App() {
       return;
     }
 
-    const qtyToAdd = Math.max(1, Math.round(finalQuantity));
-    const targetVariant = product.variants.find((v) => v.id === variantId) || product.variants[0];
-    if (!targetVariant) {
+    const parts = partsIn && partsIn.length > 1
+      ? partsIn
+      : [{ variantId: product.variants.find((v) => v.id === variantId)?.id || product.variants[0]?.id || '', qty: Math.max(1, Math.round(finalQuantity)) }];
+    if (parts.length === 0 || !parts[0].variantId) {
       showToast('No variant found on product to receive stock.');
       return;
     }
-
-    const oldQty = targetVariant.quantity;
-    const newQty = oldQty + qtyToAdd - reserved;
+    const qtyToAdd = parts.reduce((s, p) => s + p.qty, 0);
+    const targetVariant = product.variants.find((v) => v.id === parts[0].variantId) || product.variants[0];
     const oldTotal = product.totalQuantity;
 
-    const updatedVariants = product.variants.map((v) =>
-      v.id === targetVariant.id ? { ...v, quantity: newQty } : v
-    );
+    const updatedVariants = product.variants.map((v) => {
+      const part = parts.find((p) => p.variantId === v.id);
+      return part ? { ...v, quantity: v.quantity + part.qty - (reservedBy[v.id] || 0) } : v;
+    });
     const newTotal = updatedVariants.reduce((sum, v) => sum + v.quantity, 0);
     const updatedProduct: Product = {
       ...product,
@@ -3913,39 +3952,49 @@ export default function App() {
 
     const nextProducts = products.map((p) => (p.id === product.id ? updatedProduct : p));
     setProducts(nextProducts);
-    receiveBatchStockInDb(batchId, targetVariant.id, qtyToAdd)
-      .then((r) => {
-        if (r.reserved > 0) showToast(`${r.reserved} unit(s) were taken for the waiting order. Stock is now ${r.newQuantity}.`);
-      })
-      .catch((err) => showToast(`Database stock update error: ${err?.message || 'Sync failed'}`));
+    (async () => {
+      for (const part of parts) {
+        try {
+          const r = await receiveBatchStockInDb(batchId, part.variantId, part.qty);
+          if (r.reserved > 0) showToast(`${r.reserved} unit(s) were taken for the waiting order. Stock is now ${r.newQuantity}.`);
+        } catch (err: any) {
+          showToast(`Database stock update error: ${err?.message || 'Sync failed'}`);
+        }
+      }
+    })();
 
-    // Log audit entry for Gard stock-in
-    const sizeText =
-      targetVariant.size === 'One Size' || targetVariant.size === 'Standard'
-        ? 'Standard Size'
-        : targetVariant.size;
-    const newLog: AuditLogEntry = {
-      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: new Date().toISOString(),
-      action: 'stock_adjusted',
-      actorName: currentUser?.name || 'Operations',
-      actorRole: currentUser?.role || 'admin',
-      productId: product.id,
-      productName: product.name,
-      productImage: product.image,
-      variantSize: sizeText,
-      variantColor: targetVariant.colorName,
-      oldQuantity: oldQty,
-      newQuantity: newQty,
-      delta: qtyToAdd,
-      totalQuantityBefore: oldTotal,
-      totalQuantityAfter: newTotal,
-      reason: `Batch Stock-In (Gard): ${batch.batchCode}`,
-      summary: `Batch ${batch.batchCode} Stocked In (+${qtyToAdd}): "${product.name}" [${sizeText} / ${targetVariant.colorName}] (${oldQty} -> ${newQty})`,
-      details: `Completed production batch ${batch.batchCode}. Stock added via Gard: +${qtyToAdd} pcs (${sizeText} / ${targetVariant.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
-    };
-    setAuditLogs((prev) => [newLog, ...prev]);
-    insertAuditLogInDb(newLog).catch(() => {});
+    // Log audit entry for Gard stock-in (one per size/colour)
+    let newLog: AuditLogEntry | undefined;
+    parts.forEach((part) => {
+      const pv = product.variants.find((v) => v.id === part.variantId);
+      if (!pv) return;
+      const oldQty = pv.quantity;
+      const newQty = oldQty + part.qty - (reservedBy[pv.id] || 0);
+      const sizeText = pv.size === 'One Size' || pv.size === 'Standard' ? 'Standard Size' : pv.size;
+      const log: AuditLogEntry = {
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: new Date().toISOString(),
+        action: 'stock_adjusted',
+        actorName: currentUser?.name || 'Operations',
+        actorRole: currentUser?.role || 'admin',
+        productId: product.id,
+        productName: product.name,
+        productImage: product.image,
+        variantSize: sizeText,
+        variantColor: pv.colorName,
+        oldQuantity: oldQty,
+        newQuantity: newQty,
+        delta: part.qty,
+        totalQuantityBefore: oldTotal,
+        totalQuantityAfter: newTotal,
+        reason: `Batch Stock-In (Gard): ${batch.batchCode}`,
+        summary: `Batch ${batch.batchCode} Stocked In (+${part.qty}): "${product.name}" [${sizeText} / ${pv.colorName}] (${oldQty} -> ${newQty})`,
+        details: `Completed production batch ${batch.batchCode}. Stock added via Gard: +${part.qty} pcs (${sizeText} / ${pv.colorName}). Inventory updated from ${oldTotal} to ${newTotal} pcs.`,
+      };
+      newLog = newLog || log;
+      setAuditLogs((prev) => [log, ...prev]);
+      insertAuditLogInDb(log).catch(() => {});
+    });
 
     // Auto-log batch stage costs into Vendor Price History
     const todayIso = new Date().toISOString().slice(0, 10);
@@ -4003,6 +4052,7 @@ export default function App() {
       ...batch,
       quantity: qtyToAdd,
       variantId: targetVariant.id,
+      variantQty: parts.length > 1 ? Object.fromEntries(parts.map((p) => [p.variantId, p.qty])) : undefined,
       currentStageKey: 'stock_in',
       status: 'completed',
       completedAt: new Date().toISOString(),
@@ -4306,6 +4356,7 @@ export default function App() {
             batchId: req.payload.batchId,
             finalQuantity: req.payload.finalQuantity,
             variantId: req.payload.variantId,
+            parts: req.payload.parts,
           });
         }
         break;
@@ -5316,7 +5367,7 @@ export default function App() {
                 <>
                   <div className="text-base font-black text-slate-900">Add to the open batch?</div>
                   <div className="text-xs text-slate-700">
-                    {joinPrompt.batch.batchCode} ({joinPrompt.batch.quantity} pcs) for this item is still at its first stage, not sent to the factory and no money spent. Add {joinPrompt.quantity} pcs to it (total {joinPrompt.batch.quantity + joinPrompt.quantity}), or start a new batch?
+                    {joinPrompt.batch.batchCode} ({joinPrompt.batch.quantity} pcs) for this item is still at its first stage, not sent to the factory and no money spent. Size/color does not matter, the same vendor makes all of them. Add {joinPrompt.quantity} pcs{joinVariantText(joinPrompt.batch.productId, joinPrompt.variantId)} to it (total {joinPrompt.batch.quantity + joinPrompt.quantity}, kept per size), or start a new batch?
                   </div>
                   <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); joinExistingBatch(p); }} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-black text-xs">Add to {joinPrompt.batch.batchCode}</button>
                   <button type="button" onClick={() => { const p = joinPrompt; setJoinPrompt(null); p.startNew(); }} className="w-full py-2.5 rounded-xl bg-slate-800 text-white font-black text-xs">Start a new batch</button>
