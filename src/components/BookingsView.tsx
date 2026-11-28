@@ -54,6 +54,7 @@ import {
   X,
   Printer,
   MessageCircle,
+  Send,
   Edit3,
   Users,
 } from 'lucide-react';
@@ -1351,7 +1352,7 @@ This is our official Scout Store number. Through this chat, you can:
                   </div>
                 </div>
 
-                {activeBooking.clientPhone && activeBooking.clientPhone !== 'N/A' && (
+                {activeBooking.source !== 'public_link' && activeBooking.clientPhone && activeBooking.clientPhone !== 'N/A' && (
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     {/* Language Switcher for WhatsApp message template */}
                     <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200">
@@ -1394,11 +1395,11 @@ This is our official Scout Store number. Through this chat, you can:
                       onClick={() => {
                         onOpenPrintModal(activeBooking, 'quotation');
                       }}
-                      className="px-4 py-2 sm:py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs flex items-center justify-center gap-2 shadow-xs transition-all"
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
                       title={`Send ${waLanguage === 'ar' ? 'Arabic' : 'English'} quotation message on WhatsApp & open PDF to attach`}
                     >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>WhatsApp ({waLanguage === 'ar' ? 'عربي' : 'EN'})</span>
+                      <Send className="w-4 h-4 stroke-[2.5]" />
+                      <span>Send on WhatsApp</span>
                     </a>
                   </div>
                 )}

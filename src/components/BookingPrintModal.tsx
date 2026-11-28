@@ -286,7 +286,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               <span>{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
             </button>
 
-            {/* Send on WhatsApp: opens the phone's share sheet with the PDF attached */}
+            {/* Send on WhatsApp: only for orders from the public order link (other orders use the button on the order screen) */}
+            {booking.source === 'public_link' && (
             <button
               type="button"
               disabled={isSharing || isDownloading}
@@ -301,6 +302,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               )}
               <span>{isSharing ? 'Preparing...' : 'Send on WhatsApp'}</span>
             </button>
+            )}
 
             {/* Step 2 of Send on WhatsApp */}
             {pendingPdf && (
