@@ -82,6 +82,9 @@ Run Part 1 BEFORE deploying the new site (the site calls this function).
 
 - Ready-made purchases (Sourcing batch form, items with the ready-made flow): units per box, number of boxes (pieces are calculated) and the supplier's lead time for this order (days, typed each time, sets the target date). Stored on the supplier stage of the batch (no database change). The default ready-made flow is now supplier then stock-in (packaging can still be added per item).
 
+- Delivery estimate: for an order with missing stock, the order page and the Needs action line show "Estimated delivery: ~N days (+safety) = date". N is the slowest earlier finished batch of the same item/size (Steps & costs dates, else batch start to stock-in). No history: "no data yet" and he types his own days. Safety days default 14 and can be changed (remembered on that device).
+- Vendors, prices, stages and batches in Sourcing: edited directly only by the purchases admin and the full admin (same as the database). Purchases staff send a request that the purchases admin or full admin approves.
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).

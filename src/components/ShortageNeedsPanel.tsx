@@ -1,6 +1,8 @@
 import React from 'react';
 import { AlertTriangle, ShoppingCart, Check } from 'lucide-react';
 import type { OrderShortageNote } from '../services/supabaseService';
+import type { ProductionBatch } from '../types/inventory';
+import DeliveryEstimateLine from './DeliveryEstimateLine';
 
 export interface LowStockNote {
   productId: string;
@@ -14,6 +16,7 @@ export interface LowStockNote {
 }
 
 interface Props {
+  batches?: ProductionBatch[];
   lowNotes?: LowStockNote[];
   onStartLow?: (n: LowStockNote) => void;
   notes: OrderShortageNote[];
@@ -21,7 +24,7 @@ interface Props {
   onStart: (note: OrderShortageNote) => void;
 }
 
-export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = [], onStartLow }: Props) {
+export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = [], onStartLow, batches = [] }: Props) {
   if (notes.length === 0 && lowNotes.length === 0) return null;
   const open = [...notes.filter((n) => !n.hasBatch), ...lowNotes.filter((n) => !n.hasBatch)];
   return (
@@ -42,6 +45,7 @@ export default function ShortageNeedsPanel({ notes, canAct, onStart, lowNotes = 
               <span className="font-black font-mono">{n.owed}</span> x {n.productName} ({n.size}
               {n.colorName ? ` / ${n.colorName}` : ''}).
               {!n.hasBatch && ' We must start manufacturing / purchasing.'}
+              <DeliveryEstimateLine items={[{ productId: n.productId, variantId: n.variantId }]} batches={batches} />
             </div>
             {n.hasBatch ? (
               <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900 font-bold text-[11px]">

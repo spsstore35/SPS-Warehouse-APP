@@ -24,7 +24,7 @@ import {
   getVendorTagInfo,
   inferDefaultWorkflowType,
 } from '../utils/sourcing';
-import { isUserAdmin, canUserManageVendors } from '../utils/security';
+import { canUserManageVendors } from '../utils/security';
 import BatchCostModal from './BatchCostModal';
 import { TeamRequestsPanel } from './TeamRequestsPanel';
 import {
@@ -122,7 +122,9 @@ export const SourcingOperationsView: React.FC<SourcingOperationsViewProps> = ({
   onCompleteBatchStockIn,
   onShowToast,
 }) => {
-  const isAdmin = isUserAdmin(currentUser);
+  // Direct edits (vendors, prices, stages, batches): purchases admin and full admin only (same as the database).
+  // Everyone else sends a request that one of them approves.
+  const isAdmin = canUserManageVendors(currentUser, users);
   const [topTab, setTopTab] = useState<TopTab>('catalog');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [stageDrafts, setStageDrafts] = useState<Record<string, { approxOrderQty: string; orderScriptNotes: string }>>({});

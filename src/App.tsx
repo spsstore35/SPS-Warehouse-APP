@@ -4435,6 +4435,7 @@ export default function App() {
           <div className="space-y-6">
             {!isLeader && (
               <ShortageNeedsPanel
+                batches={productionBatches}
                 lowNotes={lowStockNotes}
                 onStartLow={(n) => setLowToStart(n)}
                 notes={shortageNotes}
@@ -5266,6 +5267,7 @@ export default function App() {
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <div className="space-y-4">
           <ShortageNeedsPanel
+            batches={productionBatches}
             lowNotes={lowStockNotes}
             onStartLow={(n) => setLowToStart(n)}
             notes={shortageNotes}

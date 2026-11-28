@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchOrderStockOwedFromDb } from '../services/supabaseService';
+import DeliveryEstimateLine from './DeliveryEstimateLine';
 import {
   BatchStageAssignment,
   Booking,
@@ -284,7 +285,7 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
 
   // Compute live shortage for any booking against current live catalog stock
   const getBookingShortageInfo = (b: Booking) => {
-    const shortageItems: { productName: string; size: string; colorName: string; deficit: number }[] = [];
+    const shortageItems: { productId: string; variantId: string; productName: string; size: string; colorName: string; deficit: number }[] = [];
     b.items.forEach((it) => {
       const prod = products.find((p) => p.id === it.productId);
       const variant = prod?.variants.find((v) => v.id === it.variantId);
@@ -292,6 +293,8 @@ export const BookingsView: React.FC<BookingsViewProps> = ({
       const deficit = b.inventoryDeducted ? owedMap[`${b.id}|${it.variantId}`] || 0 : Math.max(0, (it.quantity || 0) - liveAvail);
       if (deficit > 0) {
         shortageItems.push({
+          productId: it.productId,
+          variantId: it.variantId,
           productName: it.productName,
           size: String(it.size || 'Standard'),
           colorName: it.colorName || 'Standard',
@@ -1592,6 +1595,10 @@ This is our official Scout Store number. Through this chat, you can:
                             </span>
                           ))}
                         </div>
+                        <DeliveryEstimateLine
+                          items={pipeInfo.shortageItems.map((si) => ({ productId: si.productId, variantId: si.variantId }))}
+                          batches={batches}
+                        />
                       </div>
                     )}
 
