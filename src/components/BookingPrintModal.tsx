@@ -20,6 +20,7 @@ interface BookingPrintModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultDocType?: 'quotation' | 'production';
+  onWhatsAppSent?: (bookingId: string) => void;
 }
 
 export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
@@ -27,6 +28,7 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   isOpen,
   onClose,
   defaultDocType = 'quotation',
+  onWhatsAppSent,
 }) => {
   const [docType, setDocType] = useState<'quotation' | 'production'>(defaultDocType);
   const previewScale = '0.75';
@@ -74,7 +76,25 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
   // Step 1: open the customer's chat with a greeting (must happen right on the tap), build the PDF meanwhile.
   const handleSendWhatsApp = () => {
     const num = whatsappNumber(booking.clientPhone);
-    const greeting = `Hello ${booking.clientName}, this is SPS Store. Your ${docType === 'quotation' ? 'invoice' : 'sheet'} ${booking.bookingNumber} (PDF) is coming in the next message.`;
+    const name = (booking.clientName || '').trim();
+    const greeting =
+      booking.source === 'public_link'
+        ? `Hello ${booking.clientName}, this is SPS Store. Your ${docType === 'quotation' ? 'invoice' : 'sheet'} ${booking.bookingNumber} (PDF) is coming in the next message.`
+        : `Hello ${name} 👋
+
+This is SPS Store. This number is your contact number for order ${booking.bookingNumber}.
+
+We will send you your quotation here in a moment, and we will confirm the payment with you. Once it is confirmed, we will move forward together, step by step, until your order is delivered.
+
+Please send us any details or questions right here. We are happy to help. 🌟
+
+أهلاً ${name} 👋
+
+معاك SPS Store. الرقم ده هو رقم التواصل الخاص بطلبك رقم ${booking.bookingNumber}.
+
+هنبعتلك عرض السعر هنا حالاً، وهنأكد معاك الدفع. وأول ما يتأكد هنكمّل سوا خطوة بخطوة لحد ما الطلب يوصلك.
+
+ابعتلنا هنا أي تفاصيل أو أسئلة، ويسعدنا نساعدك. 🌟`;
     if (num) window.open(`https://wa.me/${num}?text=${encodeURIComponent(greeting)}`, '_blank');
     else alert('This order has no valid phone number. The PDF will be prepared so you can pick the chat yourself.');
     handleDownloadPdf('share');
@@ -87,16 +107,19 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
     if (nav.canShare && nav.canShare({ files: [pendingPdf.file] })) {
       try {
         await nav.share({ files: [pendingPdf.file], title: pendingPdf.filename });
+        onWhatsAppSent?.(booking.id);
         setPendingPdf(null);
       } catch (e: any) {
         if (!(e && e.name === 'AbortError')) {
           pendingPdf.pdf.save(pendingPdf.filename);
           alert('Could not open the share sheet. The PDF was downloaded: attach it in WhatsApp with the paperclip.');
+          onWhatsAppSent?.(booking.id);
         }
       }
     } else {
       pendingPdf.pdf.save(pendingPdf.filename);
       alert('This device cannot share the file directly. The PDF was downloaded: attach it in the same WhatsApp chat with the paperclip.');
+      onWhatsAppSent?.(booking.id);
       setPendingPdf(null);
     }
   };
@@ -344,8 +367,8 @@ export const BookingPrintModal: React.FC<BookingPrintModalProps> = ({
               <span>{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
             </button>
 
-            {/* Send on WhatsApp: only for orders from the public order link (other orders use the button on the order screen) */}
-            {booking.source === 'public_link' && (
+            {/* Send on WhatsApp (two steps: greeting, then the PDF) for every order */}
+            {docType === 'quotation' && (
             <button
               type="button"
               disabled={isSharing || isDownloading}

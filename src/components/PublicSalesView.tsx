@@ -244,6 +244,9 @@ export const PublicSalesView: React.FC<Props> = ({ products, categories, booking
                   <div className="font-black text-slate-900 break-words">{b.clientName}</div>
                   <div className="text-xs text-slate-500 mt-0.5">{b.clientPhone}</div>
                   <div className="text-[11px] font-mono text-slate-400 mt-0.5">{b.bookingNumber}</div>
+                  {b.waSentAt && (
+  <div className="text-[11px] font-bold text-emerald-700 mt-0.5">✓ Sent on WhatsApp · {new Date(b.waSentAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{b.waSentByName ? ` · ${b.waSentByName}` : ''}</div>
+)}
                 </div>
                 <div className="font-black text-slate-900 shrink-0">{money(b.total)}</div>
               </div>

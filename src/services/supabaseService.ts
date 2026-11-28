@@ -1402,6 +1402,8 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
       assignedToName: b.assigned_to_name || undefined,
       sharedWithId: b.shared_with_id || undefined,
       sharedWithName: b.shared_with_name || undefined,
+      waSentAt: b.wa_sent_at || undefined,
+      waSentByName: b.wa_sent_by_name || undefined,
       clientPhone: b.client_phone || 'N/A',
       notes: b.notes || undefined,
       items: lineItems,

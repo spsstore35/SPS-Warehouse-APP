@@ -1045,6 +1045,9 @@ This is our official Scout Store number. Through this chat, you can:
                           Created {new Date(b.createdAt).toLocaleDateString()} by{' '}
                           <strong className="text-slate-700">{b.createdByName}</strong>
                         </div>
+                        {b.waSentAt && (
+  <div className="text-[11px] font-bold text-emerald-700 mt-0.5">✓ Sent on WhatsApp · {new Date(b.waSentAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{b.waSentByName ? ` · ${b.waSentByName}` : ''}</div>
+)}
                       </div>
                     </div>
 
@@ -1307,6 +1310,9 @@ This is our official Scout Store number. Through this chat, you can:
                     <span>•</span>
                     <span className="text-slate-300">by {activeBooking.createdByName}</span>
                   </div>
+                  {activeBooking.waSentAt && (
+  <div className="text-[11px] font-bold text-emerald-400 mt-0.5">✓ Sent on WhatsApp · {new Date(activeBooking.waSentAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{activeBooking.waSentByName ? ` · ${activeBooking.waSentByName}` : ''}</div>
+)}
                 </div>
               </div>
 

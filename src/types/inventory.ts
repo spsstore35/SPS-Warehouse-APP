@@ -204,6 +204,8 @@ export interface Booking {
   assignedToName?: string;
   sharedWithId?: string; // one extra person sharing the order task (booking only)
   sharedWithName?: string;
+  waSentAt?: string; // when the invoice PDF was sent on WhatsApp
+  waSentByName?: string;
   clientPhone: string;
   notes?: string;
   items: BookingItem[];

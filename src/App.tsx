@@ -4614,6 +4614,17 @@ export default function App() {
       Boolean(b.paymentVerificationRequested && !b.depositPaid && b.status === 'pending')
   ).length;
 
+  // Remember that the invoice PDF was sent on WhatsApp (shown on the order card and details).
+  const handleMarkWhatsAppSent = async (bookingId: string) => {
+    const { error } = await supabase.rpc('booking_mark_wa_sent', { p_booking: bookingId });
+    if (error) {
+      showToast('Could not save "Sent on WhatsApp": ' + error.message);
+      return;
+    }
+    const now = new Date().toISOString();
+    setBookings((prev) => prev.map((b) => (b.id === bookingId ? { ...b, waSentAt: now, waSentByName: currentUser?.name } : b)));
+  };
+
   // Staff requests waiting for THIS admin (team admin of the scope, or full admin).
   const myPendingTeamRequests = teamChangeRequests.filter((r) => {
     if (r.status !== 'pending' || !currentUser) return false;
@@ -6454,6 +6465,7 @@ export default function App() {
           isOpen={isPrintModalOpen}
           booking={printBooking}
           defaultDocType={printDocType}
+          onWhatsAppSent={handleMarkWhatsAppSent}
           onClose={() => {
             setIsPrintModalOpen(false);
             setPrintBooking(null);
