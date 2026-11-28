@@ -2015,7 +2015,19 @@ export default function App() {
       getScoutFare2Meta(booking.assignedFare2);
     const taskId = `task_order_${booking.id}`;
     const invTaskId = `task_inv_${booking.id}`;
-    const createdDate = (booking.createdAt || new Date().toISOString()).slice(0, 10);
+    // Teams only see an order (calendar / board tasks) once the deposit is confirmed. An unpaid order
+    // creates nothing, and any task made for it earlier is removed.
+    const orderIsPaid = Boolean(booking.depositPaid) || booking.status !== 'pending';
+    if (!orderIsPaid) {
+      const stale = [taskId, invTaskId];
+      if (calendarEvents.some((ev) => stale.includes(ev.id))) {
+        setCalendarEvents((prev) => prev.filter((ev) => !stale.includes(ev.id)));
+        stale.forEach((id) => deleteCalendarEventFromDb(id).catch(() => {}));
+      }
+      return;
+    }
+    // The task is dated by the PAYMENT day (not the day the order was created).
+    const createdDate = (booking.depositPaidAt || new Date().toISOString()).slice(0, 10);
     const totalUnits = booking.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
     const itemsSummary = booking.items
       .map(
