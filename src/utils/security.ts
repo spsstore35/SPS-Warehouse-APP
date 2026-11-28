@@ -332,8 +332,7 @@ export function canUserEditBookings(
 ): boolean {
   if (!user || isUserLeader(user)) return false;
   if (isFullAccessAdmin(user, allUsers)) return true;
-  const t = getUserAssignedTeams(user);
-  return t.includes('troops') || t.includes('budgeting'); // may send order / payment requests
+  return getUserAssignedTeams(user).includes('troops'); // only Scout Fera2 staff send order requests
 }
 
 /**

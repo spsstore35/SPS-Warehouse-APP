@@ -616,8 +616,7 @@ begin
     with check (
       public.app_is_staff_or_above()
       and requested_by_id = auth.uid()::text
-      and (public.app_member_of_any(array[team_scope])
-           or (team_scope = 'troops' and public.app_member_of_any(array['budgeting'])))
+      and public.app_member_of_any(array[team_scope])
       and (status = 'pending' or public.app_is_team_admin(team_scope))
     );
   create policy tcr_update on public.team_change_requests for update to authenticated
@@ -907,7 +906,7 @@ begin
   if public.app_admin_of_any(array['troops']) then return new; end if;            -- full_admin / Scout Fera2 team_admin
   if public.app_admin_of_any(array['budgeting']) then v_allowed := v_payment;      -- payment confirmation only
   elsif public.app_admin_of_any(array['inventory']) then v_allowed := array['stock_check_status','updated_at'];
-  elsif public.app_member_of_any(array['troops','budgeting']) then v_allowed := v_request;  -- Fera2 + budgeting staff: only ask for deposit/payment checks
+  elsif public.app_member_of_any(array['troops']) then v_allowed := v_request;     -- Fera2 staff only: ask for deposit/payment checks
   else v_allowed := array['updated_at'];
   end if;
   if not (v_diff <@ v_allowed) then
