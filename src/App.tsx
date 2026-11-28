@@ -5259,13 +5259,14 @@ export default function App() {
         {effectiveView === 'sourcing' && canUserAccessView(currentUser, 'sourcing', users) && (
           <div className="space-y-4">
           <SourcingOperationsView
-            needsCard={
+            needsCard={(openItem) => (
               <>
                 <ShortageCard
                   batches={productionBatches}
                   notes={shortageNotes}
                   canAct={canUserStartShortagePurchase(currentUser, users)}
                   onStart={(n) => setShortageToStart(n)}
+                  onOpenItem={openItem}
                 />
                 <LowStockCard
                   batches={productionBatches}
@@ -5275,7 +5276,7 @@ export default function App() {
                   onStart={(n) => setShortageToStart(n)}
                 />
               </>
-            }
+            )}
             products={products}
             vendors={vendors}
             workflows={productWorkflows}

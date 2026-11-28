@@ -24,6 +24,7 @@ interface Props {
   onStart: (note: OrderShortageNote) => void;
   /** Big red banner that opens/closes the list (Sourcing page). */
   collapsible?: boolean;
+  onOpenItem?: (productId: string) => void;
 }
 
 export default function ShortageNeedsPanel({ notes: allNotes, canAct, onStart, lowNotes: allLow = [], onStartLow, batches = [], collapsible = false }: Props) {
@@ -130,7 +131,7 @@ export default function ShortageNeedsPanel({ notes: allNotes, canAct, onStart, l
 /** Catalog-grid card: "a batch is needed". Tap to list what to make, per order. */
 export function ShortageCard(props: Omit<Props, 'collapsible'>) {
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<'item' | 'order'>('item');
+  const [sel, setSel] = useState<string | null>(null);
   const notes = props.notes.filter((n) => !n.hasBatch);
   if (notes.length === 0) return null;
   const orders = new Set(notes.map((n) => n.bookingId)).size;
@@ -148,7 +149,7 @@ export function ShortageCard(props: Omit<Props, 'collapsible'>) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-left rounded-2xl border-2 border-rose-600 bg-rose-50 hover:bg-rose-100 p-4 flex flex-col gap-1.5"
+        className="text-left rounded-2xl border-2 border-rose-600 bg-rose-50 hover:bg-rose-100 p-4 flex flex-col justify-between gap-1.5 min-h-[132px]"
       >
         <div className="flex items-center gap-2 text-rose-700 font-black text-sm">
           <AlertTriangle className="w-5 h-5 shrink-0" /> Batch needed
@@ -159,37 +160,55 @@ export function ShortageCard(props: Omit<Props, 'collapsible'>) {
         </div>
       </button>
       {open && (
-        <div className="col-span-full rounded-2xl border border-rose-300 bg-rose-50 p-3.5 space-y-3">
-          <div className="flex gap-1.5">
-            {(['item', 'order'] as const).map((v) => (
+        <div className="col-span-full rounded-2xl border border-rose-300 bg-rose-50 p-3.5 space-y-2">
+          {Array.from(byItem.entries()).map(([vid, e]) => (
+            <div key={vid} className="rounded-xl bg-white border border-rose-200 text-xs text-slate-900">
               <button
-                key={v}
                 type="button"
-                onClick={() => setView(v)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black border ${
-                  view === v ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-900 border-rose-200'
-                }`}
+                onClick={() => setSel((cur) => (cur === vid ? null : vid))}
+                className="w-full flex items-center justify-between gap-2 p-2.5 text-left"
               >
-                {v === 'item' ? 'By item' : 'By order'}
-              </button>
-            ))}
-          </div>
-          {view === 'order' ? (
-            <ShortageNeedsPanel {...props} />
-          ) : (
-            <div className="space-y-2">
-              {Array.from(byItem.values()).map((e) => (
-                <div key={e.name + e.size + e.color} className="p-2.5 rounded-xl bg-white border border-rose-200 text-xs text-slate-900">
+                <span>
                   <span className="font-black">{e.name}</span> ({e.size}{e.color ? ` / ${e.color}` : ''}): make{' '}
                   <span className="font-black font-mono">{e.total}</span>
-                  <div className="text-slate-600 mt-0.5">
-                    For: {e.orders.map((o) => `#${o.bookingNumber}${o.clientName ? ` (${o.clientName})` : ''} x${o.owed}`).join(', ')}
-                  </div>
+                </span>
+                <span className="text-rose-700 font-black">{sel === vid ? 'Close' : 'Open'}</span>
+              </button>
+              {sel === vid && (
+                <div className="border-t border-rose-100 p-2.5 space-y-2">
+                  <div className="font-bold text-slate-700">Needed for these orders:</div>
+                  {e.orders.map((o) => (
+                    <div key={o.bookingId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span>
+                        Order <span className="font-black">#{o.bookingNumber}</span>
+                        {o.clientName ? ` (${o.clientName})` : ''}: <span className="font-black font-mono">{o.owed}</span>
+                      </span>
+                      {props.canAct ? (
+                        <button
+                          type="button"
+                          onClick={() => props.onStart(o)}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs min-h-[40px]"
+                        >
+                          <ShoppingCart className="w-4 h-4" /> Start batch
+                        </button>
+                      ) : (
+                        <span className="text-[11px] font-bold text-slate-500">View only</span>
+                      )}
+                    </div>
+                  ))}
+                  {props.onOpenItem && (
+                    <button
+                      type="button"
+                      onClick={() => props.onOpenItem!(e.orders[0].productId)}
+                      className="text-[11px] font-black text-blue-700 hover:underline"
+                    >
+                      Open this item in Sourcing
+                    </button>
+                  )}
                 </div>
-              ))}
-              <div className="text-[11px] font-semibold text-slate-500">To start a purchase, open the "By order" view.</div>
+              )}
             </div>
-          )}
+          ))}
         </div>
       )}
     </>
@@ -206,7 +225,7 @@ export function LowStockCard(props: Omit<Props, 'collapsible' | 'notes'>) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-left rounded-2xl border-2 border-amber-500 bg-amber-50 hover:bg-amber-100 p-4 sm:p-5 flex flex-col justify-between gap-3 min-h-[120px]"
+        className="text-left rounded-2xl border-2 border-amber-500 bg-amber-50 hover:bg-amber-100 p-4 flex flex-col justify-between gap-1.5 min-h-[132px]"
       >
         <div className="flex items-center gap-2 text-amber-800 font-black text-sm">
           <AlertTriangle className="w-5 h-5 shrink-0" /> Low stock
