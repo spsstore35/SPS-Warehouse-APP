@@ -753,44 +753,69 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
     productByName,
   ]);
 
-  // Unpaid demand (display only): pieces asked for by orders that have not paid yet, per item and size.
-  // Uses the same date and branch filters as the aggregator above. No money, no customers. Unpaid orders
-  // never reserve stock and are not part of the shortage lists.
+  // Unpaid demand (display only): pieces asked for by orders that have not paid a deposit yet, per item and
+  // size, with the team they come from. No money, no customer names. Unpaid orders never reserve stock and
+  // are not part of the shortage lists.
+  const [unpaidFilter, setUnpaidFilter] = useState<'all' | 'requested' | 'waiting'>('all');
+  const [unpaidSearch, setUnpaidSearch] = useState('');
+  const [unpaidFare2, setUnpaidFare2] = useState<string[]>([]);
+  const [unpaidFrom, setUnpaidFrom] = useState('');
+  const [unpaidTo, setUnpaidTo] = useState('');
   const unpaidDemandRows = useMemo(() => {
-    const effFrom = aggFromDate || fromDate;
-    const effTo = aggToDate || toDate;
-    const fare2Set = new Set(aggregatorFare2.map((f) => f.toLowerCase()));
-    const map = new Map<string, { key: string; productName: string; size: string; colorName: string; colorHex: string; unpaid: number; paid: number }>();
+    const effFrom = unpaidFrom || fromDate;
+    const effTo = unpaidTo || toDate;
+    const fare2Set = new Set(unpaidFare2.map((f) => f.toLowerCase()));
+    const q = unpaidSearch.trim().toLowerCase();
+    const map = new Map<string, {
+      key: string; productName: string; sku: string; category: string; size: string; colorName: string; colorHex: string;
+      unpaid: number; orders: Set<string>; teams: Map<string, number>;
+    }>();
     bookings.forEach((b) => {
+      if (isOrderPaidOrConfirmed(b) || b.status !== 'pending') return;
+      const requested = Boolean(b.paymentVerificationRequested || b.pendingDepositPercentage);
+      if (unpaidFilter === 'requested' && !requested) return;
+      if (unpaidFilter === 'waiting' && requested) return;
       const orderDay = toOrderDateKey(b.createdAt);
       if (effFrom && orderDay && orderDay < effFrom) return;
       if (effTo && orderDay && orderDay > effTo) return;
       if ((effFrom || effTo) && !orderDay) return;
-      const resolvedBranch = resolveBookingBranchName(b);
-      if (fare2Set.size > 0) {
-        if (!fare2Set.has(resolvedBranch.toLowerCase())) return;
-      } else if (branchFilter !== 'All Branches') {
-        if (branchFilter === 'Unassigned') {
-          if (resolvedBranch !== 'Unassigned') return;
-        } else if (resolvedBranch.toLowerCase() !== branchFilter.toLowerCase()) {
-          return;
-        }
-      }
-      const paid = isOrderPaidOrConfirmed(b);
+      const team = resolveBookingBranchName(b);
+      if (fare2Set.size > 0 && !fare2Set.has(team.toLowerCase())) return;
       b.items.forEach((it) => {
         const sizeLabel = normalizeSizeLabel(it.size);
         const colorName = (it.colorName || 'Standard').trim() || 'Standard';
         const catProd = productById.get(it.productId) || productByName.get((it.productName || '').trim().toLowerCase());
         const prodName = catProd?.name || it.productName;
         const key = `${(it.productId || prodName).toLowerCase()}__${sizeLabel.toLowerCase()}__${colorName.toLowerCase()}`;
-        const cur = map.get(key) || { key, productName: prodName, size: sizeLabel, colorName, colorHex: it.colorHex || '#94a3b8', unpaid: 0, paid: 0 };
-        if (paid) cur.paid += it.quantity || 0;
-        else cur.unpaid += it.quantity || 0;
+        const cur = map.get(key) || {
+          key, productName: prodName, sku: catProd?.sku || it.productSku || '—', category: catProd?.category || 'Apparel & Gear',
+          size: sizeLabel, colorName, colorHex: it.colorHex || '#94a3b8', unpaid: 0, orders: new Set<string>(), teams: new Map<string, number>(),
+        };
+        const qty = it.quantity || 0;
+        cur.unpaid += qty;
+        cur.orders.add(b.bookingNumber);
+        cur.teams.set(team, (cur.teams.get(team) || 0) + qty);
         map.set(key, cur);
       });
     });
-    return Array.from(map.values()).filter((r) => r.unpaid > 0).sort((a, b) => b.unpaid - a.unpaid);
-  }, [bookings, aggFromDate, aggToDate, fromDate, toDate, aggregatorFare2, branchFilter, productById, productByName]);
+    return Array.from(map.values())
+      .map((r) => ({
+        ...r,
+        ordersCount: r.orders.size,
+        teamList: Array.from(r.teams.entries())
+          .map(([id, pcs]) => ({ id, pcs, label: getScoutFare2Meta(id)?.label || id }))
+          .sort((x, y) => y.pcs - x.pcs),
+      }))
+      .filter((r) => r.unpaid > 0)
+      .filter((r) => !q || r.productName.toLowerCase().includes(q) || r.sku.toLowerCase().includes(q) || r.size.toLowerCase().includes(q) || r.colorName.toLowerCase().includes(q) || r.category.toLowerCase().includes(q))
+      .sort((x, y) => y.unpaid - x.unpaid);
+  }, [bookings, unpaidFilter, unpaidSearch, unpaidFare2, unpaidFrom, unpaidTo, fromDate, toDate, productById, productByName]);
+
+  const unpaidOrdersCount = useMemo(() => {
+    const set = new Set<string>();
+    unpaidDemandRows.forEach((r) => r.orders.forEach((o) => set.add(o)));
+    return set.size;
+  }, [unpaidDemandRows]);
 
   const aggregatorSummary = useMemo(() => {
     return productionAggregatorRows.reduce(
@@ -2136,44 +2161,211 @@ export const AdminAnalyticsView: React.FC<AdminAnalyticsViewProps> = ({
       </section>
 
       {/* Unpaid orders: demand only (pieces), no money, no customers. Does not reserve stock. */}
-      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-3">
+      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 space-y-4">
         <div>
-          <h3 className="text-base font-black text-slate-900">Unpaid orders: pieces asked for</h3>
-          <p className="text-[11px] text-slate-500">
-            Orders that have not paid a deposit yet. For information only: they do not reserve stock and do not create shortages. Same dates and branch filters as above.
+          <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+            <Factory className="w-5 h-5 text-slate-900" />
+            <span>Unpaid orders: pieces asked for</span>
+          </h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Orders that have not paid a deposit yet, by Product + Size + Color and by team. For information only: they do not reserve stock and do not create shortages.
           </p>
         </div>
-        {unpaidDemandRows.length === 0 ? (
-          <div className="text-xs text-slate-500">No unpaid orders in this range.</div>
-        ) : (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase px-1">
-              <span>Item / size</span>
-              <span className="flex gap-4">
-                <span>Unpaid pcs</span>
-                <span>Paid pcs</span>
-              </span>
+
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200 overflow-x-auto scrollbar-none">
+              {(
+                [
+                  { id: 'all', label: 'All Unpaid Orders' },
+                  { id: 'requested', label: 'Unpaid · Payment check asked' },
+                  { id: 'waiting', label: 'Unpaid · Waiting' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setUnpaidFilter(opt.id)}
+                  className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-colors whitespace-nowrap shrink-0 min-h-[38px] ${
+                    unpaidFilter === opt.id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
-            {unpaidDemandRows.map((r) => (
-              <div key={r.key} className="flex items-center justify-between gap-2 p-2.5 rounded-xl border border-slate-200 bg-slate-50/50 text-xs">
-                <div className="min-w-0 flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full border border-slate-300 shrink-0" style={{ backgroundColor: r.colorHex }} />
-                  <span className="font-black text-slate-900 truncate">
-                    {r.productName} - {r.size === 'Standard Size' ? 'Standard Size' : `Size ${r.size}`}
-                    {r.colorName && r.colorName !== 'Standard' ? ` (${r.colorName})` : ''}
-                  </span>
-                </div>
-                <div className="flex gap-4 font-mono tabular-nums shrink-0">
-                  <span className="w-16 text-right font-black text-amber-700">{r.unpaid.toLocaleString()}</span>
-                  <span className="w-16 text-right text-slate-600">{r.paid.toLocaleString()}</span>
-                </div>
-              </div>
-            ))}
-            <div className="flex items-center justify-between text-xs font-black text-slate-900 px-1 pt-1">
-              <span>Total</span>
-              <span className="font-mono tabular-nums text-amber-700">{unpaidDemandRows.reduce((s, r) => s + r.unpaid, 0).toLocaleString()} unpaid pcs</span>
+
+            <div className="relative flex-1 lg:max-w-xs">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={unpaidSearch}
+                onChange={(e) => setUnpaidSearch(e.target.value)}
+                placeholder="Search variant, size or color..."
+                className="w-full pl-8 pr-8 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-900 focus:outline-none focus:border-slate-900 min-h-[40px]"
+              />
+              {unpaidSearch && (
+                <button type="button" onClick={() => setUnpaidSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1">Scout Fera2:</span>
+            <button
+              type="button"
+              onClick={() => setUnpaidFare2([])}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap shrink-0 min-h-[34px] cursor-pointer ${
+                unpaidFare2.length === 0 ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              All Fera2
+            </button>
+            {SCOUT_FERA2_LIST.map((f) => {
+              const isSelected = unpaidFare2.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setUnpaidFare2((prev) => (prev.includes(f.id) ? prev.filter((id) => id !== f.id) : [...prev, f.id]))}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors whitespace-nowrap shrink-0 min-h-[34px] flex items-center gap-1.5 cursor-pointer ${
+                    isSelected ? f.activeButtonClass : f.chipClass
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-white' : f.dotClass}`} />
+                  <span>{f.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase shrink-0">Order date range:</span>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 min-h-[38px]">
+                <span className="text-[11px] font-bold text-slate-500 uppercase shrink-0">From</span>
+                <input type="date" value={unpaidFrom} onChange={(e) => setUnpaidFrom(e.target.value)} aria-label="Unpaid From Date" className="bg-transparent text-xs font-mono font-bold text-slate-900 focus:outline-none" />
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 min-h-[38px]">
+                <span className="text-[11px] font-bold text-slate-500 uppercase shrink-0">To</span>
+                <input type="date" value={unpaidTo} onChange={(e) => setUnpaidTo(e.target.value)} aria-label="Unpaid To Date" className="bg-transparent text-xs font-mono font-bold text-slate-900 focus:outline-none" />
+              </div>
+              {(unpaidFare2.length > 0 || unpaidFrom || unpaidTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setUnpaidFare2([]); setUnpaidFrom(''); setUnpaidTo(''); }}
+                  className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold flex items-center gap-1 min-h-[38px] cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Clear Filters</span>
+                </button>
+              )}
+            </div>
+            <div className="text-[11px] font-mono text-slate-500">
+              Matching <strong className="text-slate-900">{unpaidOrdersCount}</strong> order{unpaidOrdersCount === 1 ? '' : 's'}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div className="text-[10px] font-bold uppercase text-slate-500">Distinct Variants</div>
+            <div className="text-lg font-black font-mono tabular-nums text-slate-900 mt-0.5">{unpaidDemandRows.length}</div>
+          </div>
+          <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200">
+            <div className="text-[10px] font-bold uppercase text-amber-700">Unpaid Qty Asked</div>
+            <div className="text-lg font-black font-mono tabular-nums text-amber-700 mt-0.5">
+              {unpaidDemandRows.reduce((s, r) => s + r.unpaid, 0).toLocaleString()} units
+            </div>
+          </div>
+          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div className="text-[10px] font-bold uppercase text-slate-500">Unpaid Orders</div>
+            <div className="text-lg font-black font-mono tabular-nums text-slate-900 mt-0.5">{unpaidOrdersCount}</div>
+          </div>
+        </div>
+
+        {unpaidDemandRows.length === 0 ? (
+          <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl text-xs text-slate-500">
+            No unpaid orders match the selected filter and date range.
+          </div>
+        ) : (
+          <>
+            <div className="hidden md:block overflow-x-auto border border-slate-200 rounded-xl">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[11px]">
+                  <tr>
+                    <th className="py-3 px-4 font-bold">Product + Variant</th>
+                    <th className="py-3 px-4 font-bold">Color &amp; Size</th>
+                    <th className="py-3 px-4 font-bold text-right">Unpaid Qty Asked</th>
+                    <th className="py-3 px-4 font-bold">Team</th>
+                    <th className="py-3 px-4 font-bold text-right">Orders</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {unpaidDemandRows.map((row) => (
+                    <tr key={row.key} className="hover:bg-slate-50/70">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900">
+                          {row.productName} - {row.size === 'Standard Size' ? 'Standard Size' : `Size ${row.size}`}
+                          {row.colorName && row.colorName !== 'Standard' ? ` (${row.colorName})` : ''}
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-500 mt-0.5">{row.sku} · {row.category}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2 font-semibold text-slate-800">
+                          <span className="w-3 h-3 rounded-full border border-slate-300 shrink-0" style={{ backgroundColor: row.colorHex }} />
+                          <span>{row.colorName}</span>
+                          <span className="text-slate-400">·</span>
+                          <span className="font-mono font-bold text-slate-900">{row.size}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono tabular-nums font-black text-amber-700">{row.unpaid.toLocaleString()} units</td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap gap-1">
+                          {row.teamList.map((t) => (
+                            <span key={t.id} className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-700">
+                              {t.label}: <span className="font-mono">{t.pcs}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-600">{row.ordersCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="md:hidden space-y-2.5">
+              {unpaidDemandRows.map((row) => (
+                <div key={row.key} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/40 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-black text-slate-900">
+                        {row.productName} - {row.size === 'Standard Size' ? 'Standard Size' : `Size ${row.size}`}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600 mt-0.5">
+                        <span className="w-2.5 h-2.5 rounded-full border border-slate-300 shrink-0" style={{ backgroundColor: row.colorHex }} />
+                        <span>{row.colorName}</span>
+                        <span>·</span>
+                        <span className="font-mono">{row.ordersCount} order{row.ordersCount === 1 ? '' : 's'}</span>
+                      </div>
+                    </div>
+                    <div className="font-mono tabular-nums font-black text-sm text-amber-700 shrink-0">{row.unpaid.toLocaleString()} units</div>
+                  </div>
+                  <div className="pt-2 border-t border-slate-200/70 flex flex-wrap gap-1">
+                    {row.teamList.map((t) => (
+                      <span key={t.id} className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-700">
+                        {t.label}: <span className="font-mono">{t.pcs}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </section>
     </div>
