@@ -63,6 +63,9 @@ import {
   updateUserRoleInDb,
   updateVariantQuantityInDb,
   applyStockChangeInDb,
+  recordOrderShortfallInDb,
+  previewBatchReceiveInDb,
+  receiveBatchStockInDb,
   fetchAdjustmentRequestsFromDb,
   createAdjustmentRequestInDb,
   updateAdjustmentRequestInDb,
@@ -2504,6 +2507,7 @@ export default function App() {
 
     let nextProducts = [...products];
     const variantDbUpdates: { variantId: string; newQty: number; delta: number }[] = [];
+    const shortfalls: { variantId: string; owed: number }[] = [];
 
     // INVENTORY RULE: If created directly in preparing (deposit confirmed upfront), reserve & deduct available stock!
     // Otherwise, booking remains in 'pending' and inventory stock is NOT touched.
@@ -2518,6 +2522,9 @@ export default function App() {
               const updatedQty = Math.max(0, v.quantity - deductUnits);
               if (deductUnits > 0) {
                 variantDbUpdates.push({ variantId: v.id, newQty: updatedQty, delta: -deductUnits });
+              }
+              if (item.quantity > deductUnits) {
+                shortfalls.push({ variantId: v.id, owed: item.quantity - deductUnits });
               }
               return {
                 ...v,
@@ -2542,6 +2549,7 @@ export default function App() {
         });
       });
       newBooking.inventoryDeducted = true;
+      saveOrderShortfalls(newBooking.id, shortfalls);
     }
 
     lastBookingMutationAtRef.current = Date.now();
@@ -2810,6 +2818,7 @@ export default function App() {
     }
     const nextProducts = [...products];
     const variantDbUpdates: { variantId: string; newQty: number; delta: number }[] = [];
+    const shortfalls: { variantId: string; owed: number }[] = [];
     let affectedBooking: Booking | undefined;
 
     const updatedBookings = bookings.map((b) => {
@@ -2832,6 +2841,9 @@ export default function App() {
                 const updatedQty = Math.max(0, v.quantity - deductUnits);
                 if (deductUnits > 0) {
                   variantDbUpdates.push({ variantId: v.id, newQty: updatedQty, delta: -deductUnits });
+                }
+                if (item.quantity > deductUnits) {
+                  shortfalls.push({ variantId: v.id, owed: item.quantity - deductUnits });
                 }
                 return {
                   ...v,
@@ -2886,6 +2898,7 @@ export default function App() {
           showToast(`Stock was NOT saved in the database: ${err?.message || 'sync failed'}`);
         });
       });
+      saveOrderShortfalls(bookingId, shortfalls);
 
       lastBookingMutationAtRef.current = Date.now();
       setBookings(updatedBookings);
@@ -3591,15 +3604,57 @@ export default function App() {
     showToast(`Deleted batch ${target?.batchCode || ''}.`);
   };
 
-  const handleCompleteBatchStockIn = ({
-    batchId,
-    finalQuantity,
-    variantId,
-  }: {
+  // Stock was short when the deposit was confirmed: remember what the order still waits for.
+  // The order row is saved a moment after, so retry a few times.
+  const saveOrderShortfalls = (bookingId: string, items: { variantId: string; owed: number }[]) => {
+    if (items.length === 0) return;
+    const total = items.reduce((sum, i) => sum + i.owed, 0);
+    showToast(
+      `Stock was not enough: ${total} unit(s) are still needed for this order. They will be taken automatically when the linked purchase is received.`
+    );
+    items.forEach((it) => {
+      const attempt = (n: number) => {
+        recordOrderShortfallInDb(bookingId, it.variantId, it.owed).catch((err) => {
+          if (n < 4) setTimeout(() => attempt(n + 1), 1500 * (n + 1));
+          else showToast(`Could not remember the missing stock for this order: ${err?.message || 'sync failed'}`);
+        });
+      };
+      setTimeout(() => attempt(0), 1200);
+    });
+  };
+
+  // Tell the user BEFORE saving when part of the received goods goes to a waiting order.
+  const handleCompleteBatchStockIn = (args: {
     batchId: string;
     finalQuantity: number;
     variantId: string;
   }) => {
+    const qty = Math.max(1, Math.round(args.finalQuantity));
+    previewBatchReceiveInDb(args.batchId, args.variantId, qty)
+      .catch(() => null)
+      .then((pv) => {
+        if (pv && pv.reserved > 0) {
+          const ok = window.confirm(
+            `Heads up: ${pv.reserved} of these ${qty} will be taken automatically for order #${pv.bookingNumber} (${pv.clientName}), which is waiting for stock.\n\nStock will go up by ${qty - pv.reserved} (not ${qty}).\n\nContinue?`
+          );
+          if (!ok) return;
+        }
+        finishBatchStockIn(args, pv?.reserved || 0);
+      });
+  };
+
+  const finishBatchStockIn = (
+    {
+      batchId,
+      finalQuantity,
+      variantId,
+    }: {
+      batchId: string;
+      finalQuantity: number;
+      variantId: string;
+    },
+    reserved: number
+  ) => {
     const batch = productionBatches.find((b) => b.id === batchId);
     const product = products.find((p) => p.id === batch?.productId);
     if (!batch || !product) {
@@ -3615,7 +3670,7 @@ export default function App() {
     }
 
     const oldQty = targetVariant.quantity;
-    const newQty = oldQty + qtyToAdd;
+    const newQty = oldQty + qtyToAdd - reserved;
     const oldTotal = product.totalQuantity;
 
     const updatedVariants = product.variants.map((v) =>
@@ -3631,9 +3686,11 @@ export default function App() {
 
     const nextProducts = products.map((p) => (p.id === product.id ? updatedProduct : p));
     setProducts(nextProducts);
-    applyStockChangeInDb(targetVariant.id, qtyToAdd, 'batch_stock_in', batchId).catch((err) =>
-      showToast(`Database stock update error: ${err?.message || 'Sync failed'}`)
-    );
+    receiveBatchStockInDb(batchId, targetVariant.id, qtyToAdd)
+      .then((r) => {
+        if (r.reserved > 0) showToast(`${r.reserved} unit(s) were taken for the waiting order. Stock is now ${r.newQuantity}.`);
+      })
+      .catch((err) => showToast(`Database stock update error: ${err?.message || 'Sync failed'}`));
 
     // Log audit entry for Gard stock-in
     const sizeText =

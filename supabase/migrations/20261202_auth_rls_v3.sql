@@ -959,6 +959,86 @@ begin
 end $$;
 revoke all on function public.mark_booking_ready(text) from public, anon;
 grant execute on function public.mark_booking_ready(text) to authenticated;
+
+-- Shortfall tracking: when a deposit is confirmed but stock is short (order 50, stock 30), the
+-- app takes the 30 and records the 20 still owed. When the purchase batch linked to that order is
+-- received, the owed units are taken from the received goods (100 received -> 80 left) and the
+-- app shows a notice BEFORE saving (batch_receive_preview).
+create table if not exists public.order_stock_owed (
+  booking_id text not null,
+  variant_id text not null,
+  owed       integer not null check (owed > 0),
+  primary key (booking_id, variant_id)
+);
+alter table public.order_stock_owed enable row level security;
+revoke all on public.order_stock_owed from public, anon, authenticated;
+
+create or replace function public.record_order_shortfall(p_booking_id text, p_variant_id text, p_owed integer)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.app_admin_of_any(array['budgeting','troops','inventory']) then
+    raise exception 'Not allowed.' using errcode = '42501';
+  end if;
+  if p_owed is null or p_owed <= 0 then return; end if;
+  if not exists (select 1 from public.bookings where id = p_booking_id and (deposit_paid or status <> 'pending')) then
+    raise exception 'Order not found or deposit not confirmed.' using errcode = '42501';
+  end if;
+  insert into public.order_stock_owed(booking_id, variant_id, owed) values (p_booking_id, p_variant_id, p_owed)
+  on conflict (booking_id, variant_id) do update set owed = excluded.owed;
+end $$;
+revoke all on function public.record_order_shortfall(text, text, integer) from public, anon;
+grant execute on function public.record_order_shortfall(text, text, integer) to authenticated;
+
+-- What would be reserved for the waiting order if p_qty of this variant arrive in this batch?
+create or replace function public.batch_receive_preview(p_batch_id text, p_variant_id text, p_qty integer)
+returns table (reserved integer, booking_number text, client_name text)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.app_admin_of_any(array['purchases','inventory']) then
+    raise exception 'Not allowed.' using errcode = '42501';
+  end if;
+  return query
+    select least(o.owed, greatest(p_qty, 0))::integer, b.booking_number::text, b.client_name::text
+      from public.production_batches pb
+      join public.order_stock_owed o on o.booking_id = pb.linked_booking_id and o.variant_id = p_variant_id
+      join public.bookings b on b.id = o.booking_id
+     where pb.id = p_batch_id;
+end $$;
+revoke all on function public.batch_receive_preview(text, text, integer) from public, anon;
+grant execute on function public.batch_receive_preview(text, text, integer) to authenticated;
+
+-- Receive goods: add p_qty, then take what the linked waiting order is still owed.
+create or replace function public.receive_batch_stock(p_batch_id text, p_variant_id text, p_qty integer)
+returns table (new_quantity integer, reserved integer)
+language plpgsql security definer set search_path = public as $$
+declare v_booking text; v_owed integer; v_take integer := 0; v_new integer;
+begin
+  if not public.app_is_staff_or_above() or not public.app_admin_of_any(array['purchases','inventory']) then
+    raise exception 'Only an admin of the purchases team can add received stock.' using errcode = '42501';
+  end if;
+  if p_qty is null or p_qty <= 0 then raise exception 'Nothing to receive.'; end if;
+  select linked_booking_id into v_booking from public.production_batches where id = p_batch_id;
+  if not found then raise exception 'Unknown purchase/production batch.' using errcode = '42501'; end if;
+  if v_booking is not null then
+    select owed into v_owed from public.order_stock_owed where booking_id = v_booking and variant_id = p_variant_id for update;
+    if v_owed is not null then
+      v_take := least(v_owed, p_qty);
+      if v_take >= v_owed then
+        delete from public.order_stock_owed where booking_id = v_booking and variant_id = p_variant_id;
+      else
+        update public.order_stock_owed set owed = owed - v_take where booking_id = v_booking and variant_id = p_variant_id;
+      end if;
+    end if;
+  end if;
+  perform set_config('app.stock_fn', 'on', true);
+  update public.product_variants set quantity = greatest(0, quantity + p_qty - v_take), updated_at = now()
+   where id = p_variant_id returning quantity into v_new;
+  perform set_config('app.stock_fn', 'off', true);
+  if v_new is null then raise exception 'Unknown item.'; end if;
+  return query select v_new, v_take;
+end $$;
+revoke all on function public.receive_batch_stock(text, text, integer) from public, anon;
+grant execute on function public.receive_batch_stock(text, text, integer) to authenticated;
 drop trigger if exists guard_booking_update on public.bookings;
 create trigger guard_booking_update before update on public.bookings
   for each row execute function public.guard_booking_update();

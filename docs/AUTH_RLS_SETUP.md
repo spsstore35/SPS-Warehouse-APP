@@ -70,6 +70,8 @@ Stock is taken for an order when the deposit is confirmed (any %), and added whe
 - Staff, leaders and other teams are refused. Direct edits of quantity stay inventory-admin only.
 Run Part 1 BEFORE deploying the new site (the site calls this function).
 
+- Short stock: if an order needs 50 and 30 are in stock, the deposit confirmation takes the 30 and remembers the 20 still owed (`order_stock_owed`). When the purchase batch linked to that order is received (e.g. 100), the app first shows a notice ("20 of these 100 go to order #X, stock goes up by 80") and only then saves. The database takes the 20 from the received goods in the same step (`receive_batch_stock`). Only the batch linked to the order does this; an unlinked batch just adds stock.
+
 ## Known limits
 - A multi-row INSERT in one statement bypasses the per-minute throttle count.
 - Blocked order attempts are not logged (the error rolls the log row back).

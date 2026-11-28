@@ -686,6 +686,49 @@ export async function applyStockChangeInDb(
   return Number(data);
 }
 
+/** Remember units an order still waits for (stock was short at deposit time). */
+export async function recordOrderShortfallInDb(bookingId: string, variantId: string, owed: number): Promise<void> {
+  const { error } = await supabase.rpc('record_order_shortfall', {
+    p_booking_id: bookingId,
+    p_variant_id: variantId,
+    p_owed: owed,
+  });
+  if (error) throw error;
+}
+
+/** Before receiving a batch: how many units go straight to the waiting order. */
+export async function previewBatchReceiveInDb(
+  batchId: string,
+  variantId: string,
+  qty: number
+): Promise<{ reserved: number; bookingNumber: string; clientName: string } | null> {
+  const { data, error } = await supabase.rpc('batch_receive_preview', {
+    p_batch_id: batchId,
+    p_variant_id: variantId,
+    p_qty: qty,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || !row.reserved) return null;
+  return { reserved: Number(row.reserved), bookingNumber: String(row.booking_number), clientName: String(row.client_name) };
+}
+
+/** Receive goods and take what the linked waiting order is still owed. */
+export async function receiveBatchStockInDb(
+  batchId: string,
+  variantId: string,
+  qty: number
+): Promise<{ newQuantity: number; reserved: number }> {
+  const { data, error } = await supabase.rpc('receive_batch_stock', {
+    p_batch_id: batchId,
+    p_variant_id: variantId,
+    p_qty: qty,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return { newQuantity: Number(row.new_quantity), reserved: Number(row.reserved) };
+}
+
 /**
  * ADJUSTMENT REQUESTS
  */
