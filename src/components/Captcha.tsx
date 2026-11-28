@@ -17,9 +17,11 @@ declare global {
 interface CaptchaProps {
   onToken: (token: string) => void;
   resetKey?: number;
+  /** Only show the box when Cloudflare thinks the visitor is suspicious. */
+  quiet?: boolean;
 }
 
-export const Captcha: React.FC<CaptchaProps> = ({ onToken, resetKey = 0 }) => {
+export const Captcha: React.FC<CaptchaProps> = ({ onToken, resetKey = 0, quiet = false }) => {
   const ref = useRef<HTMLDivElement>(null);
   const widgetId = useRef<string | undefined>(undefined);
 
@@ -33,6 +35,7 @@ export const Captcha: React.FC<CaptchaProps> = ({ onToken, resetKey = 0 }) => {
       }
       widgetId.current = window.turnstile.render(ref.current, {
         sitekey: SITE_KEY,
+        ...(quiet ? { appearance: 'interaction-only' } : {}),
         callback: (t: string) => onToken(t),
         'expired-callback': () => onToken(''),
       });

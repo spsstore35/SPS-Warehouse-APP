@@ -140,7 +140,7 @@ const Step: React.FC<{ n: number; title: string; children: React.ReactNode }> = 
 );
 
 export const PublicOrderPage: React.FC = () => {
-  const [lang, setLang] = useState<Lang>(() => ((typeof localStorage !== 'undefined' && localStorage.getItem('sps_order_lang')) === 'en' ? 'en' : 'ar'));
+  const [lang, setLang] = useState<Lang>(() => ((typeof localStorage !== 'undefined' && localStorage.getItem('sps_order_lang')) === 'ar' ? 'ar' : 'en'));
   const t = (k: string, v: Record<string, string | number> = {}) => fmt(T[lang][k] ?? k, v);
   const money = (n: number) => `${Math.round(n * 100) / 100} ${T[lang].egp}`;
   const toggleLang = () => {
@@ -159,7 +159,9 @@ export const PublicOrderPage: React.FC = () => {
   const [pick, setPick] = useState<Record<string, string>>({});
   const [cart, setCart] = useState<CartLine[]>([]);
   const [pay, setPay] = useState<Pay | ''>('');
-  const [token, setToken] = useState('');
+  const [token, setTokenState] = useState('');
+  const tokenRef = useRef('');
+  const setToken = (v: string) => { tokenRef.current = v; setTokenState(v); };
   const [capKey, setCapKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -203,10 +205,14 @@ export const PublicOrderPage: React.FC = () => {
     if (team.trim().length < 2) return setErr(t('eTeam'));
     if (cart.length === 0) return setErr(t('eCart'));
     if (!pay) return setErr(t('ePay'));
-    if (captchaEnabled && !token) return setErr(t('eCaptcha'));
     setBusy(true);
+    if (captchaEnabled) {
+      // The check runs quietly in the background; give it a few seconds to finish.
+      for (let k = 0; k < 24 && !tokenRef.current; k++) await new Promise((r) => setTimeout(r, 250));
+      if (!tokenRef.current) { setBusy(false); return setErr(t('eCaptcha')); }
+    }
     const { ok, data } = await call({
-      action: 'submit', name, phone, ashira, team, website, payment: pay, captchaToken: token,
+      action: 'submit', name, phone, ashira, team, website, payment: pay, captchaToken: tokenRef.current,
       items: cart.map((l) => ({ variant_id: l.variantId, quantity: l.qty })),
     });
     setBusy(false);
@@ -272,7 +278,7 @@ export const PublicOrderPage: React.FC = () => {
         <div className="max-w-xl mx-auto">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <img src="/sps-logo.png" alt="SPS" className="w-14 h-14 rounded-full bg-white p-1 object-contain shrink-0" />
+              <img src="/sps-logo.png" alt="SPS" className="w-16 h-16 rounded-2xl bg-white p-1.5 object-contain shrink-0" />
               <div className="text-2xl sm:text-3xl font-black truncate">{t('brand')}</div>
             </div>
             {LangBtn}
@@ -414,7 +420,7 @@ export const PublicOrderPage: React.FC = () => {
                   )}
                 </div>
 
-                <Captcha onToken={setToken} resetKey={capKey} />
+                <Captcha quiet onToken={setToken} resetKey={capKey} />
                 {err && <div className="rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm font-semibold p-3">{err}</div>}
                 <button type="button" disabled={busy} onClick={submit} className="w-full py-4 rounded-2xl text-white font-black text-lg disabled:opacity-50 active:scale-95" style={{ background: OLIVE }}>
                   {busy ? t('sending') : t('send')}
