@@ -195,6 +195,8 @@ export interface Booking {
   id: string;
   bookingNumber: string;
   clientName: string;
+  source?: string; // 'public_link' for orders from the public order page
+  teamName?: string;
   troopGroup?: string; // Ashbal, Zahrat, Kashafeen, Morshedat, 3ashera 1, 3ashera 2, Afrad
   assignedFare2?: string; // Resolved Scout Fera2 sub-team (Ashbal..3ashera 2) for Afrad / Unassigned or specific orders
   assignedToId?: string;

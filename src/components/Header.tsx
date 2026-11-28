@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types/inventory';
-import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet, KeyRound } from 'lucide-react';
+import { LogOut, Bell, Users, CheckSquare, Package, PlusCircle, History, CalendarCheck, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet, KeyRound, Link2 } from 'lucide-react';
 import {
   isUserAdmin,
   isUserLeader,
@@ -280,6 +280,19 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Megaphone className="w-4 h-4 text-rose-600" />
                   <span>Marketing &amp; Offers</span>
+                </button>
+              )}
+
+              {canUserAccessView(currentUser, 'public-sales', users) && (
+                <button
+                  onClick={() => onNavigate('public-sales')}
+                  className={`relative hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
+                    activeView === 'public-sales' ? 'text-indigo-700 font-bold border-b-2 border-indigo-600 pb-0.5' : ''
+                  }`}
+                  title="Public order link: open items, orders and totals"
+                >
+                  <Link2 className="w-4 h-4 text-indigo-600" />
+                  <span>Public Sales</span>
                 </button>
               )}
 
@@ -589,6 +602,22 @@ export const Header: React.FC<HeaderProps> = ({
                         <span className="flex items-center gap-2">
                           <Megaphone className="w-3.5 h-3.5 text-rose-600" />
                           <span>Marketing &amp; Offers</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {canUserAccessView(currentUser, 'public-sales', users) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          onNavigate('public-sales');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-950 bg-indigo-50/80 hover:bg-indigo-100/80 transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Link2 className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Public Sales</span>
                         </span>
                       </button>
                     )}

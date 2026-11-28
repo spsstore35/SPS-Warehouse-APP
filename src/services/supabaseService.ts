@@ -1403,6 +1403,8 @@ export async function fetchBookingsFromDb(): Promise<Booking[]> {
       clientPhone: b.client_phone || 'N/A',
       notes: b.notes || undefined,
       items: lineItems,
+      source: b.source || undefined,
+      teamName: b.team_name || undefined,
       subtotal: Number(b.subtotal) || 0,
       discount: Number(b.discount) || 0,
       total: Number(b.total) || 0,

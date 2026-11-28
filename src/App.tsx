@@ -148,6 +148,7 @@ import ShortageNeedsPanel, { NeedsTiles, NeedsList, type NeedsKind, type LowStoc
 import { estimateProductionDays, readSafetyDays } from './utils/deliveryEstimate';
 import ShortageStartModal from './components/ShortageStartModal';
 import { MarketingOffersView } from './components/MarketingOffersView';
+import { PublicSalesView } from './components/PublicSalesView';
 import { BudgetingView } from './components/BudgetingView';
 import {
   Search,
@@ -5665,6 +5666,24 @@ export default function App() {
             onShowToast={(msg) => showToast(msg)}
           />
           </div>
+        )}
+
+        {effectiveView === 'public-sales' && canUserAccessView(currentUser, 'public-sales', users) && (
+          <PublicSalesView
+            products={products}
+            bookings={bookings}
+            onMarkPaid={(id) => handleAdvanceBookingStatus(id, 'preparing')}
+            onOpenInvoice={(booking) => {
+              setPrintBooking(booking);
+              setPrintDocType('quotation');
+              setIsPrintModalOpen(true);
+            }}
+            onOpenOrder={(id) => {
+              setSelectedBookingForDetails(id);
+              handleNavigate('bookings');
+            }}
+            onShowToast={showToast}
+          />
         )}
 
         {effectiveView === 'marketing' && canUserAccessView(currentUser, 'marketing', users) && (

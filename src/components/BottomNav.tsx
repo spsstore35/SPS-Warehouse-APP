@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types/inventory';
-import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet, KeyRound } from 'lucide-react';
+import { Package, CheckSquare, Clock, PlusCircle, History, LogOut, X, Users, CalendarCheck, Bell, BarChart3, CalendarDays, Kanban, Factory, Megaphone, Wallet, KeyRound, Link2 } from 'lucide-react';
 import {
   isUserAdmin,
   isUserLeader,
@@ -418,6 +418,22 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                       <span className="flex items-center gap-2.5">
                         <Megaphone className="w-4 h-4 text-rose-600" />
                         <span>Marketing &amp; Offers</span>
+                      </span>
+                    </button>
+                  )}
+
+                  {canUserAccessView(currentUser, 'public-sales', users) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAccountSheet(false);
+                        onNavigate('public-sales');
+                      }}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-200 text-indigo-950 font-bold text-xs hover:bg-indigo-100 transition-colors"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Link2 className="w-4 h-4 text-indigo-600" />
+                        <span>Public Sales (order link)</span>
                       </span>
                     </button>
                   )}

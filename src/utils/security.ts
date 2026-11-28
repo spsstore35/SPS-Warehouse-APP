@@ -191,6 +191,7 @@ const ALL_ADMIN_VIEWS = [
   'account-approvals',
   'add-product',
   'audit-log',
+  'public-sales',
 ] as const;
 
 export function getAllowedViewsForUser(user?: User | null, allUsers?: User[]): Set<string> {
