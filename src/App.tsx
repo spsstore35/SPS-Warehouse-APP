@@ -5203,7 +5203,7 @@ export default function App() {
             onUpdateBooking={handleUpdateBooking}
             onSendShortageToPurchases={handleSendShortageToPurchases}
             onConfirmBookingStockReady={handleConfirmBookingStockReady}
-            onOpenSourcing={() => handleNavigate('sourcing')}
+            onOpenSourcing={canUserAccessView(currentUser, 'sourcing', users) ? () => handleNavigate('sourcing') : undefined}
             onOpenCalendar={() => handleNavigate('calendar')}
             onLogActivity={(log) => {
               setAuditLogs((prev) => [log, ...prev]);
@@ -5258,7 +5258,7 @@ export default function App() {
               setSelectedBookingForDetails(bid);
               setActiveView('bookings');
             }}
-            onOpenSourcing={() => handleNavigate('sourcing')}
+            onOpenSourcing={canUserAccessView(currentUser, 'sourcing', users) ? () => handleNavigate('sourcing') : undefined}
             onOpenMarketing={() => handleNavigate('marketing')}
             onShowToast={(msg) => showToast(msg)}
           />
